@@ -2,6 +2,7 @@ package system
 
 import (
 	"bufio"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -9,6 +10,31 @@ import (
 	"strings"
 
 	"github.com/SamJSui/JetsonMesh/internal/cluster"
+)
+
+const (
+	procMeminfoPath = "/proc/meminfo"
+	procLoadavgPath = "/proc/loadavg"
+
+	meminfoTotalField = "MemTotal:"
+	kibPerGiB         = 1024 * 1024
+)
+
+const (
+	capabilityRuntimes   = "runtimes"
+	capabilityTegrastats = "tegrastats"
+	metricLoadAverage    = "load_average"
+	metricQueueDepth     = "queue_depth"
+	metricJetsonHint     = "jetson_hint"
+	jetsonHintTegrastats = "tegrastats_available"
+)
+
+const (
+	commandDocker     = "docker"
+	commandTrtexec    = "trtexec"
+	commandLlamaCLI   = "llama-cli"
+	commandOllama     = "ollama"
+	commandTegrastats = "tegrastats"
 )
 
 type Snapshot struct {
@@ -22,21 +48,21 @@ type Snapshot struct {
 func Detect() Snapshot {
 	hostname, _ := os.Hostname()
 	accelerators := []string{}
-	if commandExists("tegrastats") {
+	if commandExists(commandTegrastats) {
 		accelerators = append(accelerators, cluster.AcceleratorJetson, cluster.AcceleratorCUDA)
 	}
 	capabilities := map[string]any{
 		cluster.CapabilityMemoryGB:     memoryGB(),
 		cluster.CapabilityAccelerators: accelerators,
-		"runtimes":                     runtimes(),
-		"tegrastats":                   commandExists("tegrastats"),
+		capabilityRuntimes:             runtimes(),
+		capabilityTegrastats:           commandExists(commandTegrastats),
 	}
 	metrics := map[string]any{
-		"load_average": loadAverage(),
-		"queue_depth":  0,
+		metricLoadAverage: loadAverage(),
+		metricQueueDepth:  0,
 	}
-	if commandExists("tegrastats") {
-		metrics["jetson_hint"] = "tegrastats_available"
+	if commandExists(commandTegrastats) {
+		metrics[metricJetsonHint] = jetsonHintTegrastats
 	}
 	return Snapshot{
 		Hostname:     hostname,
@@ -49,10 +75,10 @@ func Detect() Snapshot {
 
 func runtimes() []string {
 	checks := map[string]string{
-		"docker":    "docker",
-		"trtexec":   string(cluster.RuntimeKindTensorRT),
-		"llama-cli": string(cluster.RuntimeKindLlamaCPP),
-		"ollama":    string(cluster.RuntimeKindOllama),
+		commandDocker:   commandDocker,
+		commandTrtexec:  string(cluster.RuntimeKindTensorRT),
+		commandLlamaCLI: string(cluster.RuntimeKindLlamaCPP),
+		commandOllama:   string(cluster.RuntimeKindOllama),
 	}
 	found := []string{}
 	for command, name := range checks {
@@ -69,15 +95,19 @@ func commandExists(command string) bool {
 }
 
 func memoryGB() float64 {
-	file, err := os.Open("/proc/meminfo")
+	file, err := os.Open(procMeminfoPath)
 	if err != nil {
 		return 0
 	}
 	defer file.Close()
-	scanner := bufio.NewScanner(file)
+	return parseMemTotalGB(file)
+}
+
+func parseMemTotalGB(reader io.Reader) float64 {
+	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.HasPrefix(line, "MemTotal:") {
+		if !strings.HasPrefix(line, meminfoTotalField) {
 			continue
 		}
 		fields := strings.Fields(line)
@@ -88,13 +118,13 @@ func memoryGB() float64 {
 		if err != nil {
 			return 0
 		}
-		return round2(kb / 1024 / 1024)
+		return round2(kb / kibPerGiB)
 	}
 	return 0
 }
 
 func loadAverage() []float64 {
-	content, err := os.ReadFile("/proc/loadavg")
+	content, err := os.ReadFile(procLoadavgPath)
 	if err != nil {
 		return nil
 	}
