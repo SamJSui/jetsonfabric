@@ -4,5 +4,12 @@ param(
   [string]$JoinToken = "dev-token"
 )
 
-py -m jetsonmesh_control.server --host $HostName --port $Port --join-token $JoinToken
+$ErrorActionPreference = "Stop"
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+$ToolsGo = Join-Path (Split-Path -Parent $RepoRoot) "tools\go\bin\go.exe"
+$Go = if (Test-Path $ToolsGo) { $ToolsGo } else { "go" }
+$GoCache = Join-Path $RepoRoot ".cache\go-build"
+New-Item -ItemType Directory -Force -Path $GoCache | Out-Null
+$env:GOCACHE = $GoCache
 
+& $Go run ./cmd/jetsonmesh-control --host $HostName --port $Port --join-token $JoinToken

@@ -4,5 +4,12 @@ param(
   [string]$NodeId = "dev-node"
 )
 
-py -m jetsonmesh_agent.agent --control-url $ControlUrl --join-token $JoinToken --node-id $NodeId
+$ErrorActionPreference = "Stop"
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+$ToolsGo = Join-Path (Split-Path -Parent $RepoRoot) "tools\go\bin\go.exe"
+$Go = if (Test-Path $ToolsGo) { $ToolsGo } else { "go" }
+$GoCache = Join-Path $RepoRoot ".cache\go-build"
+New-Item -ItemType Directory -Force -Path $GoCache | Out-Null
+$env:GOCACHE = $GoCache
 
+& $Go run ./cmd/jetsonmesh-agent --control-url $ControlUrl --join-token $JoinToken --node-id $NodeId

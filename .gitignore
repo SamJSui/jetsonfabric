@@ -10,7 +10,8 @@ build/
 *.egg-info/
 .env
 *.log
+.cache/
 data/
 artifacts/
 models/
-
+tmp/

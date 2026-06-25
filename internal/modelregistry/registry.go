@@ -1,0 +1,39 @@
+package modelregistry
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+
+	"github.com/SamJSui/JetsonMesh/internal/cluster"
+)
+
+type Registry struct {
+	Models []cluster.ModelProfile `json:"models"`
+}
+
+func Load(path string) (Registry, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return Registry{}, err
+	}
+	var registry Registry
+	if err := json.Unmarshal(content, &registry); err != nil {
+		return Registry{}, err
+	}
+	for _, model := range registry.Models {
+		if model.ID == "" {
+			return Registry{}, fmt.Errorf("model registry contains an empty model id")
+		}
+	}
+	return registry, nil
+}
+
+func (r Registry) Find(id string) (cluster.ModelProfile, bool) {
+	for _, model := range r.Models {
+		if model.ID == id {
+			return model, true
+		}
+	}
+	return cluster.ModelProfile{}, false
+}

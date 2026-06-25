@@ -4,7 +4,7 @@ Adding a Jetson should eventually be a repeatable install flow:
 
 ```bash
 curl -fsSL https://example.invalid/jetsonmesh/install.sh | bash
-jetsonmesh-agent \
+./jetsonmesh-agent \
   --control-url http://beelink:52415 \
   --join-token "$JETSONMESH_JOIN_TOKEN" \
   --node-id jetson-02
@@ -33,4 +33,3 @@ This keeps expansion simple:
 - provide join token
 - run calibration benchmarks
 - node becomes eligible for routing
-

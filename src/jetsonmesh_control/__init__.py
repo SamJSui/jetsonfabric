@@ -1,2 +1,0 @@
-"""JetsonMesh control-plane service."""
-

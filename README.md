@@ -14,24 +14,25 @@ This is not a local chatbot project. The core question is:
 
 ## Initial Architecture
 
-- Control plane: API gateway, node registry, model registry, scheduler, dashboard API.
-- Jetson agent: reports node health, temperature, resources, queue state, and runtime capabilities.
-- Runtime workers: future adapters for llama.cpp, TensorRT/ONNX, Triton, and Jetson AI Lab containers.
+- Go control plane: API gateway, node registry, model registry, scheduler, dashboard API.
+- Go Jetson agent: reports node health, temperature, resources, queue state, and runtime capabilities.
+- C++ runtime lane: future adapters for llama.cpp, TensorRT/ONNX, Triton, layer-shard transport, and Jetson AI Lab containers.
 - Placement planner: decides whether to run single-node, replicated, layer-split, or cloud fallback.
 - Benchmark service: records tokens/sec, p50/p95 latency, memory, power/thermal, quality, and failures.
+- Python: benchmark analysis, graphs, and reports only.
 
 ## Quick Start
 
 Start the control plane:
 
 ```powershell
-py -m jetsonmesh_control.server --host 127.0.0.1 --port 52415 --join-token dev-token
+.\scripts\run-control.ps1
 ```
 
 Start a local test agent:
 
 ```powershell
-py -m jetsonmesh_agent.agent --control-url http://127.0.0.1:52415 --join-token dev-token --node-id dev-node
+.\scripts\run-agent.ps1 -NodeId dev-node
 ```
 
 Inspect cluster state:
@@ -50,7 +51,7 @@ the control-plane URL plus a join token.
 Expected join flow:
 
 ```bash
-jetsonmesh-agent \
+./jetsonmesh-agent \
   --control-url http://beelink:52415 \
   --join-token <token> \
   --node-id jetson-02
@@ -75,3 +76,13 @@ and benchmark history before placing model work on it.
 5. Route preview explaining why a model should or should not run on a node.
 6. A second Jetson added later to prove scaling, failover, and layer-split experiments.
 
+## Build
+
+Runtime services are Go-native:
+
+```powershell
+.\scripts\build.ps1
+```
+
+This produces Windows development binaries and Linux arm64 binaries for Jetson.
+See [docs/build.md](docs/build.md).

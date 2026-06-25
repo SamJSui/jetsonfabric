@@ -2,9 +2,9 @@
 
 ## Phase 0 - Scaffold
 
-- Control plane API
-- Node heartbeat endpoint
-- Agent heartbeat
+- Go control plane API
+- Go node heartbeat endpoint
+- Go agent heartbeat
 - Model registry
 - Route preview endpoint
 
@@ -28,6 +28,7 @@
 - Each worker stores its assigned layers and KV cache.
 - Send hidden states across the network during prefill/decode.
 - Measure latency, network bytes/token, memory, and temperature.
+- Prototype can be simple first; optimized runtime pieces should move into C++.
 
 ## Phase 4 - Profile-Driven Placement
 
@@ -48,3 +49,7 @@
 - Stream responses from the selected route.
 - Return route metadata for observability.
 
+## Python Boundary
+
+Python is allowed for benchmark analysis, graph generation, and reports. It
+should not own the production control plane, node agent, or distributed runtime.

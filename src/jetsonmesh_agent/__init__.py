@@ -1,2 +1,0 @@
-"""JetsonMesh node agent."""
-
