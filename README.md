@@ -29,6 +29,8 @@ This is not a local chatbot project. The core question is:
 - [docs/p0-single-jetson.md](docs/p0-single-jetson.md) captures the current
   priority: get one real model serving on one Jetson before distributed runtime
   work.
+- [docs/engineering-standards.md](docs/engineering-standards.md) captures the
+  required implementation quality bar.
 
 ## Quick Start
 

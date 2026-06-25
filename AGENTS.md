@@ -30,6 +30,17 @@ Interview pitch:
 - Example model config in `configs/models.example.json`.
 - PowerShell scripts in `scripts/` for local build and dev runs.
 
+## Engineering Standard
+
+This codebase should be held to a high production-quality bar even while it is
+early. Read [docs/engineering-standards.md](docs/engineering-standards.md)
+before making implementation changes.
+
+Do not merge work that is only a demo shortcut unless it is isolated, documented,
+and intentionally marked as temporary. A change is not complete until it has
+clear behavior, tests at the right level, explicit errors, and a verification
+command.
+
 Python is allowed for benchmark analysis, graphing, reports, and notebooks only.
 Do not move the production control plane, node agent, scheduler, or runtime
 transport into Python.
@@ -105,6 +116,10 @@ C:\Users\sui\Documents\tools\go\bin\go.exe fmt ./...
 C:\Users\sui\Documents\tools\go\bin\go.exe test ./...
 .\scripts\build.ps1
 ```
+
+For implementation changes, prefer the full sequence above. Add narrower tests
+only when they support the full check; do not use them as a substitute for final
+verification.
 
 For docs-only edits, at least run:
 
