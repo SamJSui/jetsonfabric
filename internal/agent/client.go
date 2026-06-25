@@ -16,14 +16,16 @@ type Client struct {
 	controlURL string
 	joinToken  string
 	nodeID     string
+	backends   []cluster.RuntimeBackend
 	httpClient *http.Client
 }
 
-func NewClient(controlURL string, joinToken string, nodeID string) *Client {
+func NewClient(controlURL string, joinToken string, nodeID string, backends []cluster.RuntimeBackend) *Client {
 	return &Client{
 		controlURL: strings.TrimRight(controlURL, "/"),
 		joinToken:  joinToken,
 		nodeID:     nodeID,
+		backends:   backends,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 }
@@ -37,6 +39,7 @@ func (c *Client) SendHeartbeat() error {
 		OS:           snapshot.OS,
 		Capabilities: snapshot.Capabilities,
 		Metrics:      snapshot.Metrics,
+		Backends:     c.backends,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

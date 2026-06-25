@@ -1,7 +1,8 @@
 param(
   [string]$HostName = "127.0.0.1",
   [int]$Port = 52415,
-  [string]$JoinToken = "dev-token"
+  [string]$JoinToken = "dev-token",
+  [string]$BenchmarksPath = "data\benchmarks.jsonl"
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,4 +13,4 @@ $GoCache = Join-Path $RepoRoot ".cache\go-build"
 New-Item -ItemType Directory -Force -Path $GoCache | Out-Null
 $env:GOCACHE = $GoCache
 
-& $Go run ./cmd/jetsonmesh-control --host $HostName --port $Port --join-token $JoinToken
+& $Go run ./cmd/jetsonmesh-control --host $HostName --port $Port --join-token $JoinToken --benchmarks $BenchmarksPath

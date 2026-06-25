@@ -113,7 +113,9 @@ And on the Jetson:
 ./jetsonmesh-agent \
   --control-url http://beelink:52415 \
   --join-token "$JETSONMESH_JOIN_TOKEN" \
-  --node-id jetson-01
+  --node-id jetson-01 \
+  --llama-url http://127.0.0.1:8080 \
+  --llama-models qwen2.5-coder-1.5b-q4
 ```
 
 Then from the development machine:
@@ -133,6 +135,23 @@ Invoke-RestMethod `
 
 The final response should come from the Jetson-hosted model backend, not from a
 placeholder handler.
+
+## Current Code Path
+
+The P0 serving path is now:
+
+```text
+POST /v1/chat/completions
+  -> control plane validates model and messages
+  -> route selector finds one compatible online node
+  -> node backend advertisement provides an OpenAI-compatible llama URL
+  -> runtime client calls <llama-url>/v1/chat/completions
+  -> control plane attaches route metadata
+  -> benchmark recorder writes data/benchmarks.jsonl
+```
+
+The backend can be a llama.cpp server or any temporary local server that speaks
+the OpenAI chat-completions shape.
 
 ## Explicitly Out Of Scope For P0
 

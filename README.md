@@ -43,7 +43,7 @@ Start the control plane:
 Start a local test agent:
 
 ```powershell
-.\scripts\run-agent.ps1 -NodeId dev-node
+.\scripts\run-agent.ps1 -NodeId dev-node -LlamaUrl http://127.0.0.1:8080 -LlamaModels qwen2.5-coder-1.5b-q4
 ```
 
 Inspect cluster state:
