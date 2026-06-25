@@ -72,14 +72,28 @@ The core research/product lane is profile-driven distributed inference on cheap
 edge compute:
 
 1. Discover nodes and collect hardware/runtime/thermal capabilities.
-2. Benchmark each node against known model backends.
-3. Plan routes for single-node, replica baseline, layer-split, and fallback
+2. Get one real model serving on one Jetson and route one prompt through the
+   control plane.
+3. Benchmark that single-Jetson backend against known prompts and metrics.
+4. Plan routes for single-node, replica baseline, layer-split, and fallback
    modes.
-4. Make route decisions observable with latency, throughput, memory, thermal,
+5. Make route decisions observable with latency, throughput, memory, thermal,
    power, network bytes/token, and failure data.
-5. Implement layer-split inference first as a clear distributed systems story.
-6. Keep tensor parallelism as an experimental path because network
+6. Implement layer-split inference only after the single-Jetson serving path is
+   real and benchmarked.
+7. Keep tensor parallelism as an experimental path because network
    synchronization can dominate on ordinary Ethernet.
+
+## Current Priority
+
+P0 is single-Jetson model serving. Do not begin layer-split implementation until
+JetsonMesh can:
+
+- register one Jetson agent;
+- detect useful Jetson hardware/runtime facts;
+- route a prompt through `jetsonmesh-control` to a real local backend;
+- return a model response through the control-plane API;
+- record a benchmark result with latency, throughput, memory, and thermal data.
 
 ## Verification Commands
 
@@ -111,12 +125,14 @@ and explain what changed.
 
 ## Next Useful Work
 
-- Add dev resource overrides so Windows smoke tests can preview plausible
-  Jetson memory/accelerator data.
-- Add authenticated join-token enforcement.
-- Add a benchmark result data model and persistence.
 - Add Jetson-specific detection for JetPack, CUDA, TensorRT, power mode,
   temperature, throttling, and `tegrastats`.
+- Add a model backend adapter for one single-Jetson runtime.
+- Implement `/v1/chat/completions` for the single-node route.
+- Add a benchmark result data model and persistence.
+- Add authenticated join-token enforcement.
+- Add dev resource overrides so Windows smoke tests can preview plausible
+  Jetson memory/accelerator data.
 - Implement a dashboard/API surface that mirrors exo-style node and route
   visibility.
 - Add a real single-Jetson model backend before attempting layer split.

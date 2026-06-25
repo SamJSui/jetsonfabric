@@ -88,6 +88,10 @@ Expected metrics:
 - failure and failover behavior
 - quality or task pass rate for benchmark prompts
 
+The first benchmark target is intentionally simple: one Jetson, one local model,
+one prompt routed through JetsonMesh, and one recorded result. Distributed
+runtime work starts only after that baseline exists.
+
 ## Layer Split Versus Tensor Parallel
 
 Layer split assigns different model layers to different nodes. A request flows
@@ -129,6 +133,14 @@ V0 services:
   eventually custom layer-shard execution.
 - benchmark/reporting lane: Python scripts or notebooks only for analysis and
   visualization.
+
+Current implementation priority:
+
+1. Single-Jetson model backend adapter.
+2. Control-plane routing to that backend.
+3. Benchmark record for the routed response.
+4. Node observability and route explanation.
+5. Only then, second-node and layer-split work.
 
 ## Ideal State
 

@@ -26,6 +26,9 @@ This is not a local chatbot project. The core question is:
 - [AGENTS.md](AGENTS.md) captures coding-agent instructions and project boundaries.
 - [docs/project-context.md](docs/project-context.md) captures the pitch, value-add,
   hardware strategy, and honest performance story.
+- [docs/p0-single-jetson.md](docs/p0-single-jetson.md) captures the current
+  priority: get one real model serving on one Jetson before distributed runtime
+  work.
 
 ## Quick Start
 
@@ -77,10 +80,11 @@ and benchmark history before placing model work on it.
 
 1. One control plane running on the Beelink or local machine.
 2. One Jetson agent reporting health and capabilities.
-3. One model profile in the registry.
-4. One benchmark result recorded for a local model backend.
-5. Route preview explaining why a model should or should not run on a node.
-6. A second Jetson added later to prove scaling, failover, and layer-split experiments.
+3. One real local model backend running on the Jetson.
+4. One prompt routed through JetsonMesh to that model.
+5. One benchmark result recorded for the local model backend.
+6. Route preview explaining why the model should or should not run on the node.
+7. A second Jetson added later to prove scaling, failover, and layer-split experiments.
 
 ## Build
 
