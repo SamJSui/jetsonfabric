@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/SamJSui/JetsonMesh/internal/api"
 	"github.com/SamJSui/JetsonMesh/internal/benchmarks"
 	"github.com/SamJSui/JetsonMesh/internal/chat"
 	"github.com/SamJSui/JetsonMesh/internal/cluster"
@@ -27,7 +28,7 @@ type Server struct {
 	nodes             map[string]cluster.NodeRecord
 }
 
-type BackendFactory func(cluster.RuntimeBackend) runtimeclient.ChatBackend
+type BackendFactory func(cluster.RuntimeBackend) (runtimeclient.ChatBackend, error)
 
 type Option func(*Server)
 
@@ -75,12 +76,12 @@ func NewServer(joinToken string, registry modelregistry.Registry, opts ...Option
 
 func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", s.handleHealth)
-	mux.HandleFunc("GET /v1/nodes", s.handleNodes)
-	mux.HandleFunc("GET /v1/models", s.handleModels)
-	mux.HandleFunc("GET /v1/routes/preview", s.handleRoutePreview)
-	mux.HandleFunc("POST /v1/agents/heartbeat", s.handleHeartbeat)
-	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
+	mux.HandleFunc(api.RouteHealth, s.handleHealth)
+	mux.HandleFunc(api.RouteNodes, s.handleNodes)
+	mux.HandleFunc(api.RouteModels, s.handleModels)
+	mux.HandleFunc(api.RoutePreview, s.handleRoutePreview)
+	mux.HandleFunc(api.RouteAgentHeartbeat, s.handleHeartbeat)
+	mux.HandleFunc(api.RouteChatCompletions, s.handleChatCompletions)
 	return mux
 }
 
@@ -121,17 +122,17 @@ func (s *Server) handleRoutePreview(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if !s.authorized(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		writeError(w, http.StatusUnauthorized, errorUnauthorized, "agent join token is missing or invalid")
 		return
 	}
 	defer r.Body.Close()
 	var heartbeat cluster.HeartbeatRequest
 	if err := json.NewDecoder(r.Body).Decode(&heartbeat); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
+		writeError(w, http.StatusBadRequest, errorInvalidJSON, "request body must be valid JSON")
 		return
 	}
 	if heartbeat.NodeID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing_node_id"})
+		writeError(w, http.StatusBadRequest, errorMissingNodeID, "node_id is required")
 		return
 	}
 	record := cluster.NodeRecord{
@@ -154,36 +155,41 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var req chat.CompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+		writeError(w, http.StatusBadRequest, errorInvalidJSON, "request body must be valid JSON")
 		return
 	}
 	req.Model = strings.TrimSpace(req.Model)
 	if req.Model == "" {
-		writeError(w, http.StatusBadRequest, "missing_model", "model is required")
+		writeError(w, http.StatusBadRequest, errorMissingModel, "model is required")
 		return
 	}
 	if len(req.Messages) == 0 {
-		writeError(w, http.StatusBadRequest, "missing_messages", "messages must contain at least one message")
+		writeError(w, http.StatusBadRequest, errorMissingMessages, "messages must contain at least one message")
 		return
 	}
 	model, ok := s.registry.Find(req.Model)
 	if !ok {
-		writeError(w, http.StatusBadRequest, "unknown_model", fmt.Sprintf("model %q is not in the registry", req.Model))
+		writeError(w, http.StatusBadRequest, errorUnknownModel, fmt.Sprintf("model %q is not in the registry", req.Model))
 		return
 	}
 	node, backend, err := s.selectSingleNodeBackend(model)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "no_single_node_route", err.Error())
+		writeError(w, http.StatusServiceUnavailable, errorNoSingleNodeRoute, err.Error())
 		return
 	}
 
-	resp, stats, err := s.backendFactory(backend).Complete(r.Context(), req)
+	chatBackend, err := s.backendFactory(backend)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "backend_request_failed", err.Error())
+		writeError(w, http.StatusBadGateway, errorBackendConfigInvalid, err.Error())
+		return
+	}
+	resp, stats, err := chatBackend.Complete(r.Context(), req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, errorBackendRequestFailed, err.Error())
 		return
 	}
 	resp.Route = &chat.RouteMetadata{
-		Mode:        "single_node",
+		Mode:        cluster.RouteModeSingleNode,
 		NodeID:      node.NodeID,
 		BackendID:   backend.ID,
 		BackendKind: backend.Kind,
@@ -194,17 +200,17 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		Timestamp:    s.now(),
 		ModelID:      model.ID,
 		NodeID:       node.NodeID,
-		RouteMode:    "single_node",
+		RouteMode:    cluster.RouteModeSingleNode,
 		BackendID:    backend.ID,
 		BackendKind:  backend.Kind,
 		LatencyMS:    stats.Latency.Milliseconds(),
 		OutputTokens: stats.OutputTokens,
 		TokensPerSec: stats.TokensPerSec,
-		MemoryGB:     optionalFloat(node.Capabilities, "memory_gb"),
-		TemperatureC: optionalFloat(node.Metrics, "temperature_c"),
+		MemoryGB:     optionalFloat(node.Capabilities, cluster.CapabilityMemoryGB),
+		TemperatureC: optionalFloat(node.Metrics, cluster.MetricTemperatureC),
 	}
 	if err := s.benchmarkRecorder.Record(r.Context(), record); err != nil {
-		writeError(w, http.StatusInternalServerError, "benchmark_record_failed", err.Error())
+		writeError(w, http.StatusInternalServerError, errorBenchmarkRecordFailed, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -223,9 +229,24 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
-func writeError(w http.ResponseWriter, status int, code string, message string) {
+type errorCode string
+
+const (
+	errorUnauthorized          errorCode = "unauthorized"
+	errorInvalidJSON           errorCode = "invalid_json"
+	errorMissingNodeID         errorCode = "missing_node_id"
+	errorMissingModel          errorCode = "missing_model"
+	errorMissingMessages       errorCode = "missing_messages"
+	errorUnknownModel          errorCode = "unknown_model"
+	errorNoSingleNodeRoute     errorCode = "no_single_node_route"
+	errorBackendConfigInvalid  errorCode = "backend_config_invalid"
+	errorBackendRequestFailed  errorCode = "backend_request_failed"
+	errorBenchmarkRecordFailed errorCode = "benchmark_record_failed"
+)
+
+func writeError(w http.ResponseWriter, status int, code errorCode, message string) {
 	writeJSON(w, status, map[string]string{
-		"error":   code,
+		"error":   string(code),
 		"message": message,
 	})
 }
@@ -244,7 +265,7 @@ func fallbackMap(value map[string]any) map[string]any {
 	return value
 }
 
-func defaultBackendFactory(backend cluster.RuntimeBackend) runtimeclient.ChatBackend {
+func defaultBackendFactory(backend cluster.RuntimeBackend) (runtimeclient.ChatBackend, error) {
 	return runtimeclient.NewOpenAIClient(backend.BaseURL, 60*time.Second)
 }
 

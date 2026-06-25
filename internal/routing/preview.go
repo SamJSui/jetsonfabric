@@ -6,28 +6,37 @@ import (
 	"github.com/SamJSui/JetsonMesh/internal/cluster"
 )
 
+type Reason string
+
+const (
+	ReasonUnknownModel       Reason = "unknown_model"
+	ReasonInsufficientMemory Reason = "insufficient_memory"
+	ReasonMissingAccelerator Reason = "missing_accelerator"
+	ReasonCandidate          Reason = "candidate"
+)
+
 type PlacementPreview struct {
 	NodeID        string `json:"node_id"`
 	Valid         bool   `json:"valid"`
 	MemoryOK      bool   `json:"memory_ok"`
 	AcceleratorOK bool   `json:"accelerator_ok"`
-	Reason        string `json:"reason"`
+	Reason        Reason `json:"reason"`
 }
 
 type RoutePreview struct {
 	Model      string             `json:"model"`
 	Valid      bool               `json:"valid"`
-	Reason     string             `json:"reason,omitempty"`
+	Reason     Reason             `json:"reason,omitempty"`
 	Placements []PlacementPreview `json:"placements,omitempty"`
 }
 
 func Preview(model cluster.ModelProfile, nodes []cluster.NodeRecord) RoutePreview {
 	placements := make([]PlacementPreview, 0, len(nodes))
 	for _, node := range nodes {
-		memory := floatCapability(node.Capabilities, "memory_gb")
+		memory := floatCapability(node.Capabilities, cluster.CapabilityMemoryGB)
 		acceleratorOK := true
 		if model.PreferredAccelerator != nil && *model.PreferredAccelerator != "" {
-			acceleratorOK = containsStringCapability(node.Capabilities, "accelerators", *model.PreferredAccelerator)
+			acceleratorOK = containsStringCapability(node.Capabilities, cluster.CapabilityAccelerators, *model.PreferredAccelerator)
 		}
 		memoryOK := memory >= model.MinMemoryGB
 		placements = append(placements, PlacementPreview{
@@ -42,19 +51,23 @@ func Preview(model cluster.ModelProfile, nodes []cluster.NodeRecord) RoutePrevie
 }
 
 func UnknownModel(modelID string) RoutePreview {
-	return RoutePreview{Model: modelID, Valid: false, Reason: "unknown_model"}
+	return RoutePreview{Model: modelID, Valid: false, Reason: ReasonUnknownModel}
 }
 
-func routeReason(memoryOK bool, acceleratorOK bool, accelerator *string) string {
+func MissingAcceleratorReason(accelerator string) Reason {
+	return Reason(fmt.Sprintf("%s:%s", ReasonMissingAccelerator, accelerator))
+}
+
+func routeReason(memoryOK bool, acceleratorOK bool, accelerator *string) Reason {
 	switch {
 	case !memoryOK:
-		return "insufficient_memory"
+		return ReasonInsufficientMemory
 	case !acceleratorOK && accelerator != nil:
-		return fmt.Sprintf("missing_accelerator:%s", *accelerator)
+		return MissingAcceleratorReason(*accelerator)
 	case !acceleratorOK:
-		return "missing_accelerator"
+		return ReasonMissingAccelerator
 	default:
-		return "candidate"
+		return ReasonCandidate
 	}
 }
 

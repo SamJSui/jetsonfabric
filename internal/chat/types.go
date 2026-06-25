@@ -1,5 +1,7 @@
 package chat
 
+import "github.com/SamJSui/JetsonMesh/internal/cluster"
+
 type CompletionRequest struct {
 	Model    string    `json:"model"`
 	Messages []Message `json:"messages"`
@@ -34,9 +36,9 @@ type Usage struct {
 }
 
 type RouteMetadata struct {
-	Mode        string `json:"mode"`
-	NodeID      string `json:"node_id"`
-	BackendID   string `json:"backend_id"`
-	BackendKind string `json:"backend_kind"`
-	LatencyMS   int64  `json:"latency_ms"`
+	Mode        cluster.RouteMode   `json:"mode"`
+	NodeID      string              `json:"node_id"`
+	BackendID   string              `json:"backend_id"`
+	BackendKind cluster.RuntimeKind `json:"backend_kind"`
+	LatencyMS   int64               `json:"latency_ms"`
 }

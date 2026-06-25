@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SamJSui/JetsonMesh/internal/api"
 	"github.com/SamJSui/JetsonMesh/internal/benchmarks"
 	"github.com/SamJSui/JetsonMesh/internal/chat"
 	"github.com/SamJSui/JetsonMesh/internal/cluster"
@@ -17,7 +18,7 @@ import (
 
 func TestChatCompletionsRoutesToSingleNodeBackend(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
+		if r.URL.Path != api.PathChatCompletions {
 			t.Fatalf("unexpected backend path: %s", r.URL.Path)
 		}
 		var req chat.CompletionRequest
@@ -59,16 +60,16 @@ func TestChatCompletionsRoutesToSingleNodeBackend(t *testing.T) {
 		Arch:   "arm64",
 		OS:     "linux",
 		Capabilities: map[string]any{
-			"memory_gb":    8.0,
-			"accelerators": []any{"jetson", "cuda"},
+			cluster.CapabilityMemoryGB:     8.0,
+			cluster.CapabilityAccelerators: []any{cluster.AcceleratorJetson, cluster.AcceleratorCUDA},
 		},
 		Metrics: map[string]any{
-			"temperature_c": 42.5,
+			cluster.MetricTemperatureC: 42.5,
 		},
 		Backends: []cluster.RuntimeBackend{
 			{
-				ID:               "llama-local",
-				Kind:             "llama.cpp",
+				ID:               cluster.BackendIDLlamaLocal,
+				Kind:             cluster.RuntimeKindLlamaCPP,
 				BaseURL:          backend.URL,
 				Models:           []string{"qwen2.5-coder-1.5b-q4"},
 				OpenAICompatible: true,
@@ -95,14 +96,14 @@ func TestChatCompletionsRoutesToSingleNodeBackend(t *testing.T) {
 	if decoded.Route == nil {
 		t.Fatal("expected route metadata")
 	}
-	if decoded.Route.Mode != "single_node" || decoded.Route.NodeID != "jetson-01" || decoded.Route.BackendID != "llama-local" {
+	if decoded.Route.Mode != cluster.RouteModeSingleNode || decoded.Route.NodeID != "jetson-01" || decoded.Route.BackendID != cluster.BackendIDLlamaLocal {
 		t.Fatalf("unexpected route metadata: %+v", decoded.Route)
 	}
 	if len(recorder.records) != 1 {
 		t.Fatalf("expected one benchmark record, got %d", len(recorder.records))
 	}
 	record := recorder.records[0]
-	if record.ModelID != "qwen2.5-coder-1.5b-q4" || record.NodeID != "jetson-01" || record.RouteMode != "single_node" {
+	if record.ModelID != "qwen2.5-coder-1.5b-q4" || record.NodeID != "jetson-01" || record.RouteMode != cluster.RouteModeSingleNode {
 		t.Fatalf("unexpected benchmark record: %+v", record)
 	}
 	if record.MemoryGB == nil || *record.MemoryGB != 8.0 {
@@ -118,7 +119,7 @@ func TestChatCompletionsRejectsMissingBackend(t *testing.T) {
 	registerNode(t, handler, cluster.HeartbeatRequest{
 		NodeID: "jetson-01",
 		Capabilities: map[string]any{
-			"memory_gb": 8.0,
+			cluster.CapabilityMemoryGB: 8.0,
 		},
 	})
 
@@ -131,7 +132,7 @@ func TestChatCompletionsRejectsMissingBackend(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected status 503, got %d: %s", response.Code, response.Body.String())
 	}
-	assertErrorCode(t, response, "no_single_node_route")
+	assertErrorCode(t, response, errorNoSingleNodeRoute)
 }
 
 func TestChatCompletionsRejectsUnknownModel(t *testing.T) {
@@ -145,7 +146,37 @@ func TestChatCompletionsRejectsUnknownModel(t *testing.T) {
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d: %s", response.Code, response.Body.String())
 	}
-	assertErrorCode(t, response, "unknown_model")
+	assertErrorCode(t, response, errorUnknownModel)
+}
+
+func TestChatCompletionsRejectsInvalidBackendURL(t *testing.T) {
+	handler := NewServer("dev-token", testRegistry()).Router()
+	registerNode(t, handler, cluster.HeartbeatRequest{
+		NodeID: "jetson-01",
+		Capabilities: map[string]any{
+			cluster.CapabilityMemoryGB: 8.0,
+		},
+		Backends: []cluster.RuntimeBackend{
+			{
+				ID:               cluster.BackendIDLlamaLocal,
+				Kind:             cluster.RuntimeKindLlamaCPP,
+				BaseURL:          "127.0.0.1:8080",
+				Models:           []string{"qwen2.5-coder-1.5b-q4"},
+				OpenAICompatible: true,
+			},
+		},
+	})
+
+	response := postChat(t, handler, chat.CompletionRequest{
+		Model: "qwen2.5-coder-1.5b-q4",
+		Messages: []chat.Message{
+			{Role: "user", Content: "Say hello."},
+		},
+	})
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("expected status 502, got %d: %s", response.Code, response.Body.String())
+	}
+	assertErrorCode(t, response, errorBackendConfigInvalid)
 }
 
 func testRegistry() modelregistry.Registry {
@@ -154,9 +185,9 @@ func testRegistry() modelregistry.Registry {
 			{
 				ID:             "qwen2.5-coder-1.5b-q4",
 				Family:         "llm",
-				Runtime:        "llama.cpp",
+				Runtime:        cluster.RuntimeKindLlamaCPP,
 				MinMemoryGB:    3,
-				PlacementModes: []string{"single_node"},
+				PlacementModes: []cluster.RouteMode{cluster.RouteModeSingleNode},
 			},
 		},
 	}
@@ -168,7 +199,7 @@ func registerNode(t *testing.T, handler http.Handler, heartbeat cluster.Heartbea
 	if err != nil {
 		t.Fatalf("marshal heartbeat: %v", err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/v1/agents/heartbeat", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, api.PathAgentHeartbeat, bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer dev-token")
 	response := httptest.NewRecorder()
@@ -184,20 +215,20 @@ func postChat(t *testing.T, handler http.Handler, requestBody chat.CompletionReq
 	if err != nil {
 		t.Fatalf("marshal chat request: %v", err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, api.PathChatCompletions, bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
 }
 
-func assertErrorCode(t *testing.T, response *httptest.ResponseRecorder, expected string) {
+func assertErrorCode(t *testing.T, response *httptest.ResponseRecorder, expected errorCode) {
 	t.Helper()
 	var payload map[string]string
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode error response: %v", err)
 	}
-	if payload["error"] != expected {
+	if payload["error"] != string(expected) {
 		t.Fatalf("expected error %q, got %q", expected, payload["error"])
 	}
 }

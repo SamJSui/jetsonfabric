@@ -8,21 +8,23 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/SamJSui/JetsonMesh/internal/cluster"
 )
 
 type Record struct {
-	Timestamp    time.Time `json:"timestamp"`
-	ModelID      string    `json:"model_id"`
-	NodeID       string    `json:"node_id"`
-	RouteMode    string    `json:"route_mode"`
-	BackendID    string    `json:"backend_id"`
-	BackendKind  string    `json:"backend_kind"`
-	LatencyMS    int64     `json:"latency_ms"`
-	OutputTokens int       `json:"output_tokens,omitempty"`
-	TokensPerSec float64   `json:"tokens_per_sec,omitempty"`
-	MemoryGB     *float64  `json:"memory_gb,omitempty"`
-	TemperatureC *float64  `json:"temperature_c,omitempty"`
-	Error        string    `json:"error,omitempty"`
+	Timestamp    time.Time           `json:"timestamp"`
+	ModelID      string              `json:"model_id"`
+	NodeID       string              `json:"node_id"`
+	RouteMode    cluster.RouteMode   `json:"route_mode"`
+	BackendID    string              `json:"backend_id"`
+	BackendKind  cluster.RuntimeKind `json:"backend_kind"`
+	LatencyMS    int64               `json:"latency_ms"`
+	OutputTokens int                 `json:"output_tokens,omitempty"`
+	TokensPerSec float64             `json:"tokens_per_sec,omitempty"`
+	MemoryGB     *float64            `json:"memory_gb,omitempty"`
+	TemperatureC *float64            `json:"temperature_c,omitempty"`
+	Error        string              `json:"error,omitempty"`
 }
 
 type Recorder interface {

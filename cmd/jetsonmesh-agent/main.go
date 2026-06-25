@@ -50,9 +50,9 @@ func advertisedBackends(llamaURL string, llamaModels string) []cluster.RuntimeBa
 	}
 	return []cluster.RuntimeBackend{
 		{
-			ID:               "llama-local",
-			Kind:             "llama.cpp",
-			BaseURL:          strings.TrimRight(llamaURL, "/"),
+			ID:               cluster.BackendIDLlamaLocal,
+			Kind:             cluster.RuntimeKindLlamaCPP,
+			BaseURL:          llamaURL,
 			Models:           splitCSV(llamaModels),
 			OpenAICompatible: true,
 		},

@@ -7,7 +7,7 @@ import (
 )
 
 func TestPreviewRejectsMissingAccelerator(t *testing.T) {
-	accel := "cuda"
+	accel := cluster.AcceleratorCUDA
 	model := cluster.ModelProfile{
 		ID:                   "model",
 		MinMemoryGB:          4,
@@ -17,8 +17,8 @@ func TestPreviewRejectsMissingAccelerator(t *testing.T) {
 		{
 			NodeID: "cpu-node",
 			Capabilities: map[string]any{
-				"memory_gb":    8.0,
-				"accelerators": []any{},
+				cluster.CapabilityMemoryGB:     8.0,
+				cluster.CapabilityAccelerators: []any{},
 			},
 		},
 	}
@@ -26,13 +26,14 @@ func TestPreviewRejectsMissingAccelerator(t *testing.T) {
 	if preview.Placements[0].Valid {
 		t.Fatalf("expected placement to be invalid")
 	}
-	if preview.Placements[0].Reason != "missing_accelerator:cuda" {
+	expectedReason := MissingAcceleratorReason(cluster.AcceleratorCUDA)
+	if preview.Placements[0].Reason != expectedReason {
 		t.Fatalf("unexpected reason: %s", preview.Placements[0].Reason)
 	}
 }
 
 func TestPreviewAcceptsCandidate(t *testing.T) {
-	accel := "cuda"
+	accel := cluster.AcceleratorCUDA
 	model := cluster.ModelProfile{
 		ID:                   "model",
 		MinMemoryGB:          4,
@@ -42,8 +43,8 @@ func TestPreviewAcceptsCandidate(t *testing.T) {
 		{
 			NodeID: "jetson-node",
 			Capabilities: map[string]any{
-				"memory_gb":    8.0,
-				"accelerators": []any{"cuda", "jetson"},
+				cluster.CapabilityMemoryGB:     8.0,
+				cluster.CapabilityAccelerators: []any{cluster.AcceleratorCUDA, cluster.AcceleratorJetson},
 			},
 		},
 	}

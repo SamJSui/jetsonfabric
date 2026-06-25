@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SamJSui/JetsonMesh/internal/api"
 	"github.com/SamJSui/JetsonMesh/internal/chat"
 )
 
@@ -24,18 +25,22 @@ type ChatBackend interface {
 }
 
 type OpenAIClient struct {
-	baseURL string
-	http    *http.Client
+	chatCompletionsURL string
+	http               *http.Client
 }
 
-func NewOpenAIClient(baseURL string, timeout time.Duration) *OpenAIClient {
+func NewOpenAIClient(baseURL string, timeout time.Duration) (*OpenAIClient, error) {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
-	return &OpenAIClient{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		http:    &http.Client{Timeout: timeout},
+	chatCompletionsURL, err := api.JoinBasePath(baseURL, api.PathChatCompletions)
+	if err != nil {
+		return nil, err
 	}
+	return &OpenAIClient{
+		chatCompletionsURL: chatCompletionsURL,
+		http:               &http.Client{Timeout: timeout},
+	}, nil
 }
 
 func (c *OpenAIClient) Complete(ctx context.Context, req chat.CompletionRequest) (chat.CompletionResponse, Stats, error) {
@@ -44,7 +49,7 @@ func (c *OpenAIClient) Complete(ctx context.Context, req chat.CompletionRequest)
 	if err != nil {
 		return chat.CompletionResponse{}, Stats{}, fmt.Errorf("encode chat request: %w", err)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/chat/completions", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.chatCompletionsURL, bytes.NewReader(body))
 	if err != nil {
 		return chat.CompletionResponse{}, Stats{}, fmt.Errorf("create backend request: %w", err)
 	}
@@ -52,13 +57,13 @@ func (c *OpenAIClient) Complete(ctx context.Context, req chat.CompletionRequest)
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
-		return chat.CompletionResponse{}, Stats{}, fmt.Errorf("call backend %s: %w", c.baseURL, err)
+		return chat.CompletionResponse{}, Stats{}, fmt.Errorf("call backend %s: %w", c.chatCompletionsURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return chat.CompletionResponse{}, Stats{}, fmt.Errorf("backend %s returned %s: %s", c.baseURL, resp.Status, strings.TrimSpace(string(snippet)))
+		return chat.CompletionResponse{}, Stats{}, fmt.Errorf("backend %s returned %s: %s", c.chatCompletionsURL, resp.Status, strings.TrimSpace(string(snippet)))
 	}
 
 	var decoded chat.CompletionResponse
@@ -69,7 +74,7 @@ func (c *OpenAIClient) Complete(ctx context.Context, req chat.CompletionRequest)
 		decoded.Model = req.Model
 	}
 	if len(decoded.Choices) == 0 {
-		return chat.CompletionResponse{}, Stats{}, fmt.Errorf("backend %s returned no choices", c.baseURL)
+		return chat.CompletionResponse{}, Stats{}, fmt.Errorf("backend %s returned no choices", c.chatCompletionsURL)
 	}
 
 	elapsed := time.Since(start)

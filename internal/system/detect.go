@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/SamJSui/JetsonMesh/internal/cluster"
 )
 
 type Snapshot struct {
@@ -21,13 +23,13 @@ func Detect() Snapshot {
 	hostname, _ := os.Hostname()
 	accelerators := []string{}
 	if commandExists("tegrastats") {
-		accelerators = append(accelerators, "jetson", "cuda")
+		accelerators = append(accelerators, cluster.AcceleratorJetson, cluster.AcceleratorCUDA)
 	}
 	capabilities := map[string]any{
-		"memory_gb":    memoryGB(),
-		"accelerators": accelerators,
-		"runtimes":     runtimes(),
-		"tegrastats":   commandExists("tegrastats"),
+		cluster.CapabilityMemoryGB:     memoryGB(),
+		cluster.CapabilityAccelerators: accelerators,
+		"runtimes":                     runtimes(),
+		"tegrastats":                   commandExists("tegrastats"),
 	}
 	metrics := map[string]any{
 		"load_average": loadAverage(),
@@ -48,9 +50,9 @@ func Detect() Snapshot {
 func runtimes() []string {
 	checks := map[string]string{
 		"docker":    "docker",
-		"trtexec":   "tensorrt",
-		"llama-cli": "llama.cpp",
-		"ollama":    "ollama",
+		"trtexec":   string(cluster.RuntimeKindTensorRT),
+		"llama-cli": string(cluster.RuntimeKindLlamaCPP),
+		"ollama":    string(cluster.RuntimeKindOllama),
 	}
 	found := []string{}
 	for command, name := range checks {

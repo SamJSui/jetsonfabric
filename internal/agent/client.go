@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SamJSui/JetsonMesh/internal/api"
 	"github.com/SamJSui/JetsonMesh/internal/cluster"
 	"github.com/SamJSui/JetsonMesh/internal/system"
 )
@@ -22,7 +23,7 @@ type Client struct {
 
 func NewClient(controlURL string, joinToken string, nodeID string, backends []cluster.RuntimeBackend) *Client {
 	return &Client{
-		controlURL: strings.TrimRight(controlURL, "/"),
+		controlURL: strings.TrimSpace(controlURL),
 		joinToken:  joinToken,
 		nodeID:     nodeID,
 		backends:   backends,
@@ -45,7 +46,11 @@ func (c *Client) SendHeartbeat() error {
 	if err != nil {
 		return err
 	}
-	request, err := http.NewRequest(http.MethodPost, c.controlURL+"/v1/agents/heartbeat", bytes.NewReader(body))
+	url, err := api.JoinBasePath(c.controlURL, api.PathAgentHeartbeat)
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
