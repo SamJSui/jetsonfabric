@@ -90,8 +90,9 @@ func TestChatCompletionsRoutesToSingleNodeBackend(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
 		t.Fatalf("decode chat response: %v", err)
 	}
-	if decoded.Choices[0].Message.Content != "hello from jetson" {
-		t.Fatalf("unexpected response content: %s", decoded.Choices[0].Message.Content)
+	choice := firstChoice(t, decoded)
+	if choice.Message.Content != "hello from jetson" {
+		t.Fatalf("unexpected response content: %s", choice.Message.Content)
 	}
 	if decoded.Route == nil {
 		t.Fatal("expected route metadata")
@@ -102,7 +103,7 @@ func TestChatCompletionsRoutesToSingleNodeBackend(t *testing.T) {
 	if len(recorder.records) != 1 {
 		t.Fatalf("expected one benchmark record, got %d", len(recorder.records))
 	}
-	record := recorder.records[0]
+	record := firstRecord(t, recorder.records)
 	if record.ModelID != "qwen2.5-coder-1.5b-q4" || record.NodeID != "jetson-01" || record.RouteMode != cluster.RouteModeSingleNode {
 		t.Fatalf("unexpected benchmark record: %+v", record)
 	}
@@ -231,6 +232,24 @@ func assertErrorCode(t *testing.T, response *httptest.ResponseRecorder, expected
 	if payload["error"] != string(expected) {
 		t.Fatalf("expected error %q, got %q", expected, payload["error"])
 	}
+}
+
+func firstChoice(t *testing.T, response chat.CompletionResponse) chat.Choice {
+	t.Helper()
+	for _, choice := range response.Choices {
+		return choice
+	}
+	t.Fatal("expected at least one choice")
+	return chat.Choice{}
+}
+
+func firstRecord(t *testing.T, records []benchmarks.Record) benchmarks.Record {
+	t.Helper()
+	for _, record := range records {
+		return record
+	}
+	t.Fatal("expected at least one benchmark record")
+	return benchmarks.Record{}
 }
 
 type recordingRecorder struct {

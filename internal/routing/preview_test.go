@@ -23,12 +23,13 @@ func TestPreviewRejectsMissingAccelerator(t *testing.T) {
 		},
 	}
 	preview := Preview(model, nodes)
-	if preview.Placements[0].Valid {
+	placement := firstPlacement(t, preview)
+	if placement.Valid {
 		t.Fatalf("expected placement to be invalid")
 	}
 	expectedReason := MissingAcceleratorReason(cluster.AcceleratorCUDA)
-	if preview.Placements[0].Reason != expectedReason {
-		t.Fatalf("unexpected reason: %s", preview.Placements[0].Reason)
+	if placement.Reason != expectedReason {
+		t.Fatalf("unexpected reason: %s", placement.Reason)
 	}
 }
 
@@ -49,7 +50,17 @@ func TestPreviewAcceptsCandidate(t *testing.T) {
 		},
 	}
 	preview := Preview(model, nodes)
-	if !preview.Placements[0].Valid {
-		t.Fatalf("expected placement to be valid: %+v", preview.Placements[0])
+	placement := firstPlacement(t, preview)
+	if !placement.Valid {
+		t.Fatalf("expected placement to be valid: %+v", placement)
 	}
+}
+
+func firstPlacement(t *testing.T, preview RoutePreview) PlacementPreview {
+	t.Helper()
+	for _, placement := range preview.Placements {
+		return placement
+	}
+	t.Fatal("expected at least one placement")
+	return PlacementPreview{}
 }

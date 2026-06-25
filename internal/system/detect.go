@@ -16,8 +16,10 @@ const (
 	procMeminfoPath = "/proc/meminfo"
 	procLoadavgPath = "/proc/loadavg"
 
-	meminfoTotalField = "MemTotal:"
-	kibPerGiB         = 1024 * 1024
+	meminfoTotalField     = "MemTotal:"
+	meminfoValueField     = 1
+	loadAverageFieldCount = 3
+	kibPerGiB             = 1024 * 1024
 )
 
 const (
@@ -111,10 +113,11 @@ func parseMemTotalGB(reader io.Reader) float64 {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) < 2 {
+		rawKB, ok := fieldAt(fields, meminfoValueField)
+		if !ok {
 			return 0
 		}
-		kb, err := strconv.ParseFloat(fields[1], 64)
+		kb, err := strconv.ParseFloat(rawKB, 64)
 		if err != nil {
 			return 0
 		}
@@ -128,21 +131,32 @@ func loadAverage() []float64 {
 	if err != nil {
 		return nil
 	}
-	fields := strings.Fields(string(content))
-	if len(fields) < 3 {
-		return nil
-	}
-	values := make([]float64, 0, 3)
-	for _, field := range fields[:3] {
+	values := make([]float64, 0, loadAverageFieldCount)
+	for _, field := range strings.Fields(string(content)) {
+		if len(values) == loadAverageFieldCount {
+			break
+		}
 		value, err := strconv.ParseFloat(field, 64)
 		if err != nil {
 			return nil
 		}
 		values = append(values, round2(value))
 	}
+	if len(values) != loadAverageFieldCount {
+		return nil
+	}
 	return values
 }
 
 func round2(value float64) float64 {
 	return float64(int(value*100+0.5)) / 100
+}
+
+func fieldAt(fields []string, target int) (string, bool) {
+	for index, field := range fields {
+		if index == target {
+			return field, true
+		}
+	}
+	return "", false
 }

@@ -1,10 +1,11 @@
 package control
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -96,7 +97,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, _ *http.Request) {
 		nodes = append(nodes, node)
 	}
 	s.mu.RUnlock()
-	sort.Slice(nodes, func(i, j int) bool { return nodes[i].NodeID < nodes[j].NodeID })
+	sortNodesByID(nodes)
 	writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes})
 }
 
@@ -276,7 +277,7 @@ func (s *Server) selectSingleNodeBackend(model cluster.ModelProfile) (cluster.No
 		nodes = append(nodes, node)
 	}
 	s.mu.RUnlock()
-	sort.Slice(nodes, func(i, j int) bool { return nodes[i].NodeID < nodes[j].NodeID })
+	sortNodesByID(nodes)
 
 	preview := routing.Preview(model, nodes)
 	placementByNode := make(map[string]routing.PlacementPreview, len(preview.Placements))
@@ -343,4 +344,10 @@ func optionalFloat(values map[string]any, key string) *float64 {
 		return nil
 	}
 	return &output
+}
+
+func sortNodesByID(nodes []cluster.NodeRecord) {
+	slices.SortFunc(nodes, func(left cluster.NodeRecord, right cluster.NodeRecord) int {
+		return cmp.Compare(left.NodeID, right.NodeID)
+	})
 }
