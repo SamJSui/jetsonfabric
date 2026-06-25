@@ -1,0 +1,29 @@
+{
+  "models": [
+    {
+      "id": "qwen2.5-coder-1.5b-q4",
+      "family": "llm",
+      "runtime": "llama.cpp",
+      "min_memory_gb": 3,
+      "preferred_accelerator": null,
+      "placement_modes": ["single_node", "replica_baseline"]
+    },
+    {
+      "id": "qwen2.5-coder-7b-q4",
+      "family": "llm",
+      "runtime": "llama.cpp",
+      "min_memory_gb": 8,
+      "preferred_accelerator": "cuda",
+      "placement_modes": ["single_node", "layer_split_experiment"]
+    },
+    {
+      "id": "yolo-tensorrt",
+      "family": "vision",
+      "runtime": "tensorrt",
+      "min_memory_gb": 2,
+      "preferred_accelerator": "cuda",
+      "placement_modes": ["single_node", "replica_baseline"]
+    }
+  ]
+}
+

@@ -1,0 +1,16 @@
+[project]
+name = "jetsonmesh"
+version = "0.1.0"
+description = "Exo-inspired edge AI fabric for Jetson-class clusters"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+jetsonmesh-control = "jetsonmesh_control.server:main"
+jetsonmesh-agent = "jetsonmesh_agent.agent:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
