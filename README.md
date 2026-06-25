@@ -21,6 +21,12 @@ This is not a local chatbot project. The core question is:
 - Benchmark service: records tokens/sec, p50/p95 latency, memory, power/thermal, quality, and failures.
 - Python: benchmark analysis, graphs, and reports only.
 
+## Project Context
+
+- [AGENTS.md](AGENTS.md) captures coding-agent instructions and project boundaries.
+- [docs/project-context.md](docs/project-context.md) captures the pitch, value-add,
+  hardware strategy, and honest performance story.
+
 ## Quick Start
 
 Start the control plane:
