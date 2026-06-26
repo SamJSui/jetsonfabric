@@ -12,44 +12,22 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/modelregistry"
 )
 
-const (
-	flagHost       = "host"
-	flagPort       = "port"
-	flagJoinToken  = "join-token"
-	flagModels     = "models"
-	flagBenchmarks = "benchmarks"
-)
-
-const (
-	usageHost       = "host interface to bind"
-	usagePort       = "port to bind"
-	usageJoinToken  = "agent join token"
-	usageModels     = "model registry JSON path"
-	usageBenchmarks = "benchmark JSONL output path"
-)
-
-const (
-	addressFormat       = "%s:%d"
-	logLoadRegistry     = "load model registry: %v"
-	logControlListening = "JetsonFabric control plane listening on http://%s"
-)
-
 func main() {
-	host := flag.String(flagHost, config.DefaultControlHost, usageHost)
-	port := flag.Int(flagPort, config.DefaultControlPort, usagePort)
-	joinToken := flag.String(flagJoinToken, config.DefaultJoinToken, usageJoinToken)
-	modelsPath := flag.String(flagModels, config.DefaultModelRegistryPath(), usageModels)
-	benchmarksPath := flag.String(flagBenchmarks, config.DefaultBenchmarksPath(), usageBenchmarks)
+	host := flag.String("host", config.DefaultControlHost, "host interface to bind")
+	port := flag.Int("port", config.DefaultControlPort, "port to bind")
+	joinToken := flag.String("join-token", config.DefaultJoinToken, "agent join token")
+	modelsPath := flag.String("models", config.DefaultModelRegistryPath(), "model registry JSON path")
+	benchmarksPath := flag.String("benchmarks", config.DefaultBenchmarksPath(), "benchmark JSONL output path")
 	flag.Parse()
 
 	registry, err := modelregistry.Load(*modelsPath)
 	if err != nil {
-		log.Fatalf(logLoadRegistry, err)
+		log.Fatalf("load model registry: %v", err)
 	}
 
 	server := control.NewServer(*joinToken, registry, control.WithBenchmarkRecorder(benchmarks.NewJSONLRecorder(*benchmarksPath)))
-	addr := fmt.Sprintf(addressFormat, *host, *port)
-	log.Printf(logControlListening, addr)
+	addr := fmt.Sprintf("%s:%d", *host, *port)
+	log.Printf("JetsonFabric control plane listening on http://%s", addr)
 	if err := http.ListenAndServe(addr, server.Router()); err != nil {
 		log.Fatal(err)
 	}
