@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SamJSui/JetsonMesh/internal/api"
-	"github.com/SamJSui/JetsonMesh/internal/chat"
+	"github.com/SamJSui/jetsonfabric/internal/api"
+	"github.com/SamJSui/jetsonfabric/internal/chat"
 )
 
 type Stats struct {

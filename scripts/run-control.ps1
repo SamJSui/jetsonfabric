@@ -13,4 +13,4 @@ $GoCache = Join-Path $RepoRoot ".cache\go-build"
 New-Item -ItemType Directory -Force -Path $GoCache | Out-Null
 $env:GOCACHE = $GoCache
 
-& $Go run ./cmd/jetsonmesh-control --host $HostName --port $Port --join-token $JoinToken --benchmarks $BenchmarksPath
+& $Go run ./cmd/jetsonfabric-control --host $HostName --port $Port --join-token $JoinToken --benchmarks $BenchmarksPath

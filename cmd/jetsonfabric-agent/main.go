@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SamJSui/JetsonMesh/internal/agent"
-	"github.com/SamJSui/JetsonMesh/internal/cluster"
+	"github.com/SamJSui/jetsonfabric/internal/agent"
+	"github.com/SamJSui/jetsonfabric/internal/cluster"
 )
 
 func main() {
@@ -18,7 +18,7 @@ func main() {
 	interval := flag.Duration("interval", 10*time.Second, "heartbeat interval")
 	once := flag.Bool("once", false, "send one heartbeat and exit")
 	llamaURL := flag.String("llama-url", "", "base URL for a llama.cpp OpenAI-compatible server")
-	llamaModels := flag.String("llama-models", "", "comma-separated JetsonMesh model IDs served by the llama backend")
+	llamaModels := flag.String("llama-models", "", "comma-separated JetsonFabric model IDs served by the llama backend")
 	flag.Parse()
 
 	if *nodeID == "" {

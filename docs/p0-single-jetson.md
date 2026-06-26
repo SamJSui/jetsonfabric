@@ -1,7 +1,7 @@
 # P0 - Single Jetson Model Serving
 
 P0 is the current priority. The goal is to get one real model working on one
-Jetson through JetsonMesh before building distributed inference.
+Jetson through JetsonFabric before building distributed inference.
 
 Layer split, tensor parallelism, and multi-node scheduling are later work. They
 need a single-node baseline to compare against.
@@ -9,7 +9,7 @@ need a single-node baseline to compare against.
 ## Goal
 
 Run a small local model on one Jetson, route a request through
-`jetsonmesh-control`, return the response through the JetsonMesh API, and record
+`jetsonfabric-control`, return the response through the JetsonFabric API, and record
 a benchmark result.
 
 ## Why This Comes First
@@ -27,12 +27,12 @@ P0 creates the baseline needed to answer useful questions later:
 
 A demo should show:
 
-1. `jetsonmesh-control` running on the Beelink or development machine.
-2. `jetsonmesh-agent` running on one Jetson.
+1. `jetsonfabric-control` running on the Beelink or development machine.
+2. `jetsonfabric-agent` running on one Jetson.
 3. The control plane showing the Jetson as online.
 4. A model backend running locally on that Jetson.
 5. `/v1/chat/completions` routing one prompt to that backend.
-6. A response streamed or returned through JetsonMesh.
+6. A response streamed or returned through JetsonFabric.
 7. A benchmark record with latency, throughput, memory, and thermal data.
 
 ## Recommended First Backend
@@ -84,7 +84,7 @@ swap-heavy execution. The point is to establish the serving path and metrics.
 ### Runtime Adapter
 
 - Add a Go client for the selected backend's local HTTP API.
-- Normalize requests and responses into JetsonMesh API types.
+- Normalize requests and responses into JetsonFabric API types.
 - Track backend errors and timeouts.
 - Keep the model process management simple at first; manual startup is
   acceptable for the first demo.
@@ -110,9 +110,9 @@ setup:
 And on the Jetson:
 
 ```bash
-./jetsonmesh-agent \
+./jetsonfabric-agent \
   --control-url http://beelink:52415 \
-  --join-token "$JETSONMESH_JOIN_TOKEN" \
+  --join-token "$JETSONFABRIC_JOIN_TOKEN" \
   --node-id jetson-01 \
   --llama-url http://127.0.0.1:8080 \
   --llama-models qwen2.5-coder-1.5b-q4
@@ -160,4 +160,4 @@ the OpenAI chat-completions shape.
 - Custom transformer runtime.
 - Kubernetes.
 - Multi-node scheduler optimization.
-- Claims that JetsonMesh is faster than cloud or frontier models.
+- Claims that JetsonFabric is faster than cloud or frontier models.

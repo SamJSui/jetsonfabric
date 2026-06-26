@@ -1,6 +1,6 @@
 # Agent Context
 
-This repo is JetsonMesh: an exo-inspired distributed inference runtime for
+This repo is JetsonFabric: an exo-inspired distributed inference runtime for
 low-cost Jetson-class edge clusters.
 
 ## Project Intent
@@ -13,7 +13,7 @@ evidence about when distributed inference helps or loses.
 
 Interview pitch:
 
-> I built JetsonMesh, an exo-inspired distributed inference runtime for
+> I built JetsonFabric, an exo-inspired distributed inference runtime for
 > low-cost Jetson edge clusters. It auto-discovers Jetson nodes, profiles
 > compute/network/thermal behavior, places model work across devices, exposes an
 > OpenAI-compatible API, and benchmarks when layer-split inference beats or
@@ -21,8 +21,8 @@ Interview pitch:
 
 ## Current Stack
 
-- Go control plane in `cmd/jetsonmesh-control` and `internal/control`.
-- Go node agent in `cmd/jetsonmesh-agent` and `internal/agent`.
+- Go control plane in `cmd/jetsonfabric-control` and `internal/control`.
+- Go node agent in `cmd/jetsonfabric-agent` and `internal/agent`.
 - Shared cluster types in `internal/cluster`.
 - Model registry in `internal/modelregistry`.
 - Placement preview logic in `internal/routing`.
@@ -66,7 +66,7 @@ generic homelab dashboard or a single-node local chatbot.
 
 ## Non-Goals And Honesty Boundaries
 
-- Do not claim JetsonMesh beats frontier models.
+- Do not claim JetsonFabric beats frontier models.
 - Do not claim distributed inference is always faster.
 - Do not make replicated serving the only product identity; keep it as a
   baseline/control mode.
@@ -98,11 +98,11 @@ edge compute:
 ## Current Priority
 
 P0 is single-Jetson model serving. Do not begin layer-split implementation until
-JetsonMesh can:
+JetsonFabric can:
 
 - register one Jetson agent;
 - detect useful Jetson hardware/runtime facts;
-- route a prompt through `jetsonmesh-control` to a real local backend;
+- route a prompt through `jetsonfabric-control` to a real local backend;
 - return a model response through the control-plane API;
 - record a benchmark result with latency, throughput, memory, and thermal data.
 
@@ -111,7 +111,7 @@ JetsonMesh can:
 Use the local Go toolchain unless the system `go` is known to be correct:
 
 ```powershell
-$env:GOCACHE='C:\Users\sui\Documents\JetsonMesh\.cache\go-build'
+$env:GOCACHE='C:\Users\sui\Documents\JetsonFabric\.cache\go-build'
 C:\Users\sui\Documents\tools\go\bin\go.exe fmt ./...
 C:\Users\sui\Documents\tools\go\bin\go.exe test ./...
 .\scripts\build.ps1
@@ -132,7 +132,7 @@ git diff --check
 The GitHub repo is private:
 
 ```text
-https://github.com/SamJSui/JetsonMesh
+https://github.com/SamJSui/jetsonfabric
 ```
 
 Preserve user changes. Do not reset or revert unrelated work. Keep commits small

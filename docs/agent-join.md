@@ -3,10 +3,10 @@
 Adding a Jetson should eventually be a repeatable install flow:
 
 ```bash
-curl -fsSL https://example.invalid/jetsonmesh/install.sh | bash
-./jetsonmesh-agent \
+curl -fsSL https://example.invalid/jetsonfabric/install.sh | bash
+./jetsonfabric-agent \
   --control-url http://beelink:52415 \
-  --join-token "$JETSONMESH_JOIN_TOKEN" \
+  --join-token "$JETSONFABRIC_JOIN_TOKEN" \
   --node-id jetson-02 \
   --llama-url http://127.0.0.1:8080 \
   --llama-models qwen2.5-coder-1.5b-q4

@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/SamJSui/JetsonMesh/internal/api"
-	"github.com/SamJSui/JetsonMesh/internal/benchmarks"
-	"github.com/SamJSui/JetsonMesh/internal/chat"
-	"github.com/SamJSui/JetsonMesh/internal/cluster"
-	"github.com/SamJSui/JetsonMesh/internal/modelregistry"
+	"github.com/SamJSui/jetsonfabric/internal/api"
+	"github.com/SamJSui/jetsonfabric/internal/benchmarks"
+	"github.com/SamJSui/jetsonfabric/internal/chat"
+	"github.com/SamJSui/jetsonfabric/internal/cluster"
+	"github.com/SamJSui/jetsonfabric/internal/modelregistry"
 )
 
 func TestChatCompletionsRoutesToSingleNodeBackend(t *testing.T) {

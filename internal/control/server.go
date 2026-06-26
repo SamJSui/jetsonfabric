@@ -10,13 +10,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/SamJSui/JetsonMesh/internal/api"
-	"github.com/SamJSui/JetsonMesh/internal/benchmarks"
-	"github.com/SamJSui/JetsonMesh/internal/chat"
-	"github.com/SamJSui/JetsonMesh/internal/cluster"
-	"github.com/SamJSui/JetsonMesh/internal/modelregistry"
-	"github.com/SamJSui/JetsonMesh/internal/routing"
-	"github.com/SamJSui/JetsonMesh/internal/runtimeclient"
+	"github.com/SamJSui/jetsonfabric/internal/api"
+	"github.com/SamJSui/jetsonfabric/internal/benchmarks"
+	"github.com/SamJSui/jetsonfabric/internal/chat"
+	"github.com/SamJSui/jetsonfabric/internal/cluster"
+	"github.com/SamJSui/jetsonfabric/internal/modelregistry"
+	"github.com/SamJSui/jetsonfabric/internal/routing"
+	"github.com/SamJSui/jetsonfabric/internal/runtimeclient"
 )
 
 type Server struct {
@@ -87,7 +87,7 @@ func (s *Server) Router() http.Handler {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "jetsonmesh-control"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "jetsonfabric-control"})
 }
 
 func (s *Server) handleNodes(w http.ResponseWriter, _ *http.Request) {

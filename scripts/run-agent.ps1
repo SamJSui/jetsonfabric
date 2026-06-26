@@ -15,7 +15,7 @@ New-Item -ItemType Directory -Force -Path $GoCache | Out-Null
 $env:GOCACHE = $GoCache
 
 $Args = @(
-  "run", "./cmd/jetsonmesh-agent",
+  "run", "./cmd/jetsonfabric-agent",
   "--control-url", $ControlUrl,
   "--join-token", $JoinToken,
   "--node-id", $NodeId

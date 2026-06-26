@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/SamJSui/JetsonMesh/internal/cluster"
+	"github.com/SamJSui/jetsonfabric/internal/cluster"
 )
 
 const (

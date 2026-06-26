@@ -1,6 +1,6 @@
 # Project Context
 
-JetsonMesh is a Jetson-first edge AI cluster project. It borrows the strongest
+JetsonFabric is a Jetson-first edge AI cluster project. It borrows the strongest
 ideas from exo while narrowing the market and engineering story to cheaper,
 smaller edge devices.
 
@@ -14,7 +14,7 @@ deployment flexibility.
 ## Why Build This
 
 Most AI infrastructure work is about orchestrating model work across compute
-rather than simply running a model on one machine. JetsonMesh turns a mini edge
+rather than simply running a model on one machine. JetsonFabric turns a mini edge
 cluster into a concrete distributed systems project:
 
 - node discovery and registration
@@ -53,7 +53,7 @@ platform, and distributed systems roles. The strongest interview signals are:
 exo makes distributed local AI feel automatic: discover devices, understand
 their resources, choose a placement strategy, and expose a simple UX/API.
 
-JetsonMesh should mimic that user experience:
+JetsonFabric should mimic that user experience:
 
 - start control plane
 - install/run agents on devices
@@ -63,7 +63,7 @@ JetsonMesh should mimic that user experience:
 - inspect why the system chose a route
 
 The difference is focus. exo commonly showcases stronger consumer machines such
-as Macs. JetsonMesh focuses on edge-class ARM/GPU devices where memory, thermals,
+as Macs. JetsonFabric focuses on edge-class ARM/GPU devices where memory, thermals,
 power, and network transfer are central constraints.
 
 ## Performance Story
@@ -89,7 +89,7 @@ Expected metrics:
 - quality or task pass rate for benchmark prompts
 
 The first benchmark target is intentionally simple: one Jetson, one local model,
-one prompt routed through JetsonMesh, and one recorded result. Distributed
+one prompt routed through JetsonFabric, and one recorded result. Distributed
 runtime work starts only after that baseline exists.
 
 ## Layer Split Versus Tensor Parallel
@@ -101,7 +101,7 @@ Ethernet because communication happens at layer boundaries.
 Tensor parallel splits individual matrix operations across nodes. It can be
 powerful on fast interconnects, but it usually requires frequent synchronization.
 On Jetson devices connected by normal Ethernet, network transfer and
-synchronization can erase the compute benefit. JetsonMesh can research it later,
+synchronization can erase the compute benefit. JetsonFabric can research it later,
 but the first serious distributed-runtime milestone should be layer split.
 
 ## Hardware Strategy
@@ -125,9 +125,9 @@ edge roles.
 
 V0 services:
 
-- `jetsonmesh-control`: Go API gateway, node registry, model registry, route
+- `jetsonfabric-control`: Go API gateway, node registry, model registry, route
   preview, and future scheduler.
-- `jetsonmesh-agent`: Go binary installed on each node to report capabilities,
+- `jetsonfabric-agent`: Go binary installed on each node to report capabilities,
   health, runtimes, and benchmark results.
 - runtime adapters: C++ integrations for llama.cpp, TensorRT/ONNX, Triton, and
   eventually custom layer-shard execution.

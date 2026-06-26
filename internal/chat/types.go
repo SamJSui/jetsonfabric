@@ -1,6 +1,6 @@
 package chat
 
-import "github.com/SamJSui/JetsonMesh/internal/cluster"
+import "github.com/SamJSui/jetsonfabric/internal/cluster"
 
 type CompletionRequest struct {
 	Model    string    `json:"model"`
@@ -20,7 +20,7 @@ type CompletionResponse struct {
 	Model   string         `json:"model"`
 	Choices []Choice       `json:"choices"`
 	Usage   *Usage         `json:"usage,omitempty"`
-	Route   *RouteMetadata `json:"jetsonmesh_route,omitempty"`
+	Route   *RouteMetadata `json:"jetsonfabric_route,omitempty"`
 }
 
 type Choice struct {

@@ -1,6 +1,6 @@
 # Architecture
 
-JetsonMesh has four layers:
+JetsonFabric has four layers:
 
 1. Control plane
 2. Node agents

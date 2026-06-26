@@ -1,6 +1,6 @@
 # Engineering Standards
 
-JetsonMesh should be written like a serious AI infrastructure project, not a
+JetsonFabric should be written like a serious AI infrastructure project, not a
 throwaway homelab script. The repo is early, but the quality bar is high because
 the project is meant to demonstrate distributed systems judgment, edge AI
 pragmatism, and production-minded engineering.
@@ -47,7 +47,7 @@ Required practices:
 Minimum implementation verification:
 
 ```powershell
-$env:GOCACHE='C:\Users\sui\Documents\JetsonMesh\.cache\go-build'
+$env:GOCACHE='C:\Users\sui\Documents\JetsonFabric\.cache\go-build'
 C:\Users\sui\Documents\tools\go\bin\go.exe fmt ./...
 C:\Users\sui\Documents\tools\go\bin\go.exe test ./...
 .\scripts\build.ps1
@@ -90,7 +90,7 @@ than becoming the source of truth for cluster behavior.
 
 ## API And Runtime Standards
 
-JetsonMesh should expose boring, debuggable APIs.
+JetsonFabric should expose boring, debuggable APIs.
 
 - Validate request bodies and model IDs.
 - Return clear 4xx errors for bad input and clear 5xx/502/503 errors for backend

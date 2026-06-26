@@ -1,6 +1,6 @@
 # Build Process
 
-JetsonMesh runtime services are Go-native. Python is reserved for later
+JetsonFabric runtime services are Go-native. Python is reserved for later
 benchmark analysis, plotting, and report notebooks.
 
 ## Toolchain
@@ -25,10 +25,10 @@ From the repo root:
 
 This runs tests and builds:
 
-- `dist\jetsonmesh-control-windows-amd64.exe`
-- `dist\jetsonmesh-agent-windows-amd64.exe`
-- `dist\jetsonmesh-control-linux-arm64`
-- `dist\jetsonmesh-agent-linux-arm64`
+- `dist\jetsonfabric-control-windows-amd64.exe`
+- `dist\jetsonfabric-agent-windows-amd64.exe`
+- `dist\jetsonfabric-control-linux-arm64`
+- `dist\jetsonfabric-agent-linux-arm64`
 
 ## Development Run
 
@@ -48,7 +48,7 @@ Agent:
 
 The intended Jetson deployment path is:
 
-1. Cross-compile `jetsonmesh-agent-linux-arm64`.
+1. Cross-compile `jetsonfabric-agent-linux-arm64`.
 2. Copy binary to Jetson.
 3. Install a systemd unit.
 4. Provide control-plane URL and join token.

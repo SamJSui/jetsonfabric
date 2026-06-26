@@ -13,18 +13,31 @@ New-Item -ItemType Directory -Force -Path $Dist | Out-Null
 New-Item -ItemType Directory -Force -Path $GoCache | Out-Null
 $env:GOCACHE = $GoCache
 
-& $Go version
-& $Go test ./...
+function Invoke-Go {
+  param(
+    [string[]]$GoArgs
+  )
+  & $Go @GoArgs
+  if ($LASTEXITCODE -ne 0) {
+    throw "go $($GoArgs -join ' ') failed with exit code $LASTEXITCODE"
+  }
+}
 
-& $Go build -o (Join-Path $Dist "jetsonmesh-control-windows-amd64.exe") ./cmd/jetsonmesh-control
-& $Go build -o (Join-Path $Dist "jetsonmesh-agent-windows-amd64.exe") ./cmd/jetsonmesh-agent
+try {
+  Invoke-Go -GoArgs @("version")
+  Invoke-Go -GoArgs @("test", "./...")
 
-$env:GOOS = "linux"
-$env:GOARCH = "arm64"
-& $Go build -o (Join-Path $Dist "jetsonmesh-agent-linux-arm64") ./cmd/jetsonmesh-agent
-& $Go build -o (Join-Path $Dist "jetsonmesh-control-linux-arm64") ./cmd/jetsonmesh-control
-Remove-Item Env:\GOOS
-Remove-Item Env:\GOARCH
-Remove-Item Env:\GOCACHE
+  Invoke-Go -GoArgs @("build", "-buildvcs=false", "-o", (Join-Path $Dist "jetsonfabric-control-windows-amd64.exe"), "./cmd/jetsonfabric-control")
+  Invoke-Go -GoArgs @("build", "-buildvcs=false", "-o", (Join-Path $Dist "jetsonfabric-agent-windows-amd64.exe"), "./cmd/jetsonfabric-agent")
 
-Write-Host "Built JetsonMesh artifacts in $Dist"
+  $env:GOOS = "linux"
+  $env:GOARCH = "arm64"
+  Invoke-Go -GoArgs @("build", "-buildvcs=false", "-o", (Join-Path $Dist "jetsonfabric-agent-linux-arm64"), "./cmd/jetsonfabric-agent")
+  Invoke-Go -GoArgs @("build", "-buildvcs=false", "-o", (Join-Path $Dist "jetsonfabric-control-linux-arm64"), "./cmd/jetsonfabric-control")
+} finally {
+  Remove-Item Env:\GOOS -ErrorAction SilentlyContinue
+  Remove-Item Env:\GOARCH -ErrorAction SilentlyContinue
+  Remove-Item Env:\GOCACHE -ErrorAction SilentlyContinue
+}
+
+Write-Host "Built JetsonFabric artifacts in $Dist"

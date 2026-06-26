@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"path/filepath"
 
-	"github.com/SamJSui/JetsonMesh/internal/benchmarks"
-	"github.com/SamJSui/JetsonMesh/internal/control"
-	"github.com/SamJSui/JetsonMesh/internal/modelregistry"
+	"github.com/SamJSui/jetsonfabric/internal/benchmarks"
+	"github.com/SamJSui/jetsonfabric/internal/control"
+	"github.com/SamJSui/jetsonfabric/internal/modelregistry"
 )
 
 func main() {
@@ -27,7 +27,7 @@ func main() {
 
 	server := control.NewServer(*joinToken, registry, control.WithBenchmarkRecorder(benchmarks.NewJSONLRecorder(*benchmarksPath)))
 	addr := fmt.Sprintf("%s:%d", *host, *port)
-	log.Printf("JetsonMesh control plane listening on http://%s", addr)
+	log.Printf("JetsonFabric control plane listening on http://%s", addr)
 	if err := http.ListenAndServe(addr, server.Router()); err != nil {
 		log.Fatal(err)
 	}

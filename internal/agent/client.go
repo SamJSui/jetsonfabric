@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SamJSui/JetsonMesh/internal/api"
-	"github.com/SamJSui/JetsonMesh/internal/cluster"
-	"github.com/SamJSui/JetsonMesh/internal/system"
+	"github.com/SamJSui/jetsonfabric/internal/api"
+	"github.com/SamJSui/jetsonfabric/internal/cluster"
+	"github.com/SamJSui/jetsonfabric/internal/system"
 )
 
 type Client struct {

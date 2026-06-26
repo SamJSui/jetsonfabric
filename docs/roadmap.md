@@ -10,14 +10,14 @@
 
 ## P0 - Single Jetson Model Serving
 
-Current priority: prove that JetsonMesh can run a real model on one Jetson
+Current priority: prove that JetsonFabric can run a real model on one Jetson
 through the control-plane path. Layer split waits until this works.
 
 - Run one Jetson agent.
 - Detect Jetson hardware, JetPack/CUDA/TensorRT hints, memory, temperature, and
   runtime capabilities.
 - Deploy one small LLM through a local Jetson backend.
-- Route one prompt through `jetsonmesh-control` to that backend.
+- Route one prompt through `jetsonfabric-control` to that backend.
 - Return a model response through `/v1/chat/completions`.
 - Record tokens/sec, p50/p95 latency, time-to-first-token, memory, and
   temperature.

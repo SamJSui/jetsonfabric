@@ -1,6 +1,6 @@
-# JetsonMesh
+# JetsonFabric
 
-JetsonMesh is an exo-inspired edge AI fabric for low-cost Jetson-class devices.
+JetsonFabric is an exo-inspired edge AI fabric for low-cost Jetson-class devices.
 
 The goal is to turn multiple Jetson Orin Nano nodes into one observable serving
 cluster with node discovery, model placement, benchmark-driven routing,
@@ -62,7 +62,7 @@ the control-plane URL plus a join token.
 Expected join flow:
 
 ```bash
-./jetsonmesh-agent \
+./jetsonfabric-agent \
   --control-url http://beelink:52415 \
   --join-token <token> \
   --node-id jetson-02
@@ -83,7 +83,7 @@ and benchmark history before placing model work on it.
 1. One control plane running on the Beelink or local machine.
 2. One Jetson agent reporting health and capabilities.
 3. One real local model backend running on the Jetson.
-4. One prompt routed through JetsonMesh to that model.
+4. One prompt routed through JetsonFabric to that model.
 5. One benchmark result recorded for the local model backend.
 6. Route preview explaining why the model should or should not run on the node.
 7. A second Jetson added later to prove scaling, failover, and layer-split experiments.

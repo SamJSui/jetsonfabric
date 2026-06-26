@@ -3,7 +3,7 @@ package routing
 import (
 	"testing"
 
-	"github.com/SamJSui/JetsonMesh/internal/cluster"
+	"github.com/SamJSui/jetsonfabric/internal/cluster"
 )
 
 func TestPreviewRejectsMissingAccelerator(t *testing.T) {

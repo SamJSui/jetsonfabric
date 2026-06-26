@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/SamJSui/JetsonMesh/internal/cluster"
+	"github.com/SamJSui/jetsonfabric/internal/cluster"
 )
 
 type Registry struct {

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/SamJSui/JetsonMesh/internal/cluster"
+	"github.com/SamJSui/jetsonfabric/internal/cluster"
 )
 
 type Record struct {

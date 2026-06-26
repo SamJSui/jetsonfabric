@@ -3,7 +3,7 @@ package routing
 import (
 	"fmt"
 
-	"github.com/SamJSui/JetsonMesh/internal/cluster"
+	"github.com/SamJSui/jetsonfabric/internal/cluster"
 )
 
 type Reason string
