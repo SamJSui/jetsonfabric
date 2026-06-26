@@ -9,22 +9,50 @@ import (
 
 	"github.com/SamJSui/jetsonfabric/internal/agent"
 	"github.com/SamJSui/jetsonfabric/internal/cluster"
+	"github.com/SamJSui/jetsonfabric/internal/config"
+)
+
+const (
+	flagControlURL  = "control-url"
+	flagJoinToken   = "join-token"
+	flagNodeID      = "node-id"
+	flagInterval    = "interval"
+	flagOnce        = "once"
+	flagLlamaURL    = "llama-url"
+	flagLlamaModels = "llama-models"
+)
+
+const (
+	usageControlURL  = "control-plane URL"
+	usageJoinToken   = "agent join token"
+	usageNodeID      = "stable node identifier"
+	usageInterval    = "heartbeat interval"
+	usageOnce        = "send one heartbeat and exit"
+	usageLlamaURL    = "base URL for a llama.cpp OpenAI-compatible server"
+	usageLlamaModels = "comma-separated JetsonFabric model IDs served by the llama backend"
+)
+
+const (
+	logDetectHostnameFailed = "detect hostname: %v"
+	logHeartbeatFailed      = "heartbeat failed: %v"
+	logHeartbeatSent        = "heartbeat sent: %s"
+	csvSeparator            = ","
 )
 
 func main() {
-	controlURL := flag.String("control-url", "http://127.0.0.1:52415", "control-plane URL")
-	joinToken := flag.String("join-token", "dev-token", "agent join token")
-	nodeID := flag.String("node-id", "", "stable node identifier")
-	interval := flag.Duration("interval", 10*time.Second, "heartbeat interval")
-	once := flag.Bool("once", false, "send one heartbeat and exit")
-	llamaURL := flag.String("llama-url", "", "base URL for a llama.cpp OpenAI-compatible server")
-	llamaModels := flag.String("llama-models", "", "comma-separated JetsonFabric model IDs served by the llama backend")
+	controlURL := flag.String(flagControlURL, config.DefaultControlURL(), usageControlURL)
+	joinToken := flag.String(flagJoinToken, config.DefaultJoinToken, usageJoinToken)
+	nodeID := flag.String(flagNodeID, "", usageNodeID)
+	interval := flag.Duration(flagInterval, config.DefaultHeartbeatInterval, usageInterval)
+	once := flag.Bool(flagOnce, false, usageOnce)
+	llamaURL := flag.String(flagLlamaURL, "", usageLlamaURL)
+	llamaModels := flag.String(flagLlamaModels, "", usageLlamaModels)
 	flag.Parse()
 
 	if *nodeID == "" {
 		hostname, err := os.Hostname()
 		if err != nil {
-			log.Fatalf("detect hostname: %v", err)
+			log.Fatalf(logDetectHostnameFailed, err)
 		}
 		*nodeID = hostname
 	}
@@ -32,9 +60,9 @@ func main() {
 	client := agent.NewClient(*controlURL, *joinToken, *nodeID, advertisedBackends(*llamaURL, *llamaModels))
 	for {
 		if err := client.SendHeartbeat(); err != nil {
-			log.Printf("heartbeat failed: %v", err)
+			log.Printf(logHeartbeatFailed, err)
 		} else {
-			log.Printf("heartbeat sent: %s", *nodeID)
+			log.Printf(logHeartbeatSent, *nodeID)
 		}
 		if *once {
 			return
@@ -60,7 +88,7 @@ func advertisedBackends(llamaURL string, llamaModels string) []cluster.RuntimeBa
 }
 
 func splitCSV(value string) []string {
-	parts := strings.Split(value, ",")
+	parts := strings.Split(value, csvSeparator)
 	items := make([]string, 0, len(parts))
 	for _, part := range parts {
 		part = strings.TrimSpace(part)

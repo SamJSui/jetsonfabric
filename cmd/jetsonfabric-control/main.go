@@ -5,29 +5,51 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"path/filepath"
 
 	"github.com/SamJSui/jetsonfabric/internal/benchmarks"
+	"github.com/SamJSui/jetsonfabric/internal/config"
 	"github.com/SamJSui/jetsonfabric/internal/control"
 	"github.com/SamJSui/jetsonfabric/internal/modelregistry"
 )
 
+const (
+	flagHost       = "host"
+	flagPort       = "port"
+	flagJoinToken  = "join-token"
+	flagModels     = "models"
+	flagBenchmarks = "benchmarks"
+)
+
+const (
+	usageHost       = "host interface to bind"
+	usagePort       = "port to bind"
+	usageJoinToken  = "agent join token"
+	usageModels     = "model registry JSON path"
+	usageBenchmarks = "benchmark JSONL output path"
+)
+
+const (
+	addressFormat       = "%s:%d"
+	logLoadRegistry     = "load model registry: %v"
+	logControlListening = "JetsonFabric control plane listening on http://%s"
+)
+
 func main() {
-	host := flag.String("host", "127.0.0.1", "host interface to bind")
-	port := flag.Int("port", 52415, "port to bind")
-	joinToken := flag.String("join-token", "dev-token", "agent join token")
-	modelsPath := flag.String("models", filepath.Join("configs", "models.example.json"), "model registry JSON path")
-	benchmarksPath := flag.String("benchmarks", filepath.Join("data", "benchmarks.jsonl"), "benchmark JSONL output path")
+	host := flag.String(flagHost, config.DefaultControlHost, usageHost)
+	port := flag.Int(flagPort, config.DefaultControlPort, usagePort)
+	joinToken := flag.String(flagJoinToken, config.DefaultJoinToken, usageJoinToken)
+	modelsPath := flag.String(flagModels, config.DefaultModelRegistryPath(), usageModels)
+	benchmarksPath := flag.String(flagBenchmarks, config.DefaultBenchmarksPath(), usageBenchmarks)
 	flag.Parse()
 
 	registry, err := modelregistry.Load(*modelsPath)
 	if err != nil {
-		log.Fatalf("load model registry: %v", err)
+		log.Fatalf(logLoadRegistry, err)
 	}
 
 	server := control.NewServer(*joinToken, registry, control.WithBenchmarkRecorder(benchmarks.NewJSONLRecorder(*benchmarksPath)))
-	addr := fmt.Sprintf("%s:%d", *host, *port)
-	log.Printf("JetsonFabric control plane listening on http://%s", addr)
+	addr := fmt.Sprintf(addressFormat, *host, *port)
+	log.Printf(logControlListening, addr)
 	if err := http.ListenAndServe(addr, server.Router()); err != nil {
 		log.Fatal(err)
 	}
