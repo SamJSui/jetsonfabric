@@ -8,6 +8,9 @@ curl -fsSL https://example.invalid/jetsonfabric/install.sh | bash
   --control-url http://beelink:52415 \
   --join-token "$JETSONFABRIC_JOIN_TOKEN" \
   --node-id jetson-02 \
+  --host 0.0.0.0 \
+  --advertise-url http://jetson-02:52416 \
+  --model-artifacts configs/model-artifacts.example.json \
   --llama-url http://127.0.0.1:8080 \
   --llama-models qwen2.5-coder-1.5b-q4
 ```
@@ -18,13 +21,15 @@ token.
 ## Expected Node Lifecycle
 
 1. Agent starts.
-2. Agent detects platform and runtimes.
-3. Agent advertises local runtime backend URLs when configured.
-4. Agent posts heartbeat.
-5. Control plane records node as `online`.
-6. Benchmark service runs a small probe.
-7. Placement planner marks compatible models as candidates.
-8. Scheduler may assign work to the node.
+2. Agent loads model artifact metadata for the models it will advertise.
+3. Agent detects platform and runtimes.
+4. Agent starts its local proxy API.
+5. Agent advertises the proxy URL and served model IDs when configured.
+6. Agent posts heartbeat.
+7. Control plane records node as `online`.
+8. Benchmark service runs a small probe.
+9. Placement planner marks compatible models as candidates.
+10. Scheduler may assign work to the node.
 
 ## Why This Matters
 

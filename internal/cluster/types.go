@@ -13,9 +13,9 @@ const (
 type RouteMode string
 
 const (
-	RouteModeSingleNode           RouteMode = "single_node"
-	RouteModeReplicaBaseline      RouteMode = "replica_baseline"
-	RouteModeLayerSplitExperiment RouteMode = "layer_split_experiment"
+	RouteModeSingleNode     RouteMode = "single_node"
+	RouteModeReplicaServing RouteMode = "replica_serving"
+	RouteModeLayerSplit     RouteMode = "layer_split"
 )
 
 const (
@@ -25,6 +25,7 @@ const (
 const (
 	CapabilityMemoryGB     = "memory_gb"
 	CapabilityAccelerators = "accelerators"
+	CapabilityLayerWeight  = "layer_split_weight"
 	MetricTemperatureC     = "temperature_c"
 )
 
@@ -66,6 +67,7 @@ type ModelProfile struct {
 	ID                   string      `json:"id"`
 	Family               string      `json:"family"`
 	Runtime              RuntimeKind `json:"runtime"`
+	LayerCount           int         `json:"layer_count,omitempty"`
 	MinMemoryGB          float64     `json:"min_memory_gb"`
 	PreferredAccelerator *string     `json:"preferred_accelerator"`
 	PlacementModes       []RouteMode `json:"placement_modes"`

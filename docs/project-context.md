@@ -20,6 +20,7 @@ cluster into a concrete distributed systems project:
 - node discovery and registration
 - hardware capability profiling
 - model registry and compatibility checks
+- agent-owned model artifact and runtime metadata
 - scheduler and placement decisions
 - route explanations
 - benchmark-driven policy
@@ -71,7 +72,7 @@ power, and network transfer are central constraints.
 The project must earn any performance claim through benchmarks. Compare:
 
 - single-node Jetson baseline
-- replicated serving baseline
+- replica_serving
 - layer-split distributed inference
 - cloud/Codex/frontier fallback when local execution is not appropriate
 - tensor-parallel experiments only if the network and runtime can support them
@@ -91,6 +92,21 @@ Expected metrics:
 The first benchmark target is intentionally simple: one Jetson, one local model,
 one prompt routed through JetsonFabric, and one recorded result. Distributed
 runtime work starts only after that baseline exists.
+
+## Phase Strategy
+
+P0 is single-Jetson serving. The only goal is to make one real Jetson-backed
+model work through the control plane and record trustworthy measurements.
+
+P1 is multi-Jetson layer split. Replica serving belongs here only as a
+comparison baseline for throughput and failover. The main question is whether
+two or three Jetsons can run a larger or better model by assigning layer ranges
+to different nodes and sending hidden states between workers.
+
+P2 is distributed runtime optimization. This is where C++/CUDA transport work
+belongs: activation framing, pinned buffers, compression, 10GbE TCP, optional
+RDMA, and tensor-parallel experiments. P2 starts only after P1 measurements show
+what bottleneck is worth optimizing.
 
 ## Layer Split Versus Tensor Parallel
 
@@ -114,8 +130,11 @@ Recommended path:
 1. Beelink or dev machine runs the control plane.
 2. One Jetson runs the agent and a small model backend.
 3. Record baseline model performance and thermal behavior.
-4. Add a second Jetson and benchmark replica/failover.
+4. Add a second Jetson and benchmark replica_serving/failover as a control comparison.
 5. Prototype layer-split execution for a small transformer.
+6. Add a third Jetson only after two-node measurements justify it.
+7. Explore 10GbE or RDMA only after built-in-network measurements prove that
+   transport is the limiting factor.
 
 Raspberry Pi nodes are not the core inference performance story. They may become
 useful later for sensors, health probes, gateway tests, or extremely low-power
@@ -128,9 +147,13 @@ V0 services:
 - `jetsonfabric-control`: Go API gateway, node registry, model registry, route
   preview, and future scheduler.
 - `jetsonfabric-agent`: Go binary installed on each node to report capabilities,
-  health, runtimes, and benchmark results.
+  health, runtimes, model artifact metadata, benchmark results, and to proxy
+  model requests to node-local runtimes.
 - runtime adapters: C++ integrations for llama.cpp, TensorRT/ONNX, Triton, and
   eventually custom layer-shard execution.
+- CUDA runtime work: pinned or mapped buffers, GPU transfer measurement,
+  activation compression, TensorRT integration, and possible GPUDirect/RDMA
+  experiments after TCP baselines exist.
 - benchmark/reporting lane: Python scripts or notebooks only for analysis and
   visualization.
 

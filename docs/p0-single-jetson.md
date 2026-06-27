@@ -31,7 +31,8 @@ A demo should show:
 2. `jetsonfabric-agent` running on one Jetson.
 3. The control plane showing the Jetson as online.
 4. A model backend running locally on that Jetson.
-5. `/v1/chat/completions` routing one prompt to that backend.
+5. `/v1/chat/completions` routing one prompt to the Jetson agent, which proxies
+   to that backend.
 6. A response streamed or returned through JetsonFabric.
 7. A benchmark record with latency, throughput, memory, and thermal data.
 
@@ -72,6 +73,8 @@ swap-heavy execution. The point is to establish the serving path and metrics.
 - Report available memory.
 - Report runtime availability such as `llama-server`, `trtexec`, Docker, or
   other local backends.
+- Expose a small local proxy API for model requests.
+- Keep node-local runtime URLs private to the agent when possible.
 
 ### Control Plane
 
@@ -88,6 +91,9 @@ swap-heavy execution. The point is to establish the serving path and metrics.
 - Track backend errors and timeouts.
 - Keep the model process management simple at first; manual startup is
   acceptable for the first demo.
+- The agent owns the local runtime URL, model IDs served by that runtime, and
+  the node-facing proxy endpoint. Model artifact download and runtime launch can
+  remain script-managed until the first Jetson demo works.
 
 ### Benchmarks
 
@@ -102,9 +108,9 @@ swap-heavy execution. The point is to establish the serving path and metrics.
 P0 is done when these commands, or their documented equivalents, work on a fresh
 setup:
 
-```powershell
-.\scripts\build.ps1
-.\scripts\run-control.ps1
+```sh
+sh scripts/build.sh
+sh scripts/run-control.sh
 ```
 
 And on the Jetson:
@@ -114,23 +120,29 @@ And on the Jetson:
   --control-url http://beelink:52415 \
   --join-token "$JETSONFABRIC_JOIN_TOKEN" \
   --node-id jetson-01 \
+  --host 0.0.0.0 \
+  --advertise-url http://jetson-01:52416 \
   --llama-url http://127.0.0.1:8080 \
   --llama-models qwen2.5-coder-1.5b-q4
 ```
 
 Then from the development machine:
 
-```powershell
-Invoke-WebRequest -UseBasicParsing http://beelink:52415/v1/nodes
-$body = @{
-  model = "qwen2.5-coder-1.5b-q4"
-  messages = @(@{ role = "user"; content = "Say hello from the Jetson." })
-} | ConvertTo-Json -Depth 5
-Invoke-RestMethod `
-  -Method Post `
-  -ContentType "application/json" `
-  -Body $body `
-  -Uri http://beelink:52415/v1/chat/completions
+```sh
+curl -sS http://beelink:52415/v1/nodes
+
+curl -sS \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "qwen2.5-coder-1.5b-q4",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Say hello from the Jetson."
+      }
+    ]
+  }' \
+  http://beelink:52415/v1/chat/completions
 ```
 
 The final response should come from the Jetson-hosted model backend, not from a
@@ -144,14 +156,16 @@ The P0 serving path is now:
 POST /v1/chat/completions
   -> control plane validates model and messages
   -> route selector finds one compatible online node
-  -> node backend advertisement provides an OpenAI-compatible llama URL
-  -> runtime client calls <llama-url>/v1/chat/completions
+  -> node backend advertisement provides the agent proxy URL
+  -> runtime client calls <agent-url>/v1/chat/completions
+  -> agent proxies the request to its local <llama-url>/v1/chat/completions
   -> control plane attaches route metadata
   -> benchmark recorder writes data/benchmarks.jsonl
 ```
 
 The backend can be a llama.cpp server or any temporary local server that speaks
-the OpenAI chat-completions shape.
+the OpenAI chat-completions shape. The control plane should call the agent proxy,
+not the runtime backend port directly.
 
 ## Explicitly Out Of Scope For P0
 

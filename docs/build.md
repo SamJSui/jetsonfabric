@@ -6,42 +6,49 @@ benchmark analysis, plotting, and report notebooks.
 ## Toolchain
 
 - Go 1.26.4 or newer
+- WSL2 Ubuntu or another Linux development shell
 - Linux arm64 target for Jetson Orin nodes
 - Optional C++ toolchain later for optimized shard/runtime adapters
 
-On the Windows development machine, the local Go toolchain is installed at:
+The scripts default to `go` from `PATH`. Set `GO=/path/to/go` if a specific Go
+toolchain should be used.
 
-```text
-C:\Users\sui\Documents\tools\go\bin\go.exe
+When developing from WSL, install Go inside the WSL distribution and verify it
+there:
+
+```sh
+go version
 ```
+
+Do not depend on the Windows `go.exe` path from WSL for normal development.
 
 ## Local Build
 
 From the repo root:
 
-```powershell
-.\scripts\build.ps1
+```sh
+sh scripts/build.sh
 ```
 
 This runs tests and builds:
 
-- `dist\jetsonfabric-control-windows-amd64.exe`
-- `dist\jetsonfabric-agent-windows-amd64.exe`
-- `dist\jetsonfabric-control-linux-arm64`
-- `dist\jetsonfabric-agent-linux-arm64`
+- `dist/jetsonfabric-control-linux-amd64`
+- `dist/jetsonfabric-agent-linux-amd64`
+- `dist/jetsonfabric-control-linux-arm64`
+- `dist/jetsonfabric-agent-linux-arm64`
 
 ## Development Run
 
 Control plane:
 
-```powershell
-.\scripts\run-control.ps1
+```sh
+sh scripts/run-control.sh
 ```
 
 Agent:
 
-```powershell
-.\scripts\run-agent.ps1 -NodeId dev-node
+```sh
+sh scripts/run-agent.sh --node-id dev-node
 ```
 
 ## Jetson Agent Install Target

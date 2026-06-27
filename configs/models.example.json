@@ -4,17 +4,19 @@
       "id": "qwen2.5-coder-1.5b-q4",
       "family": "llm",
       "runtime": "llama.cpp",
+      "layer_count": 28,
       "min_memory_gb": 3,
       "preferred_accelerator": null,
-      "placement_modes": ["single_node", "replica_baseline"]
+      "placement_modes": ["single_node", "replica_serving", "layer_split"]
     },
     {
       "id": "qwen2.5-coder-7b-q4",
       "family": "llm",
       "runtime": "llama.cpp",
+      "layer_count": 28,
       "min_memory_gb": 8,
       "preferred_accelerator": "cuda",
-      "placement_modes": ["single_node", "layer_split_experiment"]
+      "placement_modes": ["single_node", "layer_split"]
     },
     {
       "id": "yolo-tensorrt",
@@ -22,8 +24,7 @@
       "runtime": "tensorrt",
       "min_memory_gb": 2,
       "preferred_accelerator": "cuda",
-      "placement_modes": ["single_node", "replica_baseline"]
+      "placement_modes": ["single_node", "replica_serving"]
     }
   ]
 }
-

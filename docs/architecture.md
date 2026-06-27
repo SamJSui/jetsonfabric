@@ -32,6 +32,12 @@ Each Jetson runs an agent that sends heartbeats and capability data to the
 control plane. A new Jetson joins the cluster by installing this agent and
 providing the control-plane URL plus a join token.
 
+Agents also expose the node-facing model proxy API. The control plane should
+route model requests to the agent, and the agent should forward them to the
+node-local runtime such as `llama-server`, TensorRT, Triton, or a future custom
+C++ worker. This keeps runtime ports, model paths, and node-local process details
+out of the control plane.
+
 The agent should eventually collect:
 
 - Jetson model
@@ -44,6 +50,17 @@ The agent should eventually collect:
 - loaded model shards
 - runtime health
 
+For P0, the agent knows:
+
+- which local runtime URL to proxy to
+- which JetsonFabric model IDs that runtime serves
+- which agent URL should be advertised back to the control plane
+
+Model downloads and runtime launch can remain script-managed until the first
+single-Jetson demo works. A later model artifact manifest should move model
+source URLs, local paths, expected hashes, and launch commands under explicit
+agent/runtime management.
+
 ## Runtime Workers
 
 Runtime workers are adapters around actual model engines:
@@ -55,12 +72,59 @@ Runtime workers are adapters around actual model engines:
 
 Python is only for benchmark analysis, graphing, and offline report generation.
 
+Runtime workers should be C++ first. C is acceptable only at external API
+boundaries such as POSIX sockets, CUDA, `libibverbs`, or vendor runtime
+libraries. Wrap those C APIs in small C++ types so tensor buffers, sessions,
+sockets, CUDA handles, and registered memory have clear ownership.
+
+CUDA is not a default dependency for every service. It enters the runtime lane
+when JetsonFabric needs GPU-aware behavior:
+
+- TensorRT or llama.cpp GPU integration
+- pinned or mapped host buffers
+- CPU/GPU transfer measurement
+- activation compression kernels
+- possible GPUDirect/RDMA experiments after TCP baselines exist
+
+The Go control plane should never own raw tensor bytes. It selects routes,
+records benchmarks, and instructs runtime workers. The C++ runtime owns
+layer-shard execution and tensor transport.
+
+## Tensor Transport
+
+Layer-split runtime work should start with a simple TCP transport. The first
+wire protocol should be explicit and boring:
+
+- request or session ID
+- decode step
+- source and target layer boundary
+- batch size
+- sequence length
+- hidden dimension
+- dtype
+- byte length
+- payload bytes
+
+Use typed enums in code for fields such as dtype and route/runtime mode, with
+stable numeric values on the wire. Do not serialize raw C++ structs directly;
+encode and decode fields explicitly so padding, alignment, and endian behavior
+do not become hidden protocol contracts.
+
+Transport phases:
+
+1. Built-in network with TCP for the P1 layer-split baseline.
+2. Optional 10GbE TCP using the same JetsonFabric tensor protocol.
+3. Optional RDMA transport only after measurements show TCP or CPU copy overhead
+   is the bottleneck.
+4. Tensor-parallel experiments only after layer split and transport data justify
+   the synchronization cost.
+
 ## Placement Modes
 
 V0 supports route previews only. Planned modes:
 
 - single-node
-- replica baseline
+- replica_serving
 - layer split
 - tensor-parallel experiment
 - Codex/cloud fallback

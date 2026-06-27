@@ -41,4 +41,21 @@ type RouteMetadata struct {
 	BackendID   string              `json:"backend_id"`
 	BackendKind cluster.RuntimeKind `json:"backend_kind"`
 	LatencyMS   int64               `json:"latency_ms"`
+	Stages      []RouteStage        `json:"stages,omitempty"`
+	BytesIn     int                 `json:"bytes_in,omitempty"`
+	BytesOut    int                 `json:"bytes_out,omitempty"`
+}
+
+type RouteStage struct {
+	Index       int                 `json:"index"`
+	NodeID      string              `json:"node_id"`
+	BackendID   string              `json:"backend_id,omitempty"`
+	BackendKind cluster.RuntimeKind `json:"backend_kind,omitempty"`
+	Role        string              `json:"role"`
+	LayerStart  int                 `json:"layer_start"`
+	LayerEnd    int                 `json:"layer_end"`
+	Transport   string              `json:"transport"`
+	LatencyMS   int64               `json:"latency_ms"`
+	BytesIn     int                 `json:"bytes_in"`
+	BytesOut    int                 `json:"bytes_out"`
 }

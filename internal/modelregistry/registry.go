@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/SamJSui/jetsonfabric/internal/cluster"
 )
@@ -24,6 +25,9 @@ func Load(path string) (Registry, error) {
 	for _, model := range registry.Models {
 		if model.ID == "" {
 			return Registry{}, fmt.Errorf("model registry contains an empty model id")
+		}
+		if slices.Contains(model.PlacementModes, cluster.RouteModeLayerSplit) && model.LayerCount < 2 {
+			return Registry{}, fmt.Errorf("model %s advertises layer_split without at least two layers", model.ID)
 		}
 	}
 	return registry, nil

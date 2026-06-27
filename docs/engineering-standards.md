@@ -46,17 +46,21 @@ Required practices:
 
 Minimum implementation verification:
 
-```powershell
-$env:GOCACHE='C:\Users\sui\Documents\JetsonFabric\.cache\go-build'
-C:\Users\sui\Documents\tools\go\bin\go.exe fmt ./...
-C:\Users\sui\Documents\tools\go\bin\go.exe test ./...
-.\scripts\build.ps1
+```sh
+go fmt ./...
+go test ./...
+sh scripts/build.sh
 ```
 
 ## C++ And CUDA Standards
 
 C++ should be introduced only for runtime-sensitive inference paths. Do not move
 ordinary control-plane logic into C++.
+
+Prefer C++ over C for JetsonFabric runtime code. C APIs are expected at external
+boundaries such as CUDA, POSIX sockets, `libibverbs`, TensorRT, ONNX Runtime, or
+llama.cpp. Wrap those APIs in small C++ RAII types instead of spreading raw
+handles, manual cleanup, or ownership ambiguity through the runtime.
 
 Expected C++ scope:
 
@@ -66,18 +70,37 @@ Expected C++ scope:
 - layer-shard execution
 - pinned-buffer and CUDA transfer experiments
 - activation compression
+- 10GbE TCP transport experiments
+- optional RDMA transport experiments after TCP/10GbE measurements justify them
 
 Required practices when C++ arrives:
 
 - Prefer RAII and value ownership over manual lifetime management.
 - Avoid raw owning pointers.
-- Make tensor shape, dtype, byte length, session ID, and step explicit in
-  transport headers.
+- Use typed enums for domain fields such as dtype, transport kind, shard role,
+  and route mode; assign stable numeric values for wire formats.
+- Make tensor shape, dtype, byte length, request or session ID, source/target
+  layer boundary, and decode step explicit in transport headers.
+- Do not serialize raw C++ struct memory as the protocol. Encode and decode
+  fields explicitly so padding, alignment, and endian behavior are controlled.
 - Check CUDA, TensorRT, and system-call return values.
 - Keep CPU/GPU transfer behavior measurable.
 - Use profiling data before adding custom CUDA kernels.
 - Keep custom kernels small, isolated, and benchmarked against the existing
   runtime.
+- Do not introduce RDMA, GPUDirect, or tensor parallelism before a TCP
+  layer-split baseline proves that transport overhead is the limiting factor.
+- Treat tensor parallelism as an experiment until synchronization cost is
+  measured on the actual Jetson network.
+
+CUDA should be added only when the runtime path needs GPU-aware behavior:
+
+- pinned or mapped host buffers
+- CPU/GPU transfer measurement
+- TensorRT or llama.cpp GPU integration
+- activation compression kernels
+- possible GPUDirect/RDMA experiments after simpler transport paths are
+  benchmarked
 
 ## Python Boundary
 

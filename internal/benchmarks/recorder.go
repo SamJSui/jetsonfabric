@@ -31,6 +31,11 @@ type Recorder interface {
 	Record(ctx context.Context, record Record) error
 }
 
+const (
+	benchmarkDirPerm  os.FileMode = 0o755
+	benchmarkFilePerm os.FileMode = 0o644
+)
+
 type NoopRecorder struct{}
 
 func (NoopRecorder) Record(context.Context, Record) error {
@@ -49,10 +54,10 @@ func NewJSONLRecorder(path string) *JSONLRecorder {
 func (r *JSONLRecorder) Record(_ context.Context, record Record) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(r.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(r.path), benchmarkDirPerm); err != nil {
 		return fmt.Errorf("create benchmark directory: %w", err)
 	}
-	file, err := os.OpenFile(r.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	file, err := os.OpenFile(r.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, benchmarkFilePerm)
 	if err != nil {
 		return fmt.Errorf("open benchmark file: %w", err)
 	}
