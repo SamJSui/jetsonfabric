@@ -25,5 +25,5 @@ func (t *LocalTransport) RunStage(_ context.Context, target StageTarget, req Act
 		}
 		return NormalizeResponse(req, resp, time.Since(start)), nil
 	}
-	return SyntheticStageResponse(req, target.NodeID, time.Since(start)), nil
+	return SyntheticStageResponse(req, target.NodeName, time.Since(start)), nil
 }

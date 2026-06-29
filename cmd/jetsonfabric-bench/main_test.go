@@ -35,7 +35,7 @@ func TestRunBenchmarkRecordsSuccessfulRequests(t *testing.T) {
 			Usage: &chat.Usage{CompletionTokens: 2, TotalTokens: 8},
 			Route: &chat.RouteMetadata{
 				Mode:        cluster.RouteModeSingleNode,
-				NodeID:      "desktop-agent-1",
+				NodeName:    "desktop-agent-1",
 				BackendID:   cluster.BackendIDLlamaLocal,
 				BackendKind: cluster.RuntimeKindLlamaCPP,
 				LatencyMS:   3,
@@ -67,7 +67,7 @@ func TestRunBenchmarkRecordsSuccessfulRequests(t *testing.T) {
 	if summary.OutputTokens != 6 {
 		t.Fatalf("unexpected output tokens: %d", summary.OutputTokens)
 	}
-	if summary.Results[0].Route == nil || summary.Results[0].Route.NodeID != "desktop-agent-1" {
+	if summary.Results[0].Route == nil || summary.Results[0].Route.NodeName != "desktop-agent-1" {
 		t.Fatalf("expected route metadata, got %+v", summary.Results[0])
 	}
 }

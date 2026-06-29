@@ -23,7 +23,16 @@ const (
 	dataDir            = "data"
 	benchmarksFile     = "benchmarks.jsonl"
 	controlURLFormat   = "http://%s:%d"
+	listenFormat       = "%s:%d"
 )
+
+func DefaultControlListen() string {
+	return fmt.Sprintf(listenFormat, DefaultControlHost, DefaultControlPort)
+}
+
+func DefaultAgentListen() string {
+	return fmt.Sprintf(listenFormat, DefaultAgentHost, DefaultAgentPort)
+}
 
 func DefaultControlURL() string {
 	return fmt.Sprintf(controlURLFormat, DefaultControlHost, DefaultControlPort)

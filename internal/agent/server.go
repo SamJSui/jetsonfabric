@@ -12,15 +12,15 @@ import (
 )
 
 type Server struct {
-	backend runtimeclient.ChatBackend
-	nodeID  string
+	backend  runtimeclient.ChatBackend
+	nodeName string
 }
 
 type Option func(*Server)
 
-func WithNodeID(nodeID string) Option {
+func WithNodeName(nodeName string) Option {
 	return func(s *Server) {
-		s.nodeID = nodeID
+		s.nodeName = nodeName
 	}
 }
 
@@ -104,11 +104,11 @@ func (s *Server) handleLayerSplitStage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	nodeID := s.nodeID
-	if nodeID == "" {
-		nodeID = req.NodeID
+	nodeName := s.nodeName
+	if nodeName == "" {
+		nodeName = req.NodeName
 	}
-	resp := layersplit.SyntheticStageResponse(req, nodeID, time.Since(start))
+	resp := layersplit.SyntheticStageResponse(req, nodeName, time.Since(start))
 	writeJSON(w, http.StatusOK, resp)
 }
 

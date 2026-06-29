@@ -42,9 +42,9 @@ func TestPlanForCandidatesCapsStagesAtLayerCount(t *testing.T) {
 
 func TestPlanForCandidatesUsesWeights(t *testing.T) {
 	plan := mustPlan(t, 28, []NodeCandidate{
-		{NodeID: "orin-01", Weight: 1},
-		{NodeID: "orin-02", Weight: 2},
-		{NodeID: "orin-03", Weight: 1},
+		{NodeName: "orin-01", Weight: 1},
+		{NodeName: "orin-02", Weight: 2},
+		{NodeName: "orin-03", Weight: 1},
 	})
 
 	assertStage(t, plan.Stages[0], "orin-01", StageRoleFirst, 0, 7)
@@ -71,17 +71,17 @@ func mustPlan(t *testing.T, layerCount int, candidates []NodeCandidate) Plan {
 	return plan
 }
 
-func candidates(nodeIDs ...string) []NodeCandidate {
-	output := make([]NodeCandidate, 0, len(nodeIDs))
-	for _, nodeID := range nodeIDs {
-		output = append(output, NodeCandidate{NodeID: nodeID, Weight: 1})
+func candidates(nodeNames ...string) []NodeCandidate {
+	output := make([]NodeCandidate, 0, len(nodeNames))
+	for _, nodeName := range nodeNames {
+		output = append(output, NodeCandidate{NodeName: nodeName, Weight: 1})
 	}
 	return output
 }
 
-func assertStage(t *testing.T, stage Stage, nodeID string, role StageRole, start int, end int) {
+func assertStage(t *testing.T, stage Stage, nodeName string, role StageRole, start int, end int) {
 	t.Helper()
-	if stage.NodeID != nodeID || stage.Role != role || stage.LayerStart != start || stage.LayerEnd != end {
+	if stage.NodeName != nodeName || stage.Role != role || stage.LayerStart != start || stage.LayerEnd != end {
 		t.Fatalf("unexpected stage: %+v", stage)
 	}
 	if stage.LayerCount != end-start {

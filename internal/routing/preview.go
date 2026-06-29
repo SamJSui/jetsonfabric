@@ -16,7 +16,7 @@ const (
 )
 
 type PlacementPreview struct {
-	NodeID        string `json:"node_id"`
+	NodeName      string `json:"node_name"`
 	Valid         bool   `json:"valid"`
 	MemoryOK      bool   `json:"memory_ok"`
 	AcceleratorOK bool   `json:"accelerator_ok"`
@@ -40,7 +40,7 @@ func Preview(model cluster.ModelProfile, nodes []cluster.NodeRecord) RoutePrevie
 		}
 		memoryOK := memory >= model.MinMemoryGB
 		placements = append(placements, PlacementPreview{
-			NodeID:        node.NodeID,
+			NodeName:      node.NodeName,
 			Valid:         memoryOK && acceleratorOK,
 			MemoryOK:      memoryOK,
 			AcceleratorOK: acceleratorOK,

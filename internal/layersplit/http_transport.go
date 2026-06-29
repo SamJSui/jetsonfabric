@@ -29,7 +29,7 @@ func NewHTTPTransport(timeout time.Duration) *HTTPTransport {
 
 func (t *HTTPTransport) RunStage(ctx context.Context, target StageTarget, req ActivationRequest) (ActivationResponse, error) {
 	if target.BaseURL == "" {
-		return ActivationResponse{}, fmt.Errorf("stage target %q is missing a base URL", target.NodeID)
+		return ActivationResponse{}, fmt.Errorf("stage target %q is missing a base URL", target.NodeName)
 	}
 	url, err := api.JoinBasePath(target.BaseURL, api.PathLayerSplitStage)
 	if err != nil {

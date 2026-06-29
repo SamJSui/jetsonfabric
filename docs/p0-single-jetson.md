@@ -91,13 +91,13 @@ swap-heavy execution. The point is to establish the serving path and metrics.
 - Track backend errors and timeouts.
 - Keep the model process management simple at first; manual startup is
   acceptable for the first demo.
-- The agent owns the local runtime URL, model IDs served by that runtime, and
+- The agent owns the local runtime URL, model ID served by that runtime, and
   the node-facing proxy endpoint. Model artifact download and runtime launch can
   remain script-managed until the first Jetson demo works.
 
 ### Benchmarks
 
-- Record prompt, model ID, node ID, route mode, start/end time, latency,
+- Record prompt, model ID, node name, route mode, start/end time, latency,
   time-to-first-token if available, output token count, tokens/sec, memory, and
   temperature.
 - Store results as JSONL or another simple local file format first.
@@ -119,11 +119,11 @@ And on the Jetson:
 ./jetsonfabric-agent \
   --control-url http://beelink:52415 \
   --join-token "$JETSONFABRIC_JOIN_TOKEN" \
-  --node-id jetson-01 \
-  --host 0.0.0.0 \
+  --node-name jetson-01 \
+  --listen 0.0.0.0:52416 \
   --advertise-url http://jetson-01:52416 \
   --llama-url http://127.0.0.1:8080 \
-  --llama-models qwen2.5-coder-1.5b-q4
+  --model qwen2.5-coder-1.5b-q4
 ```
 
 Then from the development machine:

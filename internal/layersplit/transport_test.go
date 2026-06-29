@@ -48,13 +48,13 @@ func TestHTTPTransportRunsStage(t *testing.T) {
 	defer server.Close()
 
 	transport := NewHTTPTransport(0)
-	stage := Stage{Index: 1, NodeID: "agent-http", Role: StageRoleLast, LayerStart: 14, LayerEnd: 28}
+	stage := Stage{Index: 1, NodeName: "agent-http", Role: StageRoleLast, LayerStart: 14, LayerEnd: 28}
 	req := BuildStageRequest("session", "request", "model", stage, "prompt", TransportHTTP)
-	resp, err := transport.RunStage(context.Background(), StageTarget{NodeID: "agent-http", BaseURL: server.URL, Stage: stage}, req)
+	resp, err := transport.RunStage(context.Background(), StageTarget{NodeName: "agent-http", BaseURL: server.URL, Stage: stage}, req)
 	if err != nil {
 		t.Fatalf("run stage: %v", err)
 	}
-	if resp.NodeID != "agent-http" || resp.LayerStart != 14 || resp.LayerEnd != 28 {
+	if resp.NodeName != "agent-http" || resp.LayerStart != 14 || resp.LayerEnd != 28 {
 		t.Fatalf("unexpected response metadata: %+v", resp)
 	}
 	if resp.Payload != "prompt -> agent-http[14:28]" {
@@ -64,9 +64,9 @@ func TestHTTPTransportRunsStage(t *testing.T) {
 
 func TestLocalTransportRecordsRequests(t *testing.T) {
 	transport := &LocalTransport{}
-	stage := Stage{Index: 0, NodeID: "agent-local", Role: StageRoleFirst, LayerStart: 0, LayerEnd: 14}
+	stage := Stage{Index: 0, NodeName: "agent-local", Role: StageRoleFirst, LayerStart: 0, LayerEnd: 14}
 	req := BuildStageRequest("session", "request", "model", stage, "prompt", TransportLocal)
-	resp, err := transport.RunStage(context.Background(), StageTarget{NodeID: "agent-local", Stage: stage}, req)
+	resp, err := transport.RunStage(context.Background(), StageTarget{NodeName: "agent-local", Stage: stage}, req)
 	if err != nil {
 		t.Fatalf("run stage: %v", err)
 	}

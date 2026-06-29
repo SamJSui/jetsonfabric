@@ -17,7 +17,7 @@ const (
 )
 
 type NodeCandidate struct {
-	NodeID      string              `json:"node_id"`
+	NodeName    string              `json:"node_name"`
 	BackendID   string              `json:"backend_id,omitempty"`
 	BackendKind cluster.RuntimeKind `json:"backend_kind,omitempty"`
 	BaseURL     string              `json:"-"`
@@ -33,7 +33,7 @@ type Plan struct {
 
 type Stage struct {
 	Index       int                 `json:"index"`
-	NodeID      string              `json:"node_id"`
+	NodeName    string              `json:"node_name"`
 	BackendID   string              `json:"backend_id,omitempty"`
 	BackendKind cluster.RuntimeKind `json:"backend_kind,omitempty"`
 	BaseURL     string              `json:"-"`
@@ -71,7 +71,7 @@ func PlanForCandidates(modelID string, layerCount int, candidates []NodeCandidat
 		end := start + count
 		stages = append(stages, Stage{
 			Index:       index,
-			NodeID:      candidate.NodeID,
+			NodeName:    candidate.NodeName,
 			BackendID:   candidate.BackendID,
 			BackendKind: candidate.BackendKind,
 			BaseURL:     candidate.BaseURL,
@@ -95,7 +95,7 @@ func PlanForCandidates(modelID string, layerCount int, candidates []NodeCandidat
 func normalizeCandidates(candidates []NodeCandidate) []NodeCandidate {
 	normalized := make([]NodeCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
-		if candidate.NodeID == "" {
+		if candidate.NodeName == "" {
 			continue
 		}
 		if !ValidWeight(candidate.Weight) {

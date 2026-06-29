@@ -15,7 +15,7 @@ import (
 type Record struct {
 	Timestamp    time.Time           `json:"timestamp"`
 	ModelID      string              `json:"model_id"`
-	NodeID       string              `json:"node_id"`
+	NodeName     string              `json:"node_name"`
 	RouteMode    cluster.RouteMode   `json:"route_mode"`
 	BackendID    string              `json:"backend_id"`
 	BackendKind  cluster.RuntimeKind `json:"backend_kind"`

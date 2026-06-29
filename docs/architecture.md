@@ -1,5 +1,8 @@
 # Architecture
 
+See [Architecture Diagrams](architecture-diagrams.md) for component, sequence,
+contract, and node lifecycle diagrams.
+
 JetsonFabric has four layers:
 
 1. Control plane

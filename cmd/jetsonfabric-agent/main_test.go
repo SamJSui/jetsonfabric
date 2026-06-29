@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/cluster"
 )
@@ -16,7 +17,7 @@ func TestAdvertisedBackendsUseAgentProxyURL(t *testing.T) {
 	backends := advertisedBackends(
 		"http://127.0.0.1:52416",
 		"http://127.0.0.1:8080",
-		[]string{"qwen2.5-coder-1.5b-q4", "qwen2.5-coder-3b-q4"},
+		"qwen2.5-coder-1.5b-q4",
 	)
 	if len(backends) != 1 {
 		t.Fatalf("expected one backend, got %d", len(backends))
@@ -34,9 +35,94 @@ func TestAdvertisedBackendsUseAgentProxyURL(t *testing.T) {
 	if !backend.OpenAICompatible {
 		t.Fatal("expected OpenAI-compatible backend")
 	}
-	expectedModels := []string{"qwen2.5-coder-1.5b-q4", "qwen2.5-coder-3b-q4"}
+	expectedModels := []string{"qwen2.5-coder-1.5b-q4"}
 	if !reflect.DeepEqual(backend.Models, expectedModels) {
 		t.Fatalf("unexpected models: %+v", backend.Models)
+	}
+}
+
+func TestParseAgentConfigUsesExplicitNodeNameAndListen(t *testing.T) {
+	cfg, err := parseAgentConfig([]string{
+		"--control-url", "http://control:52415",
+		"--node-name", "dopey",
+		"--listen", "0.0.0.0:52416",
+		"--advertise-url", "http://dopey:52416",
+		"--llama-url", "http://127.0.0.1:8080",
+		"--model", "qwen2.5-coder-1.5b-q4",
+	})
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	if cfg.nodeName != "dopey" || cfg.listen != "0.0.0.0:52416" {
+		t.Fatalf("unexpected config: %+v", cfg)
+	}
+	if err := validateAgentConfig(cfg); err != nil {
+		t.Fatalf("validate config: %v", err)
+	}
+}
+
+func TestParseAgentConfigDefaultsNodeNameFromHostname(t *testing.T) {
+	cfg, err := parseAgentConfig([]string{"--control-url", "http://control:52415", "--once"})
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	if strings.TrimSpace(cfg.nodeName) == "" {
+		t.Fatalf("expected hostname fallback, got %+v", cfg)
+	}
+}
+
+func TestValidateAgentConfigRequiresModelRuntimePair(t *testing.T) {
+	base := agentConfig{
+		controlURL:   "http://control:52415",
+		joinToken:    "dev-token",
+		nodeName:     "dopey",
+		listen:       "127.0.0.1:52416",
+		advertiseURL: "http://dopey:52416",
+		interval:     time.Second,
+	}
+	tests := []struct {
+		name string
+		cfg  agentConfig
+		want string
+	}{
+		{
+			name: "runtime without model",
+			cfg: func() agentConfig {
+				cfg := base
+				cfg.llamaURL = "http://127.0.0.1:8080"
+				return cfg
+			}(),
+			want: "--model is required",
+		},
+		{
+			name: "model without runtime",
+			cfg: func() agentConfig {
+				cfg := base
+				cfg.model = "qwen2.5-coder-1.5b-q4"
+				return cfg
+			}(),
+			want: "--llama-url is required",
+		},
+		{
+			name: "once with runtime",
+			cfg: func() agentConfig {
+				cfg := base
+				cfg.llamaURL = "http://127.0.0.1:8080"
+				cfg.model = "qwen2.5-coder-1.5b-q4"
+				cfg.once = true
+				return cfg
+			}(),
+			want: "--once cannot be used",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateAgentConfig(test.cfg)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected %q error, got %v", test.want, err)
+			}
+		})
 	}
 }
 
@@ -86,14 +172,16 @@ func TestAdvertisedBackendsRequireAgentAndRuntimeURLs(t *testing.T) {
 		name     string
 		agentURL string
 		llamaURL string
+		model    string
 	}{
-		{name: "missing agent URL", agentURL: "", llamaURL: "http://127.0.0.1:8080"},
-		{name: "missing runtime URL", agentURL: "http://127.0.0.1:52416", llamaURL: ""},
+		{name: "missing agent URL", agentURL: "", llamaURL: "http://127.0.0.1:8080", model: "qwen2.5-coder-1.5b-q4"},
+		{name: "missing runtime URL", agentURL: "http://127.0.0.1:52416", llamaURL: "", model: "qwen2.5-coder-1.5b-q4"},
+		{name: "missing model", agentURL: "http://127.0.0.1:52416", llamaURL: "http://127.0.0.1:8080", model: ""},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			backends := advertisedBackends(test.agentURL, test.llamaURL, []string{"qwen2.5-coder-1.5b-q4"})
+			backends := advertisedBackends(test.agentURL, test.llamaURL, test.model)
 			if backends != nil {
 				t.Fatalf("expected no backends, got %+v", backends)
 			}

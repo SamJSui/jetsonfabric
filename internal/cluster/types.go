@@ -35,7 +35,7 @@ const (
 )
 
 type NodeRecord struct {
-	NodeID       string           `json:"node_id"`
+	NodeName     string           `json:"node_name"`
 	Hostname     string           `json:"hostname"`
 	Arch         string           `json:"arch"`
 	OS           string           `json:"os"`
@@ -46,7 +46,7 @@ type NodeRecord struct {
 }
 
 type HeartbeatRequest struct {
-	NodeID       string           `json:"node_id"`
+	NodeName     string           `json:"node_name"`
 	Hostname     string           `json:"hostname"`
 	Arch         string           `json:"arch"`
 	OS           string           `json:"os"`

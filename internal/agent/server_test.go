@@ -44,7 +44,7 @@ func TestServerProxiesChatCompletionsToRuntimeBackend(t *testing.T) {
 			Usage: &chat.Usage{CompletionTokens: 3, TotalTokens: 8},
 			Route: &chat.RouteMetadata{
 				Mode:      cluster.RouteModeSingleNode,
-				NodeID:    "runtime-should-not-set-control-route",
+				NodeName:  "runtime-should-not-set-control-route",
 				LatencyMS: 1,
 			},
 		})
@@ -100,7 +100,7 @@ func TestServerRejectsChatWhenRuntimeBackendIsUnavailable(t *testing.T) {
 }
 
 func TestServerRunsSyntheticLayerSplitStage(t *testing.T) {
-	server := httptest.NewServer(NewServer(nil, WithNodeID("agent-stage-1")).Router())
+	server := httptest.NewServer(NewServer(nil, WithNodeName("agent-stage-1")).Router())
 	defer server.Close()
 
 	payload := map[string]any{
@@ -108,7 +108,7 @@ func TestServerRunsSyntheticLayerSplitStage(t *testing.T) {
 		"request_id":  "request-1",
 		"model_id":    "qwen2.5-coder-1.5b-q4",
 		"stage_index": 0,
-		"node_id":     "agent-stage-1",
+		"node_name":   "agent-stage-1",
 		"role":        "first",
 		"layer_start": 0,
 		"layer_end":   14,

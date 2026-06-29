@@ -80,10 +80,10 @@ Start a local test agent:
 
 ```sh
 sh scripts/run-agent.sh \
-  --node-id dev-node \
+  --node-name dev-node \
   --advertise-url http://127.0.0.1:52416 \
   --llama-url http://127.0.0.1:8080 \
-  --llama-models qwen2.5-coder-1.5b-q4 \
+  --model qwen2.5-coder-1.5b-q4 \
   --background
 ```
 
@@ -176,7 +176,7 @@ Expected join flow:
 ./jetsonfabric-agent \
   --control-url http://beelink:52415 \
   --join-token <token> \
-  --node-id jetson-02
+  --node-name jetson-02
 ```
 
 The control plane should then discover its hardware profile, runtime capabilities,

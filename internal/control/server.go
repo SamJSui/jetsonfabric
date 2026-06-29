@@ -117,7 +117,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, _ *http.Request) {
 		nodes = append(nodes, node)
 	}
 	s.mu.RUnlock()
-	sortNodesByID(nodes)
+	sortNodesByName(nodes)
 	writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes})
 }
 
@@ -213,9 +213,9 @@ func (s *Server) handleLayerSplitCompletions(w http.ResponseWriter, r *http.Requ
 	for _, stage := range plan.Stages {
 		stageReq := layersplit.BuildStageRequest(sessionID, requestID, model.ID, stage, payload, s.layerTransportKind)
 		resp, err := s.layerTransport.RunStage(r.Context(), layersplit.StageTarget{
-			NodeID:  stage.NodeID,
-			BaseURL: stage.BaseURL,
-			Stage:   stage,
+			NodeName: stage.NodeName,
+			BaseURL:  stage.BaseURL,
+			Stage:    stage,
 		}, stageReq)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, errorLayerSplitStageFailed, err.Error())
@@ -253,7 +253,7 @@ func (s *Server) handleLayerSplitCompletions(w http.ResponseWriter, r *http.Requ
 	if err := s.benchmarkRecorder.Record(r.Context(), benchmarks.Record{
 		Timestamp:    s.now(),
 		ModelID:      model.ID,
-		NodeID:       strings.Join(stageNodeIDs(stageResponses), ","),
+		NodeName:     strings.Join(stageNodeNames(stageResponses), ","),
 		RouteMode:    cluster.RouteModeLayerSplit,
 		BackendID:    "layer-split",
 		BackendKind:  cluster.RuntimeKindLlamaCPP,
@@ -277,13 +277,13 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errorInvalidJSON, "request body must be valid JSON")
 		return
 	}
-	if heartbeat.NodeID == "" {
-		writeError(w, http.StatusBadRequest, errorMissingNodeID, "node_id is required")
+	if heartbeat.NodeName == "" {
+		writeError(w, http.StatusBadRequest, errorMissingNodeName, "node_name is required")
 		return
 	}
 	record := cluster.NodeRecord{
-		NodeID:       heartbeat.NodeID,
-		Hostname:     fallback(heartbeat.Hostname, heartbeat.NodeID),
+		NodeName:     heartbeat.NodeName,
+		Hostname:     fallback(heartbeat.Hostname, heartbeat.NodeName),
 		Arch:         fallback(heartbeat.Arch, "unknown"),
 		OS:           fallback(heartbeat.OS, "unknown"),
 		Capabilities: fallbackMap(heartbeat.Capabilities),
@@ -292,7 +292,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		LastSeen:     s.now(),
 	}
 	s.mu.Lock()
-	s.nodes[record.NodeID] = record
+	s.nodes[record.NodeName] = record
 	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"status": "registered", "node": record})
 }
@@ -336,7 +336,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.Route = &chat.RouteMetadata{
 		Mode:        cluster.RouteModeSingleNode,
-		NodeID:      node.NodeID,
+		NodeName:    node.NodeName,
 		BackendID:   backend.ID,
 		BackendKind: backend.Kind,
 		LatencyMS:   stats.Latency.Milliseconds(),
@@ -345,7 +345,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	record := benchmarks.Record{
 		Timestamp:    s.now(),
 		ModelID:      model.ID,
-		NodeID:       node.NodeID,
+		NodeName:     node.NodeName,
 		RouteMode:    cluster.RouteModeSingleNode,
 		BackendID:    backend.ID,
 		BackendKind:  backend.Kind,
@@ -380,7 +380,7 @@ type errorCode string
 const (
 	errorUnauthorized          errorCode = "unauthorized"
 	errorInvalidJSON           errorCode = "invalid_json"
-	errorMissingNodeID         errorCode = "missing_node_id"
+	errorMissingNodeName       errorCode = "missing_node_name"
 	errorMissingModel          errorCode = "missing_model"
 	errorMissingMessages       errorCode = "missing_messages"
 	errorUnknownModel          errorCode = "unknown_model"
@@ -425,15 +425,15 @@ func (s *Server) selectSingleNodeBackend(model cluster.ModelProfile) (cluster.No
 		nodes = append(nodes, node)
 	}
 	s.mu.RUnlock()
-	sortNodesByID(nodes)
+	sortNodesByName(nodes)
 
 	preview := routing.Preview(model, nodes)
 	placementByNode := make(map[string]routing.PlacementPreview, len(preview.Placements))
 	for _, placement := range preview.Placements {
-		placementByNode[placement.NodeID] = placement
+		placementByNode[placement.NodeName] = placement
 	}
 	for _, node := range nodes {
-		placement := placementByNode[node.NodeID]
+		placement := placementByNode[node.NodeName]
 		if !placement.Valid {
 			continue
 		}
@@ -456,17 +456,17 @@ func (s *Server) layerSplitCandidates(model cluster.ModelProfile) []layersplit.N
 		nodes = append(nodes, node)
 	}
 	s.mu.RUnlock()
-	sortNodesByID(nodes)
+	sortNodesByName(nodes)
 
 	preview := routing.Preview(model, nodes)
 	placementByNode := make(map[string]routing.PlacementPreview, len(preview.Placements))
 	for _, placement := range preview.Placements {
-		placementByNode[placement.NodeID] = placement
+		placementByNode[placement.NodeName] = placement
 	}
 
 	candidates := make([]layersplit.NodeCandidate, 0, len(nodes))
 	for _, node := range nodes {
-		placement := placementByNode[node.NodeID]
+		placement := placementByNode[node.NodeName]
 		if !placement.Valid {
 			continue
 		}
@@ -475,7 +475,7 @@ func (s *Server) layerSplitCandidates(model cluster.ModelProfile) []layersplit.N
 			continue
 		}
 		candidates = append(candidates, layersplit.NodeCandidate{
-			NodeID:      node.NodeID,
+			NodeName:    node.NodeName,
 			BackendID:   backend.ID,
 			BackendKind: backend.Kind,
 			BaseURL:     backend.BaseURL,
@@ -547,9 +547,9 @@ func layerSplitWeight(capabilities map[string]any) float64 {
 	return *value
 }
 
-func sortNodesByID(nodes []cluster.NodeRecord) {
+func sortNodesByName(nodes []cluster.NodeRecord) {
 	slices.SortFunc(nodes, func(left cluster.NodeRecord, right cluster.NodeRecord) int {
-		return cmp.Compare(left.NodeID, right.NodeID)
+		return cmp.Compare(left.NodeName, right.NodeName)
 	})
 }
 
@@ -573,7 +573,7 @@ func (s *Server) layerSplitRouteMetadata(plan layersplit.Plan, responses []layer
 		bytesOut += response.BytesOut
 		stages = append(stages, chat.RouteStage{
 			Index:       response.StageIndex,
-			NodeID:      response.NodeID,
+			NodeName:    response.NodeName,
 			BackendID:   planStage.BackendID,
 			BackendKind: planStage.BackendKind,
 			Role:        string(response.Role),
@@ -593,17 +593,17 @@ func (s *Server) layerSplitRouteMetadata(plan layersplit.Plan, responses []layer
 		BytesOut:  bytesOut,
 	}
 	if len(plan.Stages) > 0 {
-		metadata.NodeID = plan.Stages[0].NodeID
+		metadata.NodeName = plan.Stages[0].NodeName
 		metadata.BackendID = plan.Stages[0].BackendID
 		metadata.BackendKind = plan.Stages[0].BackendKind
 	}
 	return metadata
 }
 
-func stageNodeIDs(responses []layersplit.ActivationResponse) []string {
-	nodeIDs := make([]string, 0, len(responses))
+func stageNodeNames(responses []layersplit.ActivationResponse) []string {
+	nodeNames := make([]string, 0, len(responses))
 	for _, response := range responses {
-		nodeIDs = append(nodeIDs, response.NodeID)
+		nodeNames = append(nodeNames, response.NodeName)
 	}
-	return nodeIDs
+	return nodeNames
 }

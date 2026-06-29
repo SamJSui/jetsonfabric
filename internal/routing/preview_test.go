@@ -15,7 +15,7 @@ func TestPreviewRejectsMissingAccelerator(t *testing.T) {
 	}
 	nodes := []cluster.NodeRecord{
 		{
-			NodeID: "cpu-node",
+			NodeName: "cpu-node",
 			Capabilities: map[string]any{
 				cluster.CapabilityMemoryGB:     8.0,
 				cluster.CapabilityAccelerators: []any{},
@@ -42,7 +42,7 @@ func TestPreviewAcceptsCandidate(t *testing.T) {
 	}
 	nodes := []cluster.NodeRecord{
 		{
-			NodeID: "jetson-node",
+			NodeName: "jetson-node",
 			Capabilities: map[string]any{
 				cluster.CapabilityMemoryGB:     8.0,
 				cluster.CapabilityAccelerators: []any{cluster.AcceleratorCUDA, cluster.AcceleratorJetson},

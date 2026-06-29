@@ -21,9 +21,9 @@ type ActivationTransport interface {
 }
 
 type StageTarget struct {
-	NodeID  string
-	BaseURL string
-	Stage   Stage
+	NodeName string
+	BaseURL  string
+	Stage    Stage
 }
 
 type ActivationRequest struct {
@@ -31,7 +31,7 @@ type ActivationRequest struct {
 	RequestID   string    `json:"request_id"`
 	ModelID     string    `json:"model_id"`
 	StageIndex  int       `json:"stage_index"`
-	NodeID      string    `json:"node_id"`
+	NodeName    string    `json:"node_name"`
 	Role        StageRole `json:"role"`
 	LayerStart  int       `json:"layer_start"`
 	LayerEnd    int       `json:"layer_end"`
@@ -49,7 +49,7 @@ type ActivationResponse struct {
 	RequestID  string     `json:"request_id"`
 	ModelID    string     `json:"model_id"`
 	StageIndex int        `json:"stage_index"`
-	NodeID     string     `json:"node_id"`
+	NodeName   string     `json:"node_name"`
 	Role       StageRole  `json:"role"`
 	LayerStart int        `json:"layer_start"`
 	LayerEnd   int        `json:"layer_end"`
@@ -66,7 +66,7 @@ type ActivationResponse struct {
 
 type StageTrace struct {
 	StageIndex int       `json:"stage_index"`
-	NodeID     string    `json:"node_id"`
+	NodeName   string    `json:"node_name"`
 	Role       StageRole `json:"role"`
 	LayerStart int       `json:"layer_start"`
 	LayerEnd   int       `json:"layer_end"`
@@ -97,7 +97,7 @@ func BuildStageRequest(sessionID string, requestID string, modelID string, stage
 		RequestID:   requestID,
 		ModelID:     modelID,
 		StageIndex:  stage.Index,
-		NodeID:      stage.NodeID,
+		NodeName:    stage.NodeName,
 		Role:        stage.Role,
 		LayerStart:  stage.LayerStart,
 		LayerEnd:    stage.LayerEnd,
@@ -132,8 +132,8 @@ func NormalizeResponse(req ActivationRequest, resp ActivationResponse, elapsed t
 	if resp.StageIndex == 0 && req.StageIndex != 0 {
 		resp.StageIndex = req.StageIndex
 	}
-	if resp.NodeID == "" {
-		resp.NodeID = req.NodeID
+	if resp.NodeName == "" {
+		resp.NodeName = req.NodeName
 	}
 	if resp.Role == "" {
 		resp.Role = req.Role
@@ -164,7 +164,7 @@ func NormalizeResponse(req ActivationRequest, resp ActivationResponse, elapsed t
 	}
 	resp.Trace = StageTrace{
 		StageIndex: resp.StageIndex,
-		NodeID:     resp.NodeID,
+		NodeName:   resp.NodeName,
 		Role:       resp.Role,
 		LayerStart: resp.LayerStart,
 		LayerEnd:   resp.LayerEnd,
@@ -176,13 +176,13 @@ func NormalizeResponse(req ActivationRequest, resp ActivationResponse, elapsed t
 	return resp
 }
 
-func SyntheticStageResponse(req ActivationRequest, nodeID string, elapsed time.Duration) ActivationResponse {
-	if nodeID == "" {
-		nodeID = req.NodeID
+func SyntheticStageResponse(req ActivationRequest, nodeName string, elapsed time.Duration) ActivationResponse {
+	if nodeName == "" {
+		nodeName = req.NodeName
 	}
-	payload := fmt.Sprintf("%s -> %s[%d:%d]", req.Payload, nodeID, req.LayerStart, req.LayerEnd)
+	payload := fmt.Sprintf("%s -> %s[%d:%d]", req.Payload, nodeName, req.LayerStart, req.LayerEnd)
 	return NormalizeResponse(req, ActivationResponse{
-		NodeID:     nodeID,
+		NodeName:   nodeName,
 		Payload:    payload,
 		BytesOut:   len([]byte(payload)),
 		LatencyMS:  elapsed.Milliseconds(),

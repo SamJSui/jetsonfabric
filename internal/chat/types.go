@@ -37,7 +37,7 @@ type Usage struct {
 
 type RouteMetadata struct {
 	Mode        cluster.RouteMode   `json:"mode"`
-	NodeID      string              `json:"node_id"`
+	NodeName    string              `json:"node_name"`
 	BackendID   string              `json:"backend_id"`
 	BackendKind cluster.RuntimeKind `json:"backend_kind"`
 	LatencyMS   int64               `json:"latency_ms"`
@@ -48,7 +48,7 @@ type RouteMetadata struct {
 
 type RouteStage struct {
 	Index       int                 `json:"index"`
-	NodeID      string              `json:"node_id"`
+	NodeName    string              `json:"node_name"`
 	BackendID   string              `json:"backend_id,omitempty"`
 	BackendKind cluster.RuntimeKind `json:"backend_kind,omitempty"`
 	Role        string              `json:"role"`

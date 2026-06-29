@@ -48,7 +48,7 @@ sh scripts/run-control.sh
 Agent:
 
 ```sh
-sh scripts/run-agent.sh --node-id dev-node
+sh scripts/run-agent.sh --node-name dev-node
 ```
 
 ## Jetson Agent Install Target

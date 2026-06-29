@@ -31,10 +31,10 @@ pid_dir="$repo_root/.cache/pids"
 
 i=1
 while [ "$i" -le "$count" ]; do
-  node_id="$node_prefix-$i"
-  pid_path="$pid_dir/agent-$node_id.pid"
+  node_name="$node_prefix-$i"
+  pid_path="$pid_dir/agent-$node_name.pid"
   if [ ! -f "$pid_path" ]; then
-    printf 'no pid file for %s\n' "$node_id"
+    printf 'no pid file for %s\n' "$node_name"
     i=$((i + 1))
     continue
   fi
@@ -46,6 +46,6 @@ while [ "$i" -le "$count" ]; do
   fi
   kill "$pid" 2>/dev/null || true
   rm -f "$pid_path"
-  printf 'stopped %s\n' "$node_id"
+  printf 'stopped %s\n' "$node_name"
   i=$((i + 1))
 done

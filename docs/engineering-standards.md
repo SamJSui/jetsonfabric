@@ -118,7 +118,7 @@ JetsonFabric should expose boring, debuggable APIs.
 - Validate request bodies and model IDs.
 - Return clear 4xx errors for bad input and clear 5xx/502/503 errors for backend
   and routing failures.
-- Include route metadata where useful: route mode, node ID, model ID, backend,
+- Include route metadata where useful: route mode, node name, model ID, backend,
   and benchmark reference.
 - Keep OpenAI-compatible endpoints compatible unless an extension is documented.
 - Do not leak join tokens, local credentials, or machine-specific secrets in logs
@@ -139,7 +139,7 @@ The scheduler should be evidence-driven.
 Required benchmark fields should include, when available:
 
 - model ID
-- node ID
+- node name
 - route mode
 - backend
 - prompt or prompt-set ID

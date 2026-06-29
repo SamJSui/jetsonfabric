@@ -1,20 +1,15 @@
 #!/usr/bin/env sh
 set -eu
 
-host=127.0.0.1
-port=52415
+listen=127.0.0.1:52415
 join_token=dev-token
 benchmarks_path=data/benchmarks.jsonl
 background=
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --host)
-      host=$2
-      shift 2
-      ;;
-    --port)
-      port=$2
+    --listen)
+      listen=$2
       shift 2
       ;;
     --join-token)
@@ -30,7 +25,7 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --help)
-      printf 'usage: %s [--host HOST] [--port PORT] [--join-token TOKEN] [--benchmarks PATH] [--background]\n' "$0"
+      printf 'usage: %s [--listen ADDR] [--join-token TOKEN] [--benchmarks PATH] [--background]\n' "$0"
       exit 0
       ;;
     *)
@@ -53,15 +48,14 @@ export GOCACHE="$go_cache"
 cd "$repo_root"
 
 set -- "$go_bin" run ./cmd/jetsonfabric-control \
-  --host "$host" \
-  --port "$port" \
+  --listen "$listen" \
   --join-token "$join_token" \
   --benchmarks "$benchmarks_path"
 
 if [ -n "$background" ]; then
   nohup "$@" > "$log_path" 2>&1 &
   printf '%s\n' "$!" > "$pid_path"
-  printf 'jetsonfabric-control started on http://%s:%s with pid %s\n' "$host" "$port" "$(cat "$pid_path")"
+  printf 'jetsonfabric-control started on http://%s with pid %s\n' "$listen" "$(cat "$pid_path")"
   printf 'log: %s\n' "$log_path"
   exit 0
 fi

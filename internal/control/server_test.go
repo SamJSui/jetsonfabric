@@ -60,9 +60,9 @@ func TestChatCompletionsRoutesToSingleNodeBackend(t *testing.T) {
 		WithClock(func() time.Time { return time.Unix(100, 0).UTC() }),
 	).Router()
 	registerNode(t, handler, cluster.HeartbeatRequest{
-		NodeID: "jetson-01",
-		Arch:   "arm64",
-		OS:     "linux",
+		NodeName: "jetson-01",
+		Arch:     "arm64",
+		OS:       "linux",
 		Capabilities: map[string]any{
 			cluster.CapabilityMemoryGB:     8.0,
 			cluster.CapabilityAccelerators: []any{cluster.AcceleratorJetson, cluster.AcceleratorCUDA},
@@ -101,14 +101,14 @@ func TestChatCompletionsRoutesToSingleNodeBackend(t *testing.T) {
 	if decoded.Route == nil {
 		t.Fatal("expected route metadata")
 	}
-	if decoded.Route.Mode != cluster.RouteModeSingleNode || decoded.Route.NodeID != "jetson-01" || decoded.Route.BackendID != cluster.BackendIDLlamaLocal {
+	if decoded.Route.Mode != cluster.RouteModeSingleNode || decoded.Route.NodeName != "jetson-01" || decoded.Route.BackendID != cluster.BackendIDLlamaLocal {
 		t.Fatalf("unexpected route metadata: %+v", decoded.Route)
 	}
 	if len(recorder.records) != 1 {
 		t.Fatalf("expected one benchmark record, got %d", len(recorder.records))
 	}
 	record := firstRecord(t, recorder.records)
-	if record.ModelID != "qwen2.5-coder-1.5b-q4" || record.NodeID != "jetson-01" || record.RouteMode != cluster.RouteModeSingleNode {
+	if record.ModelID != "qwen2.5-coder-1.5b-q4" || record.NodeName != "jetson-01" || record.RouteMode != cluster.RouteModeSingleNode {
 		t.Fatalf("unexpected benchmark record: %+v", record)
 	}
 	if record.MemoryGB == nil || *record.MemoryGB != 8.0 {
@@ -153,9 +153,9 @@ func TestServerRunsOverHTTPForSingleNodeChatFlow(t *testing.T) {
 	defer controlServer.Close()
 
 	registerNodeHTTP(t, controlServer.URL, cluster.HeartbeatRequest{
-		NodeID: "jetson-01",
-		Arch:   "arm64",
-		OS:     "linux",
+		NodeName: "jetson-01",
+		Arch:     "arm64",
+		OS:       "linux",
 		Capabilities: map[string]any{
 			cluster.CapabilityMemoryGB: 8.0,
 		},
@@ -183,7 +183,7 @@ func TestServerRunsOverHTTPForSingleNodeChatFlow(t *testing.T) {
 	if decoded.Route == nil {
 		t.Fatal("expected route metadata")
 	}
-	if decoded.Route.NodeID != "jetson-01" || decoded.Route.Mode != cluster.RouteModeSingleNode {
+	if decoded.Route.NodeName != "jetson-01" || decoded.Route.Mode != cluster.RouteModeSingleNode {
 		t.Fatalf("unexpected route metadata: %+v", decoded.Route)
 	}
 	if len(recorder.records) != 1 {
@@ -239,9 +239,9 @@ func TestServerRunsOverHTTPThroughAgentProxy(t *testing.T) {
 	defer controlServer.Close()
 
 	registerNodeHTTP(t, controlServer.URL, cluster.HeartbeatRequest{
-		NodeID: "jetson-agent-01",
-		Arch:   "arm64",
-		OS:     "linux",
+		NodeName: "jetson-agent-01",
+		Arch:     "arm64",
+		OS:       "linux",
 		Capabilities: map[string]any{
 			cluster.CapabilityMemoryGB: 8.0,
 		},
@@ -269,7 +269,7 @@ func TestServerRunsOverHTTPThroughAgentProxy(t *testing.T) {
 	if decoded.Route == nil {
 		t.Fatal("expected route metadata")
 	}
-	if decoded.Route.NodeID != "jetson-agent-01" || decoded.Route.BackendID != cluster.BackendIDLlamaLocal {
+	if decoded.Route.NodeName != "jetson-agent-01" || decoded.Route.BackendID != cluster.BackendIDLlamaLocal {
 		t.Fatalf("unexpected route metadata: %+v", decoded.Route)
 	}
 	if decoded.Route.BackendKind != cluster.RuntimeKindLlamaCPP {
@@ -279,7 +279,7 @@ func TestServerRunsOverHTTPThroughAgentProxy(t *testing.T) {
 		t.Fatalf("expected one benchmark record, got %d", len(recorder.records))
 	}
 	record := firstRecord(t, recorder.records)
-	if record.NodeID != "jetson-agent-01" || record.OutputTokens != 4 {
+	if record.NodeName != "jetson-agent-01" || record.OutputTokens != 4 {
 		t.Fatalf("unexpected benchmark record: %+v", record)
 	}
 }
@@ -371,7 +371,7 @@ func TestLayerSplitCompletionsRunsAllStages(t *testing.T) {
 	if len(decoded.Route.Stages) != 2 {
 		t.Fatalf("expected two route stages, got %+v", decoded.Route.Stages)
 	}
-	if decoded.Route.Stages[0].NodeID != "desktop-agent-1" || decoded.Route.Stages[1].NodeID != "desktop-agent-2" {
+	if decoded.Route.Stages[0].NodeName != "desktop-agent-1" || decoded.Route.Stages[1].NodeName != "desktop-agent-2" {
 		t.Fatalf("unexpected route stages: %+v", decoded.Route.Stages)
 	}
 	if len(transport.Requests) != 2 {
@@ -385,7 +385,7 @@ func TestLayerSplitCompletionsRunsAllStages(t *testing.T) {
 func TestChatCompletionsRejectsMissingBackend(t *testing.T) {
 	handler := NewServer("dev-token", testRegistry()).Router()
 	registerNode(t, handler, cluster.HeartbeatRequest{
-		NodeID: "jetson-01",
+		NodeName: "jetson-01",
 		Capabilities: map[string]any{
 			cluster.CapabilityMemoryGB: 8.0,
 		},
@@ -420,7 +420,7 @@ func TestChatCompletionsRejectsUnknownModel(t *testing.T) {
 func TestChatCompletionsRejectsInvalidBackendURL(t *testing.T) {
 	handler := NewServer("dev-token", testRegistry()).Router()
 	registerNode(t, handler, cluster.HeartbeatRequest{
-		NodeID: "jetson-01",
+		NodeName: "jetson-01",
 		Capabilities: map[string]any{
 			cluster.CapabilityMemoryGB: 8.0,
 		},
@@ -462,11 +462,11 @@ func testRegistry() modelregistry.Registry {
 	}
 }
 
-func layerSplitHeartbeat(nodeID string, weight float64) cluster.HeartbeatRequest {
+func layerSplitHeartbeat(nodeName string, weight float64) cluster.HeartbeatRequest {
 	return cluster.HeartbeatRequest{
-		NodeID: nodeID,
-		Arch:   "amd64",
-		OS:     "linux",
+		NodeName: nodeName,
+		Arch:     "amd64",
+		OS:       "linux",
 		Capabilities: map[string]any{
 			cluster.CapabilityMemoryGB:     16.0,
 			cluster.CapabilityLayerWeight:  weight,
@@ -607,14 +607,14 @@ func firstRecord(t *testing.T, records []benchmarks.Record) benchmarks.Record {
 	return benchmarks.Record{}
 }
 
-func assertLayerRange(t *testing.T, stage any, nodeID string, start int, end int) {
+func assertLayerRange(t *testing.T, stage any, nodeName string, start int, end int) {
 	t.Helper()
 	stageMap, ok := stage.(map[string]any)
 	if !ok {
 		t.Fatalf("expected stage object, got %+v", stage)
 	}
-	if stageMap["node_id"] != nodeID {
-		t.Fatalf("expected node %s, got %+v", nodeID, stageMap)
+	if stageMap["node_name"] != nodeName {
+		t.Fatalf("expected node %s, got %+v", nodeName, stageMap)
 	}
 	if int(stageMap["layer_start"].(float64)) != start || int(stageMap["layer_end"].(float64)) != end {
 		t.Fatalf("unexpected layer range: %+v", stageMap)
