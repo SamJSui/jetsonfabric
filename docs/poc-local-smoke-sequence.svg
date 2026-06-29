@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1360" height="780" viewBox="0 0 1360 780" role="img" aria-labelledby="title desc">
-  <title id="title">JetsonFabric P0 agent-proxied local smoke sequence</title>
+  <title id="title">JetsonFabric POC agent-proxied local smoke sequence</title>
   <desc id="desc">A sequence diagram showing the agent loading model artifact metadata, advertising its proxy URL to the control plane, control routing chat requests to the agent, the agent forwarding to llama-server, llama-server running Qwen GGUF, and control returning route metadata with a benchmark record.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="strokeWidth">
@@ -30,7 +30,7 @@
   </defs>
 
   <rect class="bg" width="1360" height="780" />
-  <text class="title" x="56" y="54">JetsonFabric P0 Agent-Proxied Local Smoke Sequence</text>
+  <text class="title" x="56" y="54">JetsonFabric POC Agent-Proxied Local Smoke Sequence</text>
   <text class="subtitle" x="56" y="80">Control routes to the agent. The agent owns node-local runtime details and forwards to llama-server.</text>
 
   <rect class="lane" x="50" y="118" width="148" height="74" />
@@ -67,11 +67,11 @@
   <rect class="note" x="666" y="220" width="438" height="58" />
   <text class="small" x="686" y="243">Agent startup</text>
   <text class="code" x="686" y="262">loads configs/model-artifacts.example.json</text>
-  <text class="code" x="686" y="276">knows source_url + local_path for advertised model IDs</text>
+  <text class="code" x="686" y="276">knows source_url + local_path for advertised model ID</text>
 
   <path class="arrow-dash" d="M760 314 L544 314" />
   <text class="small" x="598" y="305">heartbeat advertises</text>
-  <text class="code" x="574" y="331">agent URL + model IDs</text>
+  <text class="code" x="574" y="331">agent URL + model ID</text>
 
   <rect class="step-strong" x="66" y="362" width="118" height="48" />
   <text class="small" x="86" y="383">POST chat</text>

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">
-  <title id="title">P0 Prompt Path Sequence</title>
+  <title id="title">POC Prompt Path Sequence</title>
   <desc id="desc">Client request flows through control, model registry, agent proxy, llama-server, and benchmark recorder.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
@@ -16,7 +16,7 @@
     .text { font: 13px Arial, sans-serif; fill: #334155; }
   </style>
   <rect class="bg" width="1120" height="620"/>
-  <text class="title" x="40" y="44">P0 Prompt Path</text>
+  <text class="title" x="40" y="44">POC Prompt Path</text>
 
   <rect class="head" x="35" y="80" width="130" height="48"/>
   <text class="label" x="76" y="110">Client</text>

@@ -2,7 +2,7 @@
 set -eu
 
 control_url=http://127.0.0.1:52415
-request=examples/p0-local-smoke/chat-request.json
+request=examples/poc-local-smoke/chat-request.json
 count=5
 concurrency=1
 output=data/desktop-chat-benchmark.json

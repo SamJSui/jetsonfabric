@@ -1,10 +1,12 @@
-# P0 - Single Jetson Model Serving
+# POC - Single-Node Model Serving
 
-P0 is the current priority. The goal is to get one real model working on one
-Jetson through JetsonFabric before building distributed inference.
+The proof of concept is one full-model replica running on one Jetson through
+JetsonFabric. This is not distributed inference yet. It is the baseline that
+proves a node can be provisioned, can load a model, can serve a prompt, and can
+be observed by the control plane.
 
-Layer split, tensor parallelism, and multi-node scheduling are later work. They
-need a single-node baseline to compare against.
+Layer split, tensor parallelism, and multi-node scheduling need this baseline so
+their later measurements have something honest to compare against.
 
 ## Goal
 
@@ -15,7 +17,7 @@ a benchmark result.
 ## Why This Comes First
 
 Without a real single-Jetson backend, distributed planning is mostly theoretical.
-P0 creates the baseline needed to answer useful questions later:
+The POC creates the baseline needed to answer useful questions later:
 
 - How fast is one Jetson for the selected model?
 - What memory and thermal limits appear during real inference?
@@ -23,7 +25,7 @@ P0 creates the baseline needed to answer useful questions later:
 - What does the route planner need to know before assigning work?
 - What metric would a second Jetson need to improve?
 
-## P0 Deliverable
+## POC Deliverable
 
 A demo should show:
 
@@ -38,7 +40,8 @@ A demo should show:
 
 ## Recommended First Backend
 
-Use one existing local runtime first. Do not build a custom model engine for P0.
+Use one existing local runtime first. Do not build a custom model engine for the
+POC.
 
 Preferred order:
 
@@ -60,7 +63,7 @@ Start with models small enough to fit comfortably on one Jetson:
 - TinyLlama-class quantized baseline
 - a small vision model later for TensorRT-oriented demos
 
-The exact model can change, but P0 should avoid models that require fragile
+The exact model can change, but the POC should avoid models that require fragile
 swap-heavy execution. The point is to establish the serving path and metrics.
 
 ## Implementation Work
@@ -105,8 +108,8 @@ swap-heavy execution. The point is to establish the serving path and metrics.
 
 ## Acceptance Criteria
 
-P0 is done when these commands, or their documented equivalents, work on a fresh
-setup:
+The POC is done when these commands, or their documented equivalents, work on a
+fresh setup:
 
 ```sh
 sh scripts/build.sh
@@ -150,7 +153,7 @@ placeholder handler.
 
 ## Current Code Path
 
-The P0 serving path is now:
+The POC serving path is:
 
 ```text
 POST /v1/chat/completions
@@ -167,7 +170,7 @@ The backend can be a llama.cpp server or any temporary local server that speaks
 the OpenAI chat-completions shape. The control plane should call the agent proxy,
 not the runtime backend port directly.
 
-## Explicitly Out Of Scope For P0
+## Explicitly Out Of Scope For The POC
 
 - Layer-split inference.
 - Tensor parallelism.

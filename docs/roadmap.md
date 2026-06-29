@@ -1,5 +1,19 @@
 # Roadmap
 
+JetsonFabric now tracks four major milestones:
+
+```text
+POC: one full-model replica deployed onto one node and serving
+P0/MVP: real layer-split inference across Jetson nodes
+P1: tensor-parallelism experiment
+P2: operational edge fabric and measured runtime optimization
+```
+
+The naming matters. A single Jetson serving a full model is a **single full-model
+replica**, not distributed inference. It is still necessary because it proves the
+node, runtime, model artifact, routing, and benchmark loop before the project
+attempts multi-node execution.
+
 ## Foundation - Scaffold
 
 - Go control plane API
@@ -7,90 +21,86 @@
 - Go agent heartbeat
 - Model registry
 - Route preview endpoint
+- Agent proxy to an OpenAI-compatible backend
+- Synthetic layer-split planning and transport smoke tests
 
-## P0 - Single Jetson Model Serving
+## POC - Single Full-Model Replica Serving
 
-Current priority: prove that JetsonFabric can run a real model on one Jetson
-through the control-plane path. Layer split waits until this works.
+Goal: deploy one model onto one Jetson-class node and serve it through
+JetsonFabric.
 
 - Run one Jetson agent.
 - Detect Jetson hardware, JetPack/CUDA/TensorRT hints, memory, temperature, and
   runtime capabilities.
-- Deploy one small LLM through a local Jetson backend.
+- Ensure one model artifact exists on the node.
+- Start a node-local runtime such as `llama-server`.
+- Have the agent advertise exactly one ready model/backend.
 - Route one prompt through `jetsonfabric-control` to that backend.
 - Return a model response through `/v1/chat/completions`.
 - Record tokens/sec, p50/p95 latency, time-to-first-token, memory, and
   temperature.
-- Store benchmark results in a simple local format.
-- Produce a repeatable demo script.
 
-P0 is complete when a fresh checkout can build the agent/control binaries,
+The POC is complete when a fresh setup can build the agent/control binaries,
 install the agent on one Jetson, send one prompt through the control plane, and
 show a benchmark record for that run.
 
-## P1 - Multi-Jetson Layer-Split Inference
+## P0/MVP - Layer-Split Inference
 
-Goal: use two Jetsons first, then three, to test whether layer-split model
-parallelism can run a larger or better model than one Jetson can comfortably
-serve.
+Goal: make the first real distributed inference path work.
 
-- Add a second Jetson, then a third only after the two-node path is measured.
-- Keep replica_serving as a baseline/control, not the main novelty.
+- Use two Jetsons first; add a third only after the two-node path is measured.
+- Build or integrate a shard-capable runtime. Stock `llama-server` is not enough
+  because it cannot expose intermediate layer activations.
 - Split a small transformer by layer ranges across Jetsons.
-- Each worker owns its assigned layers, local runtime state, and local KV-cache
-  responsibility for its shard.
-- Send hidden states across the network during prefill and decode.
+- Each runtime worker owns its assigned layers, local runtime state, and KV-cache
+  behavior for its stage.
+- Send activation tensors and metadata across the network during prefill and
+  decode.
+- Keep replica_serving as a baseline/control, not the main novelty.
 - Start with ordinary TCP over the built-in network before buying faster
   transport hardware.
-- Measure latency, time-to-first-token, tokens/sec, network bytes/token, memory,
-  temperature, and error behavior.
-- Compare single-node, replica_serving, and layer_split routes on the same
-  prompt sets.
+- Compare POC single-replica serving, replica_serving, and layer_split routes on
+  the same prompt sets.
 
-P1 is complete when JetsonFabric can show whether layer split improves at least
-one serious metric:
+P0/MVP is complete when JetsonFabric returns a real model response from a
+multi-node layer-split execution path and records route metadata with nodes,
+layer ranges, transport, bytes moved, latency, memory, and thermal data.
 
-- a larger model fits;
-- coding or reasoning pass rate improves enough to justify added latency;
-- pipeline throughput improves under concurrent load;
-- memory pressure per node drops enough to matter.
+## P1 - Tensor Parallelism
 
-## P2 - Distributed Runtime Optimization
+Goal: test whether splitting tensor operations across Jetson nodes can help
+enough to justify its synchronization cost.
 
-Goal: make distributed inference more optimal after P1 proves the layer-split
-path and identifies the bottleneck.
+- Prototype a narrow tensor-parallel path for one model component.
+- Measure synchronization frequency, network bytes/token, copy overhead, latency,
+  and GPU utilization.
+- Compare against the POC single-replica baseline and the P0/MVP layer-split
+  path.
+- Treat a negative result as valid if the measurements show communication cost
+  dominates.
 
-P2 is primarily C++/CUDA runtime optimization work, not Go control-plane work.
-P1 may introduce a minimal C++ layer worker if the selected model runtime
-requires it. Go still owns orchestration, scheduling, APIs, and benchmark
-records. C++ owns latency-sensitive runtime workers, tensor framing, transport
-backends, and integration with CUDA/TensorRT/llama.cpp.
+P1 is complete when JetsonFabric can explain, with measurements, whether tensor
+parallelism is useful on the target Jetson network for the selected model class.
 
-Planned optimization ladder:
+## P2 - Operational Edge Fabric
 
-- Profile the P1 layer-split path and identify compute, copy, serialization, or
-  network bottlenecks.
-- Implement a stable activation/tensor wire protocol with explicit shape, dtype,
-  byte length, request/session ID, layer boundary, and decode step fields.
-- Keep dtype as a typed enum in code with stable numeric wire values.
-- Compare FP16, BF16, INT8, and packed INT4 activation transfer where quality
-  impact can be measured.
-- Use pinned or mapped buffers where they reduce CPU/GPU copy overhead.
-- Compare built-in 1GbE TCP against optional 10GbE TCP.
-- Evaluate RDMA only after TCP and 10GbE measurements show transport overhead is
-  the limiting factor.
-- Treat tensor parallelism as an experiment after transport numbers justify it,
-  because it requires much more frequent synchronization than layer split.
+Goal: turn the runtime experiments into a repeatable, observable edge serving
+system.
 
-P2 is complete when JetsonFabric can explain the bottleneck with measurements
-and show whether transport/runtime changes materially improve latency,
-throughput, memory fit, energy, or quality-per-latency.
+- Agent-managed model artifact download, verification, and runtime launch.
+- Persistent control-plane state for nodes, deployments, benchmarks, and model
+  metadata.
+- Authenticated admin APIs for model and deployment management.
+- Dashboard/API views for node health, route decisions, runtime readiness, and
+  benchmark history.
+- Profile-driven placement using memory, thermal, latency, and network data.
+- Failover and degraded routing when a node or runtime disappears.
+- Runtime transport optimization only where benchmarks identify a bottleneck:
+  activation compression, pipelining, 10GbE TCP, pinned buffers, and eventually
+  RDMA if justified.
 
-## P3 - Profile-Driven Placement
-
-- Profile per-layer latency on each node.
-- Move split point based on node speed, thermals, and memory.
-- Compare local, replica_serving, layer_split, and cloud fallback.
+P2 is complete when JetsonFabric can deploy, observe, route, recover, and explain
+model work across the cluster without hand-tuning each run.
 
 ## Supporting Work - Observability And Gateway
 

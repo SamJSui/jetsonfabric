@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 420" role="img" aria-labelledby="title desc">
-  <title id="title">P0 Serving Component View</title>
-  <desc id="desc">P0 request path from client to control plane to Jetson agent proxy to llama-server.</desc>
+  <title id="title">POC Serving Component View</title>
+  <desc id="desc">POC request path from client to control plane to Jetson agent proxy to llama-server.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
@@ -17,7 +17,7 @@
   </style>
 
   <rect class="bg" width="1080" height="420"/>
-  <text class="title" x="40" y="44">P0 Serving Component View</text>
+  <text class="title" x="40" y="44">POC Serving Component View</text>
   <text class="small" x="40" y="68">One real model runs on one Jetson. Control routes requests to the agent proxy; the agent calls the node-local runtime.</text>
 
   <rect class="box" x="45" y="150" width="160" height="72"/>

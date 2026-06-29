@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 640" role="img" aria-labelledby="title desc">
   <title id="title">Node Name Conflict Policy</title>
-  <desc id="desc">P0 uses node_name as identity; duplicate live node names are configuration conflicts.</desc>
+  <desc id="desc">The POC and MVP use node_name as identity; duplicate live node names are configuration conflicts.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
@@ -19,7 +19,7 @@
 
   <rect class="bg" width="900" height="640"/>
   <text class="title" x="40" y="44">Node Name Conflict Policy</text>
-  <text class="small" x="40" y="68">P0 treats node_name as identity. The control plane reports duplicate live names instead of rewriting them.</text>
+  <text class="small" x="40" y="68">POC/MVP treats node_name as identity. The control plane reports duplicate live names instead of rewriting them.</text>
 
   <rect class="state" x="340" y="105" width="220" height="58"/>
   <text class="label" x="391" y="139">Heartbeat arrives</text>

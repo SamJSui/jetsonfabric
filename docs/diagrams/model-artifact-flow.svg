@@ -53,8 +53,8 @@
 
   <rect class="runtime" x="735" y="130" width="245" height="95"/>
   <text class="label" x="782" y="162">Model runtime</text>
-  <text class="small" x="762" y="187">P0: llama-server full model</text>
-  <text class="small" x="762" y="207">P1: shard-capable runtime</text>
+  <text class="small" x="762" y="187">POC: llama-server full model</text>
+  <text class="small" x="762" y="207">P0/MVP: shard-capable runtime</text>
 
   <path class="arrow" d="M300 178 H390"/>
   <text class="small" x="316" y="168">metadata only</text>

@@ -53,14 +53,14 @@ The agent should eventually collect:
 - loaded model shards
 - runtime health
 
-For P0, the agent knows:
+For the POC, the agent knows:
 
 - which local runtime URL to proxy to
 - which JetsonFabric model IDs that runtime serves
 - which agent URL should be advertised back to the control plane
 
-Model downloads and runtime launch can remain script-managed until the first
-single-Jetson demo works. A later model artifact manifest should move model
+Model downloads and runtime launch can remain script-managed until the POC
+single-node serving path works. A later model artifact manifest should move model
 source URLs, local paths, expected hashes, and launch commands under explicit
 agent/runtime management.
 
@@ -115,7 +115,7 @@ do not become hidden protocol contracts.
 
 Transport phases:
 
-1. Built-in network with TCP for the P1 layer-split baseline.
+1. Built-in network with TCP for the P0/MVP layer-split baseline.
 2. Optional 10GbE TCP using the same JetsonFabric tensor protocol.
 3. Optional RDMA transport only after measurements show TCP or CPU copy overhead
    is the bottleneck.

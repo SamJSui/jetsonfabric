@@ -89,24 +89,30 @@ Expected metrics:
 - failure and failover behavior
 - quality or task pass rate for benchmark prompts
 
-The first benchmark target is intentionally simple: one Jetson, one local model,
-one prompt routed through JetsonFabric, and one recorded result. Distributed
-runtime work starts only after that baseline exists.
+The proof-of-concept benchmark target is intentionally simple: one Jetson, one
+local model, one prompt routed through JetsonFabric, and one recorded result.
+That proves model deployment, routing, and measurement. The MVP begins when real
+layer-split execution exists across multiple nodes.
 
 ## Phase Strategy
 
-P0 is single-Jetson serving. The only goal is to make one real Jetson-backed
-model work through the control plane and record trustworthy measurements.
+POC is single-node full-model replica serving. The goal is to make one real
+Jetson-backed model work through the control plane and record trustworthy
+measurements.
 
-P1 is multi-Jetson layer split. Replica serving belongs here only as a
-comparison baseline for throughput and failover. The main question is whether
-two or three Jetsons can run a larger or better model by assigning layer ranges
-to different nodes and sending hidden states between workers.
+P0/MVP is multi-Jetson layer split. Replica serving belongs here only as a
+comparison baseline for throughput and failover. The main question is whether two
+or three Jetsons can run a larger or better model by assigning layer ranges to
+different nodes and sending hidden states between workers.
 
-P2 is distributed runtime optimization. This is where C++/CUDA transport work
-belongs: activation framing, pinned buffers, compression, 10GbE TCP, optional
-RDMA, and tensor-parallel experiments. P2 starts only after P1 measurements show
-what bottleneck is worth optimizing.
+P1 is tensor parallelism. It is a research milestone that tests whether splitting
+tensor operations across Jetson nodes can beat the synchronization cost on the
+target network.
+
+P2 is the operational edge fabric. It turns the measured runtime paths into a
+repeatable system with agent-managed model lifecycle, persistent control state,
+profile-driven placement, failover, dashboard/API visibility, and transport
+optimization where benchmarks justify it.
 
 ## Layer Split Versus Tensor Parallel
 
@@ -130,10 +136,13 @@ Recommended path:
 1. Beelink or dev machine runs the control plane.
 2. One Jetson runs the agent and a small model backend.
 3. Record baseline model performance and thermal behavior.
-4. Add a second Jetson and benchmark replica_serving/failover as a control comparison.
-5. Prototype layer-split execution for a small transformer.
-6. Add a third Jetson only after two-node measurements justify it.
-7. Explore 10GbE or RDMA only after built-in-network measurements prove that
+4. Add a second Jetson and prototype layer-split execution for a small
+   transformer.
+5. Benchmark replica_serving/failover as a control comparison.
+6. Test tensor parallelism only after layer split works.
+7. Turn the measured paths into operational model lifecycle, placement, and
+   failover behavior.
+8. Explore 10GbE or RDMA only after built-in-network measurements prove that
    transport is the limiting factor.
 
 Raspberry Pi nodes are not the core inference performance story. They may become
@@ -159,11 +168,12 @@ V0 services:
 
 Current implementation priority:
 
-1. Single-Jetson model backend adapter.
-2. Control-plane routing to that backend.
-3. Benchmark record for the routed response.
-4. Node observability and route explanation.
-5. Only then, second-node and layer-split work.
+1. Finish the POC: one full-model replica served through control -> agent ->
+   runtime with benchmark evidence.
+2. Build P0/MVP: real two-node layer-split execution.
+3. Measure P1: tensor parallelism against the POC and layer-split baselines.
+4. Build P2: operational model lifecycle, persistent state, placement,
+   failover, and dashboard/API visibility.
 
 ## Ideal State
 

@@ -130,9 +130,11 @@ The scheduler should be evidence-driven.
 
 - Single-node serving is the first baseline.
 - Replica mode is a control baseline, not the product identity.
-- Layer split starts only after the single-Jetson path is real and benchmarked.
-- Tensor parallelism is experimental until network and runtime measurements prove
-  it can help.
+- POC single-node serving must be real and benchmarked before layer split is
+  claimed.
+- P0/MVP layer split is the first distributed inference milestone.
+- P1 tensor parallelism is experimental until network and runtime measurements
+  prove it can help.
 - Every performance comparison should name the model, quantization, prompt set,
   hardware, network, route mode, and measured metrics.
 

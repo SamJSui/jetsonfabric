@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	defaultRequestPath = "examples/p0-local-smoke/chat-request.json"
+	defaultRequestPath = "examples/poc-local-smoke/chat-request.json"
 	defaultBenchCount  = 1
 	defaultConcurrency = 1
 	outputFilePerm     = 0o644

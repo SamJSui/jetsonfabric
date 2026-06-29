@@ -105,24 +105,23 @@ edge compute:
 
 1. Discover nodes and collect hardware/runtime/thermal capabilities.
 2. Get one real model serving on one Jetson and route one prompt through the
-   control plane.
+   control plane as the POC single full-model replica baseline.
 3. Benchmark that single-Jetson backend against known prompts and metrics.
-4. Plan routes for single-node, replica_serving, layer_split, and fallback
+4. Implement real layer-split inference as P0/MVP after the POC baseline works.
+5. Plan routes for single-node, replica_serving, layer_split, and fallback
    modes.
-5. Make route decisions observable with latency, throughput, memory, thermal,
+6. Make route decisions observable with latency, throughput, memory, thermal,
    power, network bytes/token, and failure data.
-6. Implement layer-split inference only after the single-Jetson serving path is
-   real and benchmarked.
-7. Optimize the distributed runtime after layer split exists: compare 1GbE TCP,
-   10GbE TCP, activation compression, pipelining, and only then RDMA or tensor
-   parallelism.
-8. Keep tensor parallelism as an experimental path because network
+7. Test tensor parallelism as P1 only after layer split exists, because network
    synchronization can dominate on ordinary Ethernet.
+8. Build P2 operational fabric work after the runtime questions have evidence:
+   model lifecycle, persistent state, placement, failover, dashboard/API
+   visibility, and measured transport optimization.
 
 ## Current Priority
 
-P0 is single-Jetson model serving. Do not begin layer-split implementation until
-JetsonFabric can:
+Current priority is the POC: single-node full-model replica serving. Do not
+begin real layer-split implementation until JetsonFabric can:
 
 - register one Jetson agent;
 - detect useful Jetson hardware/runtime facts;
@@ -130,6 +129,9 @@ JetsonFabric can:
 - have the agent proxy that request to a real node-local model backend;
 - return a model response through the control-plane API;
 - record a benchmark result with latency, throughput, memory, and thermal data.
+
+After the POC is real and benchmarked, P0/MVP becomes real layer-split inference
+across Jetson nodes.
 
 ## Verification Commands
 
@@ -175,6 +177,7 @@ and explain what changed.
   Jetson memory/accelerator data.
 - Implement a dashboard/API surface that mirrors exo-style node and route
   visibility.
-- Add a real single-Jetson model backend before attempting layer split.
-- Defer 10GbE, RDMA, GPUDirect, and tensor-parallel work until after P1
-  layer-split measurements prove that transport optimization is the bottleneck.
+- Add a real single-Jetson model backend to finish the POC.
+- Start real layer-split runtime work only after the POC path is benchmarked.
+- Defer 10GbE, RDMA, GPUDirect, and broad transport optimization until layer
+  split or tensor-parallel measurements prove that transport is the bottleneck.

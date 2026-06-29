@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 470" role="img" aria-labelledby="title desc">
-  <title id="title">Future Layer Split Component View</title>
-  <desc id="desc">Control plans layer split routes while future runtime workers exchange activation tensors directly.</desc>
+  <title id="title">P0/MVP Layer Split Component View</title>
+  <desc id="desc">Control plans layer split routes while runtime workers exchange activation tensors directly.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
@@ -22,7 +22,7 @@
   </style>
 
   <rect class="bg" width="1080" height="470"/>
-  <text class="title" x="40" y="44">Future Layer-Split Component View</text>
+  <text class="title" x="40" y="44">P0/MVP Layer-Split Component View</text>
   <text class="small" x="40" y="68">Control plans and observes. Runtime workers own layer execution and activation tensor transport.</text>
 
   <rect class="box" x="45" y="185" width="160" height="70"/>

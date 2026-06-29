@@ -1,10 +1,10 @@
 # Desktop Multi-Agent Simulation
 
-This workflow is the bridge between the MVP and P0:
+This workflow is the bridge between the POC and P0/MVP:
 
-- MVP: control and agents run on the desktop.
-- P0: one agent moves to a real Jetson node.
-- P1: multiple Jetsons execute layer_split.
+- Local smoke: control and agents run on the desktop.
+- POC: one agent moves to a real Jetson node and serves one full-model replica.
+- P0/MVP: multiple Jetsons execute real layer_split.
 
 Desktop simulation lets JetsonFabric prove the orchestration path before the
 Jetson hardware arrives:
@@ -64,7 +64,7 @@ Run a synthetic prompt through the planned agents:
 ```sh
 curl -sS -X POST http://127.0.0.1:52415/v1/layer-split/completions \
   -H 'Content-Type: application/json' \
-  --data-binary @examples/p0-local-smoke/chat-request.json
+  --data-binary @examples/poc-local-smoke/chat-request.json
 ```
 
 The synthetic path sends an opaque payload through each planned agent stage over
@@ -96,7 +96,7 @@ Use this to compare:
 - direct llama.cpp runtime call;
 - control -> one agent -> llama.cpp;
 - control -> multiple registered agents with the current single_node route;
-- future control -> layer_split runtime once P1 exists.
+- future control -> layer_split runtime once P0/MVP exists.
 
 ## Why This Is Worth Doing
 
@@ -107,4 +107,4 @@ behaviors needed once the agents run on Jetsons.
 
 The performance claim remains narrow: desktop simulation measures local runtime
 and orchestration overhead. It does not claim layer_split latency or throughput
-gains until P1 implements actual layer execution across devices.
+gains until P0/MVP implements actual layer execution across devices.

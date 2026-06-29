@@ -28,23 +28,26 @@ This is not a local chatbot project. The core question is:
 
 Distributed runtime phases:
 
-- P0: one Jetson, one real model backend, one routed prompt, one benchmark.
-- P1: two to three Jetsons with layer-split inference; replica serving is only
-  the control baseline.
-- P2: C++/CUDA runtime optimization, including activation transport,
-  compression, 10GbE TCP, optional RDMA, and tensor-parallel experiments only
-  after measurements justify them.
+- POC: one Jetson, one full-model replica, one routed prompt, one benchmark.
+- P0/MVP: two Jetsons with real layer-split inference.
+- P1: tensor-parallelism experiment, measured against the POC and layer-split
+  baselines.
+- P2: operational edge fabric with model lifecycle, persistent state,
+  profile-driven placement, failover, dashboard/API visibility, and measured
+  runtime optimization.
 
 ## Project Context
 
 - [AGENTS.md](AGENTS.md) captures coding-agent instructions and project boundaries.
 - [docs/project-context.md](docs/project-context.md) captures the pitch, value-add,
   hardware strategy, and honest performance story.
-- [docs/p0-single-jetson.md](docs/p0-single-jetson.md) captures the current
-  priority: get one real model serving on one Jetson before distributed runtime
-  work.
-- [docs/roadmap.md](docs/roadmap.md) captures the P0/P1/P2 progression from
-  single-Jetson serving to layer split and later transport optimization.
+- [docs/poc-single-node-serving.md](docs/poc-single-node-serving.md) captures the
+  proof of concept: get one full-model replica serving on one Jetson.
+- [docs/p0-layer-split-mvp.md](docs/p0-layer-split-mvp.md) captures the MVP:
+  real layer-split inference across Jetson nodes.
+- [docs/roadmap.md](docs/roadmap.md) captures the POC/P0/P1/P2 progression from
+  single-node serving to layer split, tensor-parallel research, and operational
+  fabric work.
 - [docs/engineering-standards.md](docs/engineering-standards.md) captures the
   required implementation quality bar.
 - [docs/desktop-multi-agent.md](docs/desktop-multi-agent.md) captures the local
@@ -55,7 +58,7 @@ Distributed runtime phases:
 Download the local desktop smoke assets:
 
 ```sh
-sh scripts/download-p0-desktop-model.sh
+sh scripts/download-poc-desktop-model.sh
 ```
 
 Download any configured model artifact by ID:
@@ -101,11 +104,11 @@ Send one prompt through JetsonFabric to the agent-proxied local model backend:
 ```sh
 curl -sS -X POST http://127.0.0.1:52415/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  --data-binary @examples/p0-local-smoke/chat-request.json
+  --data-binary @examples/poc-local-smoke/chat-request.json
 ```
 
-The local P0 request path is shown in
-[docs/p0-local-smoke-sequence.svg](docs/p0-local-smoke-sequence.svg).
+The local POC request path is shown in
+[docs/poc-local-smoke-sequence.svg](docs/poc-local-smoke-sequence.svg).
 
 ### Desktop Multi-Agent Simulation
 
@@ -127,7 +130,7 @@ Run a synthetic layer-split prompt through all planned agents:
 ```sh
 curl -sS -X POST http://127.0.0.1:52415/v1/layer-split/completions \
   -H 'Content-Type: application/json' \
-  --data-binary @examples/p0-local-smoke/chat-request.json
+  --data-binary @examples/poc-local-smoke/chat-request.json
 ```
 
 This tests discovery, heartbeat registration, agent proxying, route planning,
@@ -197,7 +200,7 @@ and benchmark history before placing model work on it.
 4. One prompt routed through JetsonFabric to that model.
 5. One benchmark result recorded for the local model backend.
 6. Route preview explaining why the model should or should not run on the node.
-7. A second Jetson added later to prove scaling, failover, and layer_split.
+7. A second Jetson added later to prove the P0/MVP layer-split path.
 
 ## Build
 
