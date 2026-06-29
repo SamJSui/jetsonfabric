@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 560" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Join And Heartbeat Sequence</title>
+  <desc id="desc">Agent derives node_name, checks runtime readiness, and posts an authenticated heartbeat to the control plane.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
+    </marker>
+  </defs>
+  <style>
+    .bg { fill: #f8fafc; }
+    .title { font: 700 24px Arial, sans-serif; fill: #0f172a; }
+    .head { fill: #ffffff; stroke: #334155; stroke-width: 1.5; rx: 8; }
+    .lane { stroke: #94a3b8; stroke-width: 1.2; stroke-dasharray: 6 5; }
+    .arrow { stroke: #334155; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+    .label { font: 600 14px Arial, sans-serif; fill: #0f172a; }
+    .text { font: 13px Arial, sans-serif; fill: #334155; }
+    .note { fill: #ecfeff; stroke: #0891b2; stroke-width: 1.2; rx: 6; }
+  </style>
+  <rect class="bg" width="1000" height="560"/>
+  <text class="title" x="40" y="44">Agent Join And Heartbeat</text>
+
+  <rect class="head" x="70" y="80" width="150" height="48"/>
+  <text class="label" x="118" y="110">Agent</text>
+  <rect class="head" x="305" y="80" width="150" height="48"/>
+  <text class="label" x="346" y="110">Jetson OS</text>
+  <rect class="head" x="540" y="80" width="150" height="48"/>
+  <text class="label" x="574" y="110">Runtime</text>
+  <rect class="head" x="775" y="80" width="150" height="48"/>
+  <text class="label" x="808" y="110">Control</text>
+
+  <line class="lane" x1="145" y1="128" x2="145" y2="520"/>
+  <line class="lane" x1="380" y1="128" x2="380" y2="520"/>
+  <line class="lane" x1="615" y1="128" x2="615" y2="520"/>
+  <line class="lane" x1="850" y1="128" x2="850" y2="520"/>
+
+  <path class="arrow" d="M145 170 H380"/>
+  <text class="text" x="205" y="162">detect hostname, hardware, OS, metrics</text>
+
+  <path class="arrow" d="M145 220 C95 220 95 260 145 260"/>
+  <text class="text" x="165" y="246">node_name = --node-name or hostname</text>
+
+  <path class="arrow" d="M145 310 H615"/>
+  <text class="text" x="305" y="302">health/model readiness check</text>
+
+  <path class="arrow" d="M615 350 H145"/>
+  <text class="text" x="352" y="342">ready</text>
+
+  <rect class="note" x="210" y="370" width="420" height="38"/>
+  <text class="text" x="230" y="394">Agent advertises proxy backend only after runtime is configured</text>
+
+  <path class="arrow" d="M145 440 H850"/>
+  <text class="text" x="360" y="432">POST /v1/agent/heartbeat</text>
+  <text class="text" x="360" y="454">Authorization: Bearer join token</text>
+
+  <path class="arrow" d="M850 482 C805 482 805 512 850 512"/>
+  <text class="text" x="590" y="506">validate token and upsert node by node_name</text>
+</svg>

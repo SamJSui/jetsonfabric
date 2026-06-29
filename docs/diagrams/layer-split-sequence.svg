@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">
+  <title id="title">Future Layer Split Sequence</title>
+  <desc id="desc">Control plans the route, first agent starts the request, and runtime workers exchange activation tensors directly.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
+    </marker>
+    <marker id="dash-arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <style>
+    .bg { fill: #f8fafc; }
+    .title { font: 700 24px Arial, sans-serif; fill: #0f172a; }
+    .head { fill: #ffffff; stroke: #334155; stroke-width: 1.5; rx: 8; }
+    .future { fill: #fff7ed; stroke: #9a3412; stroke-width: 1.5; rx: 8; }
+    .lane { stroke: #94a3b8; stroke-width: 1.2; stroke-dasharray: 6 5; }
+    .arrow { stroke: #334155; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+    .dash { stroke: #64748b; stroke-width: 1.8; fill: none; stroke-dasharray: 7 5; marker-end: url(#dash-arrow); }
+    .label { font: 600 14px Arial, sans-serif; fill: #0f172a; }
+    .text { font: 13px Arial, sans-serif; fill: #334155; }
+    .note { fill: #fef3c7; stroke: #d97706; stroke-width: 1.2; rx: 6; }
+  </style>
+  <rect class="bg" width="1120" height="620"/>
+  <text class="title" x="40" y="44">Future Layer-Split Runtime Path</text>
+
+  <rect class="head" x="40" y="80" width="130" height="48"/>
+  <text class="label" x="82" y="110">Client</text>
+  <rect class="head" x="215" y="80" width="150" height="48"/>
+  <text class="label" x="240" y="110">Control</text>
+  <rect class="head" x="430" y="80" width="150" height="48"/>
+  <text class="label" x="461" y="110">Agent A</text>
+  <rect class="future" x="635" y="80" width="150" height="48"/>
+  <text class="label" x="660" y="110">Runtime A</text>
+  <rect class="future" x="840" y="80" width="150" height="48"/>
+  <text class="label" x="865" y="110">Runtime B</text>
+  <rect class="head" x="1015" y="80" width="80" height="48"/>
+  <text class="label" x="1028" y="110">Bench</text>
+
+  <line class="lane" x1="105" y1="128" x2="105" y2="570"/>
+  <line class="lane" x1="290" y1="128" x2="290" y2="570"/>
+  <line class="lane" x1="505" y1="128" x2="505" y2="570"/>
+  <line class="lane" x1="710" y1="128" x2="710" y2="570"/>
+  <line class="lane" x1="915" y1="128" x2="915" y2="570"/>
+  <line class="lane" x1="1055" y1="128" x2="1055" y2="570"/>
+
+  <path class="arrow" d="M105 165 H290"/>
+  <text class="text" x="128" y="157">POST /v1/chat/completions</text>
+
+  <path class="arrow" d="M290 220 C240 220 240 260 290 260"/>
+  <text class="text" x="310" y="245">plan layer_split route</text>
+
+  <path class="arrow" d="M290 305 H505"/>
+  <text class="text" x="335" y="297">start route on first stage</text>
+
+  <path class="arrow" d="M505 350 H710"/>
+  <text class="text" x="538" y="342">RunPrefillStage tokens, layers 0..N</text>
+
+  <path class="dash" d="M710 395 H915"/>
+  <text class="text" x="735" y="387">activation tensor bytes + metadata</text>
+
+  <path class="arrow" d="M915 435 C865 435 865 475 915 475"/>
+  <text class="text" x="730" y="460">run layers N+1..final and lm_head</text>
+
+  <path class="arrow" d="M915 510 H710"/>
+  <text class="text" x="760" y="502">logits/token result</text>
+
+  <path class="arrow" d="M710 540 H505"/>
+  <path class="arrow" d="M505 560 H290"/>
+  <path class="arrow" d="M290 585 H105"/>
+
+  <path class="arrow" d="M290 525 H1055"/>
+  <text class="text" x="548" y="517">record latency, bytes, stages, thermal data</text>
+
+  <rect class="note" x="430" y="170" width="520" height="42"/>
+  <text class="text" x="452" y="196">Control plans and observes; it does not relay activation tensors.</text>
+</svg>

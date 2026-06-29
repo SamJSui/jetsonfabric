@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">
+  <title id="title">P0 Prompt Path Sequence</title>
+  <desc id="desc">Client request flows through control, model registry, agent proxy, llama-server, and benchmark recorder.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
+    </marker>
+  </defs>
+  <style>
+    .bg { fill: #f8fafc; }
+    .title { font: 700 24px Arial, sans-serif; fill: #0f172a; }
+    .head { fill: #ffffff; stroke: #334155; stroke-width: 1.5; rx: 8; }
+    .lane { stroke: #94a3b8; stroke-width: 1.2; stroke-dasharray: 6 5; }
+    .arrow { stroke: #334155; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+    .label { font: 600 14px Arial, sans-serif; fill: #0f172a; }
+    .text { font: 13px Arial, sans-serif; fill: #334155; }
+  </style>
+  <rect class="bg" width="1120" height="620"/>
+  <text class="title" x="40" y="44">P0 Prompt Path</text>
+
+  <rect class="head" x="35" y="80" width="130" height="48"/>
+  <text class="label" x="76" y="110">Client</text>
+  <rect class="head" x="205" y="80" width="150" height="48"/>
+  <text class="label" x="230" y="110">Control</text>
+  <rect class="head" x="405" y="80" width="150" height="48"/>
+  <text class="label" x="431" y="110">Registry</text>
+  <rect class="head" x="605" y="80" width="150" height="48"/>
+  <text class="label" x="632" y="110">Agent</text>
+  <rect class="head" x="805" y="80" width="150" height="48"/>
+  <text class="label" x="836" y="110">Llama</text>
+  <rect class="head" x="990" y="80" width="100" height="48"/>
+  <text class="label" x="1012" y="110">Bench</text>
+
+  <line class="lane" x1="100" y1="128" x2="100" y2="570"/>
+  <line class="lane" x1="280" y1="128" x2="280" y2="570"/>
+  <line class="lane" x1="480" y1="128" x2="480" y2="570"/>
+  <line class="lane" x1="680" y1="128" x2="680" y2="570"/>
+  <line class="lane" x1="880" y1="128" x2="880" y2="570"/>
+  <line class="lane" x1="1040" y1="128" x2="1040" y2="570"/>
+
+  <path class="arrow" d="M100 165 H280"/>
+  <text class="text" x="122" y="157">POST /v1/chat/completions</text>
+
+  <path class="arrow" d="M280 220 H480"/>
+  <text class="text" x="324" y="212">load model profile</text>
+
+  <path class="arrow" d="M480 255 H280"/>
+  <text class="text" x="340" y="247">model profile</text>
+
+  <path class="arrow" d="M280 305 C230 305 230 345 280 345"/>
+  <text class="text" x="300" y="330">select compatible online node</text>
+
+  <path class="arrow" d="M280 385 H680"/>
+  <text class="text" x="406" y="377">POST /v1/chat/completions</text>
+
+  <path class="arrow" d="M680 425 H880"/>
+  <text class="text" x="715" y="417">proxy request</text>
+
+  <path class="arrow" d="M880 465 H680"/>
+  <text class="text" x="728" y="457">model response</text>
+
+  <path class="arrow" d="M680 500 H280"/>
+  <text class="text" x="430" y="492">agent response</text>
+
+  <path class="arrow" d="M280 535 H1040"/>
+  <text class="text" x="514" y="527">record latency, route, tokens, metrics</text>
+
+  <path class="arrow" d="M280 570 H100"/>
+  <text class="text" x="128" y="562">response + route metadata</text>
+</svg>
