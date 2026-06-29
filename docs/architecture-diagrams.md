@@ -4,16 +4,29 @@ These diagrams describe the intended JetsonFabric shape for P0 and the later
 layer-split runtime. They are checked in as SVG files so GitHub renders them as
 normal markdown images without depending on Mermaid support.
 
-## Component View
+## P0 Serving Component View
 
-![JetsonFabric component view](diagrams/component-view.svg)
+![JetsonFabric P0 serving component view](diagrams/component-view.svg)
+
+## Future Layer-Split Component View
+
+![JetsonFabric future layer-split component view](diagrams/future-layer-split-component.svg)
+
+## Model Registry And Artifact Flow
+
+The control plane loads model metadata. It does not load model weights. Agents
+and runtimes need local model artifacts before they can advertise or execute a
+backend.
+
+![JetsonFabric model registry and artifact flow](diagrams/model-artifact-flow.svg)
 
 ## Go Contract View
 
-This is a struct-level view of the main Go contracts. It is not meant to mirror
-every field; it shows ownership and dependency direction.
+This is a package boundary view, not an inheritance diagram. Boundary structs
+stay separate so API, storage, routing, transport, and benchmarks can evolve
+independently.
 
-![JetsonFabric Go contract view](diagrams/go-contract-view.svg)
+![JetsonFabric Go package boundary view](diagrams/go-contract-view.svg)
 
 ## Agent Join And Heartbeat
 

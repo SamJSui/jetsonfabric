@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 560" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 640" role="img" aria-labelledby="title desc">
   <title id="title">Node Name Conflict Policy</title>
-  <desc id="desc">P0 uses node_name as identity; duplicate live node names are rejected as configuration conflicts.</desc>
+  <desc id="desc">P0 uses node_name as identity; duplicate live node names are configuration conflicts.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
@@ -13,58 +13,65 @@
     .ok { fill: #ecfdf5; stroke: #047857; stroke-width: 1.5; rx: 10; }
     .bad { fill: #fef2f2; stroke: #b91c1c; stroke-width: 1.5; rx: 10; }
     .arrow { stroke: #334155; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
-    .label { font: 600 15px Arial, sans-serif; fill: #0f172a; }
+    .label { font: 700 15px Arial, sans-serif; fill: #0f172a; }
     .small { font: 13px Arial, sans-serif; fill: #334155; }
   </style>
 
-  <rect class="bg" width="980" height="560"/>
+  <rect class="bg" width="900" height="640"/>
   <text class="title" x="40" y="44">Node Name Conflict Policy</text>
+  <text class="small" x="40" y="68">P0 treats node_name as identity. The control plane reports duplicate live names instead of rewriting them.</text>
 
-  <rect class="state" x="390" y="80" width="200" height="56"/>
-  <text class="label" x="430" y="113">New heartbeat</text>
+  <rect class="state" x="340" y="105" width="220" height="58"/>
+  <text class="label" x="391" y="139">Heartbeat arrives</text>
 
-  <rect class="bad" x="70" y="205" width="180" height="62"/>
-  <text class="label" x="112" y="232">Missing name</text>
-  <text class="small" x="103" y="252">reject 400</text>
+  <rect class="state" x="340" y="215" width="220" height="58"/>
+  <text class="label" x="392" y="249">node_name present?</text>
 
-  <rect class="ok" x="310" y="205" width="180" height="62"/>
-  <text class="label" x="356" y="232">New node</text>
-  <text class="small" x="341" y="252">register by name</text>
+  <rect class="bad" x="75" y="215" width="190" height="58"/>
+  <text class="label" x="120" y="242">Reject 400</text>
+  <text class="small" x="114" y="262">missing node_name</text>
 
-  <rect class="state" x="560" y="205" width="210" height="62"/>
-  <text class="label" x="612" y="232">Existing node</text>
-  <text class="small" x="603" y="252">node_name already seen</text>
+  <rect class="state" x="340" y="325" width="220" height="58"/>
+  <text class="label" x="394" y="359">name already seen?</text>
 
-  <rect class="ok" x="250" y="360" width="190" height="62"/>
-  <text class="label" x="314" y="387">Registered</text>
-  <text class="small" x="282" y="407">schedulable if healthy</text>
+  <rect class="ok" x="635" y="325" width="190" height="58"/>
+  <text class="label" x="688" y="352">Register</text>
+  <text class="small" x="678" y="372">new node name</text>
 
-  <rect class="bad" x="620" y="360" width="190" height="62"/>
-  <text class="label" x="682" y="387">Conflict</text>
-  <text class="small" x="657" y="407">reject or mark unhealthy</text>
+  <rect class="state" x="340" y="435" width="220" height="58"/>
+  <text class="label" x="382" y="469">same live endpoint?</text>
 
-  <path class="arrow" d="M420 136 L205 205"/>
-  <text class="small" x="216" y="160">node_name empty</text>
+  <rect class="ok" x="75" y="435" width="190" height="58"/>
+  <text class="label" x="127" y="462">Refresh</text>
+  <text class="small" x="113" y="482">same live node</text>
 
-  <path class="arrow" d="M480 136 L415 205"/>
-  <text class="small" x="408" y="166">not seen</text>
+  <rect class="bad" x="635" y="435" width="190" height="58"/>
+  <text class="label" x="687" y="462">Conflict</text>
+  <text class="small" x="671" y="482">different live node</text>
 
-  <path class="arrow" d="M555 136 L635 205"/>
-  <text class="small" x="600" y="166">seen</text>
+  <rect class="ok" x="340" y="545" width="220" height="58"/>
+  <text class="label" x="398" y="572">Replace</text>
+  <text class="small" x="382" y="592">old record expired</text>
 
-  <path class="arrow" d="M400 267 L355 360"/>
-  <text class="small" x="368" y="323">accept</text>
+  <path class="arrow" d="M450 163 V215"/>
+  <path class="arrow" d="M340 244 H265"/>
+  <text class="small" x="286" y="235">no</text>
 
-  <path class="arrow" d="M630 267 L415 360"/>
-  <text class="small" x="460" y="315">same live endpoint</text>
+  <path class="arrow" d="M450 273 V325"/>
+  <text class="small" x="462" y="304">yes</text>
 
-  <path class="arrow" d="M675 267 L700 360"/>
-  <text class="small" x="706" y="322">different live endpoint</text>
+  <path class="arrow" d="M560 354 H635"/>
+  <text class="small" x="586" y="345">no</text>
 
-  <path class="arrow" d="M605 267 L385 360"/>
-  <text class="small" x="448" y="346">old record expired</text>
+  <path class="arrow" d="M450 383 V435"/>
+  <text class="small" x="462" y="414">yes</text>
 
-  <path class="arrow" d="M160 267 L300 360"/>
+  <path class="arrow" d="M340 464 H265"/>
+  <text class="small" x="286" y="455">yes</text>
 
-  <text class="small" x="90" y="490">P0 rule: node_name is identity, defaults to hostname, and duplicate live names are configuration errors.</text>
+  <path class="arrow" d="M560 464 H635"/>
+  <text class="small" x="586" y="455">no</text>
+
+  <path class="arrow" d="M450 493 V545"/>
+  <text class="small" x="462" y="524">expired</text>
 </svg>

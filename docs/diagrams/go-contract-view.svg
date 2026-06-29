@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 760" role="img" aria-labelledby="title desc">
-  <title id="title">Go Contract View</title>
-  <desc id="desc">Main Go contracts and their dependency direction across control, agent, routing, layer split, and benchmark packages.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 520" role="img" aria-labelledby="title desc">
+  <title id="title">Go Package Boundary View</title>
+  <desc id="desc">Go packages grouped by responsibility, with boundary structs kept separate across API, storage, routing, runtime transport, and benchmarks.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
@@ -9,95 +9,59 @@
   <style>
     .bg { fill: #f8fafc; }
     .title { font: 700 24px Arial, sans-serif; fill: #0f172a; }
-    .box { fill: #ffffff; stroke: #334155; stroke-width: 1.4; rx: 8; }
-    .boundary { fill: #eef2ff; stroke: #475569; stroke-width: 1.4; rx: 8; }
-    .runtime { fill: #fff7ed; stroke: #9a3412; stroke-width: 1.4; rx: 8; }
-    .arrow { stroke: #334155; stroke-width: 1.4; fill: none; marker-end: url(#arrow); }
-    .name { font: 700 15px Arial, sans-serif; fill: #0f172a; }
-    .field { font: 12px Consolas, monospace; fill: #334155; }
-    .note { font: 13px Arial, sans-serif; fill: #334155; }
+    .pkg { fill: #ffffff; stroke: #334155; stroke-width: 1.5; rx: 8; }
+    .shared { fill: #eef2ff; stroke: #475569; stroke-width: 1.5; rx: 8; }
+    .runtime { fill: #fff7ed; stroke: #9a3412; stroke-width: 1.5; rx: 8; }
+    .label { font: 700 15px Arial, sans-serif; fill: #0f172a; }
+    .small { font: 13px Arial, sans-serif; fill: #334155; }
+    .code { font: 12px Consolas, monospace; fill: #334155; }
+    .arrow { stroke: #334155; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
   </style>
 
-  <rect class="bg" width="1120" height="760"/>
-  <text class="title" x="40" y="44">Go Contract View</text>
-  <text class="note" x="40" y="70">Boundary structs stay separate; helpers map between API, storage, routing, runtime transport, and benchmark records.</text>
+  <rect class="bg" width="1080" height="520"/>
+  <text class="title" x="40" y="44">Go Package Boundary View</text>
+  <text class="small" x="40" y="68">DRY construction logic, but keep boundary structs separate so API, storage, routing, transport, and benchmarks can evolve independently.</text>
 
-  <rect class="boundary" x="55" y="110" width="220" height="120"/>
-  <text class="name" x="82" y="138">ControlServer</text>
-  <text class="field" x="78" y="164">Router()</text>
-  <text class="field" x="78" y="184">handleHeartbeat()</text>
-  <text class="field" x="78" y="204">handleChatCompletions()</text>
+  <rect class="shared" x="420" y="110" width="240" height="100"/>
+  <text class="label" x="468" y="140">internal/cluster</text>
+  <text class="code" x="448" y="166">NodeRecord</text>
+  <text class="code" x="448" y="186">HeartbeatRequest</text>
 
-  <rect class="boundary" x="55" y="300" width="220" height="120"/>
-  <text class="name" x="88" y="328">AgentServer</text>
-  <text class="field" x="78" y="354">Router()</text>
-  <text class="field" x="78" y="374">handleChatCompletions()</text>
-  <text class="field" x="78" y="394">handleLayerSplitStage()</text>
+  <rect class="pkg" x="80" y="260" width="210" height="105"/>
+  <text class="label" x="125" y="292">internal/agent</text>
+  <text class="code" x="108" y="318">Client.SendHeartbeat</text>
+  <text class="code" x="108" y="338">Server proxy API</text>
 
-  <rect class="boundary" x="55" y="490" width="220" height="92"/>
-  <text class="name" x="92" y="518">AgentClient</text>
-  <text class="field" x="78" y="544">SendHeartbeat()</text>
+  <rect class="pkg" x="420" y="260" width="240" height="105"/>
+  <text class="label" x="460" y="292">internal/control</text>
+  <text class="code" x="448" y="318">node registry</text>
+  <text class="code" x="448" y="338">route selection</text>
 
-  <rect class="box" x="365" y="105" width="220" height="145"/>
-  <text class="name" x="403" y="133">NodeRecord</text>
-  <text class="field" x="388" y="158">node_name</text>
-  <text class="field" x="388" y="178">hostname</text>
-  <text class="field" x="388" y="198">capabilities</text>
-  <text class="field" x="388" y="218">metrics</text>
-  <text class="field" x="388" y="238">backends</text>
+  <rect class="pkg" x="790" y="260" width="210" height="105"/>
+  <text class="label" x="835" y="292">internal/chat</text>
+  <text class="code" x="818" y="318">CompletionRequest</text>
+  <text class="code" x="818" y="338">RouteMetadata</text>
 
-  <rect class="box" x="365" y="300" width="220" height="125"/>
-  <text class="name" x="390" y="328">HeartbeatRequest</text>
-  <text class="field" x="388" y="354">node_name</text>
-  <text class="field" x="388" y="374">hostname</text>
-  <text class="field" x="388" y="394">capabilities</text>
-  <text class="field" x="388" y="414">backends</text>
+  <rect class="runtime" x="80" y="405" width="210" height="80"/>
+  <text class="label" x="117" y="437">internal/layersplit</text>
+  <text class="code" x="108" y="463">Stage + Activation</text>
 
-  <rect class="box" x="365" y="490" width="220" height="125"/>
-  <text class="name" x="394" y="518">RuntimeBackend</text>
-  <text class="field" x="388" y="544">id</text>
-  <text class="field" x="388" y="564">kind</text>
-  <text class="field" x="388" y="584">base_url</text>
-  <text class="field" x="388" y="604">models</text>
+  <rect class="pkg" x="420" y="405" width="240" height="80"/>
+  <text class="label" x="458" y="437">internal/routing</text>
+  <text class="code" x="448" y="463">PlacementPreview</text>
 
-  <rect class="box" x="690" y="105" width="220" height="125"/>
-  <text class="name" x="722" y="133">RouteMetadata</text>
-  <text class="field" x="713" y="158">mode</text>
-  <text class="field" x="713" y="178">node_name</text>
-  <text class="field" x="713" y="198">backend_id</text>
-  <text class="field" x="713" y="218">stages</text>
+  <rect class="pkg" x="790" y="405" width="210" height="80"/>
+  <text class="label" x="826" y="437">internal/benchmarks</text>
+  <text class="code" x="818" y="463">Record</text>
 
-  <rect class="box" x="690" y="300" width="220" height="145"/>
-  <text class="name" x="720" y="328">BenchmarkRecord</text>
-  <text class="field" x="713" y="354">model_id</text>
-  <text class="field" x="713" y="374">node_name</text>
-  <text class="field" x="713" y="394">route_mode</text>
-  <text class="field" x="713" y="414">latency_ms</text>
-  <text class="field" x="713" y="434">output_tokens</text>
+  <path class="arrow" d="M185 260 V210 H420"/>
+  <path class="arrow" d="M540 210 V260"/>
+  <path class="arrow" d="M660 312 H790"/>
+  <path class="arrow" d="M540 365 V405"/>
+  <path class="arrow" d="M660 330 C720 350 760 390 790 430"/>
+  <path class="arrow" d="M420 320 H290"/>
+  <path class="arrow" d="M185 365 V405"/>
 
-  <rect class="runtime" x="690" y="500" width="220" height="145"/>
-  <text class="name" x="738" y="528">Stage</text>
-  <text class="field" x="713" y="554">index</text>
-  <text class="field" x="713" y="574">node_name</text>
-  <text class="field" x="713" y="594">role</text>
-  <text class="field" x="713" y="614">layer_start/end</text>
-  <text class="field" x="713" y="634">weight</text>
-
-  <rect class="runtime" x="955" y="500" width="130" height="145"/>
-  <text class="name" x="970" y="528">Activation</text>
-  <text class="field" x="973" y="554">request</text>
-  <text class="field" x="973" y="574">response</text>
-  <text class="field" x="973" y="594">trace</text>
-  <text class="field" x="973" y="614">payload</text>
-  <text class="field" x="973" y="634">bytes</text>
-
-  <path class="arrow" d="M275 165 H365"/>
-  <path class="arrow" d="M275 535 H365"/>
-  <path class="arrow" d="M475 300 V250"/>
-  <path class="arrow" d="M585 172 H690"/>
-  <path class="arrow" d="M585 200 C650 235 650 325 690 362"/>
-  <path class="arrow" d="M585 552 H690"/>
-  <path class="arrow" d="M275 360 H365"/>
-  <path class="arrow" d="M910 572 H955"/>
-  <path class="arrow" d="M800 500 V445"/>
+  <text class="small" x="690" y="150">Shared cluster contracts</text>
+  <text class="small" x="690" y="170">should stay small and boring.</text>
 </svg>

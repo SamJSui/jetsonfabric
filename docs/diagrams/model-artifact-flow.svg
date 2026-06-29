@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 470" role="img" aria-labelledby="title desc">
+  <title id="title">Model Registry And Artifact Flow</title>
+  <desc id="desc">Control loads model metadata, agents validate advertised model artifacts, and runtimes load local model files.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
+    </marker>
+    <marker id="future-arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <style>
+    .bg { fill: #f8fafc; }
+    .title { font: 700 24px Arial, sans-serif; fill: #0f172a; }
+    .box { fill: #ffffff; stroke: #334155; stroke-width: 1.5; rx: 8; }
+    .file { fill: #ecfdf5; stroke: #047857; stroke-width: 1.5; rx: 8; }
+    .runtime { fill: #fff7ed; stroke: #9a3412; stroke-width: 1.5; rx: 8; }
+    .label { font: 700 15px Arial, sans-serif; fill: #0f172a; }
+    .small { font: 13px Arial, sans-serif; fill: #334155; }
+    .code { font: 12px Consolas, monospace; fill: #334155; }
+    .arrow { stroke: #334155; stroke-width: 1.7; fill: none; marker-end: url(#arrow); }
+    .future { stroke: #64748b; stroke-width: 1.6; fill: none; stroke-dasharray: 7 5; marker-end: url(#future-arrow); }
+  </style>
+
+  <rect class="bg" width="1080" height="470"/>
+  <text class="title" x="40" y="44">Model Registry And Artifact Flow</text>
+  <text class="small" x="40" y="68">Control loads metadata. Agents and runtimes need local artifacts before they can serve or execute shards.</text>
+
+  <rect class="file" x="55" y="130" width="245" height="95"/>
+  <text class="label" x="82" y="162">Model registry</text>
+  <text class="code" x="82" y="187">configs/models.example.json</text>
+  <text class="small" x="82" y="207">model_id, runtime, layers</text>
+
+  <rect class="box" x="390" y="130" width="245" height="95"/>
+  <text class="label" x="438" y="162">Control Plane</text>
+  <text class="small" x="418" y="187">loads registry via --models</text>
+  <text class="small" x="418" y="207">plans routes and stages</text>
+
+  <rect class="file" x="55" y="290" width="245" height="95"/>
+  <text class="label" x="82" y="322">Artifact catalog</text>
+  <text class="code" x="82" y="347">configs/model-artifacts.example.json</text>
+  <text class="small" x="82" y="367">source URL, local path</text>
+
+  <rect class="box" x="390" y="290" width="245" height="95"/>
+  <text class="label" x="468" y="322">Agent</text>
+  <text class="small" x="418" y="347">validates advertised model</text>
+  <text class="small" x="418" y="367">advertises ready backend</text>
+
+  <rect class="file" x="735" y="290" width="245" height="95"/>
+  <text class="label" x="780" y="322">Local model file</text>
+  <text class="code" x="762" y="347">.cache/models/*.gguf</text>
+  <text class="small" x="762" y="367">or mounted Jetson path</text>
+
+  <rect class="runtime" x="735" y="130" width="245" height="95"/>
+  <text class="label" x="782" y="162">Model runtime</text>
+  <text class="small" x="762" y="187">P0: llama-server full model</text>
+  <text class="small" x="762" y="207">P1: shard-capable runtime</text>
+
+  <path class="arrow" d="M300 178 H390"/>
+  <text class="small" x="316" y="168">metadata only</text>
+
+  <path class="arrow" d="M300 338 H390"/>
+  <text class="small" x="314" y="328">catalog lookup</text>
+
+  <path class="arrow" d="M635 338 H735"/>
+  <text class="small" x="658" y="328">local path</text>
+
+  <path class="arrow" d="M858 290 V225"/>
+  <text class="small" x="872" y="264">load weights</text>
+
+  <path class="future" d="M635 178 H735"/>
+  <text class="small" x="660" y="168">future shard plan</text>
+
+  <path class="future" d="M512 225 V290"/>
+  <text class="small" x="526" y="260">future deployment intent</text>
+</svg>
