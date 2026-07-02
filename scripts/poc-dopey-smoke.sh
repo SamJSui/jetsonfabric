@@ -66,24 +66,16 @@ require_command() {
   fi
 }
 
-has_jq() {
-  command -v jq >/dev/null 2>&1
-}
-
 check_json_with_jq() {
   file=$1
   message=$2
   shift 2
-  if has_jq; then
-    if jq -e "$@" "$file" >/dev/null; then
-      printf 'OK: %s\n' "$message"
-    else
-      printf 'FAIL: %s\n' "$message" >&2
-      printf 'response file: %s\n' "$file" >&2
-      exit 1
-    fi
+  if jq -e "$@" "$file" >/dev/null; then
+    printf 'OK: %s\n' "$message"
   else
-    printf 'SKIP jq validation: %s\n' "$message"
+    printf 'FAIL: %s\n' "$message" >&2
+    printf 'response file: %s\n' "$file" >&2
+    exit 1
   fi
 }
 
@@ -95,6 +87,7 @@ http_get() {
 }
 
 require_command curl
+require_command jq
 
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
 repo_root=$(CDPATH= cd "$script_dir/.." && pwd)
@@ -153,14 +146,10 @@ check_json_with_jq "$chat_json" 'chat response includes at least one choice' '.c
 check_json_with_jq "$chat_json" "chat response route node is $node_name" --arg node "$node_name" '.jetsonfabric_route.node_name == $node'
 check_json_with_jq "$chat_json" 'chat response route mode is single_node' '.jetsonfabric_route.mode == "single_node"'
 
-if has_jq; then
-  printf '\nassistant response:\n'
-  jq -r '.choices[0].message.content' "$chat_json"
-  printf '\nroute metadata:\n'
-  jq '.jetsonfabric_route' "$chat_json"
-else
-  printf 'chat response written to %s\n' "$chat_json"
-fi
+printf '\nassistant response:\n'
+jq -r '.choices[0].message.content' "$chat_json"
+printf '\nroute metadata:\n'
+jq '.jetsonfabric_route' "$chat_json"
 
 if [ -f "$benchmarks_file" ]; then
   if grep -q "\"node_name\":\"$node_name\"" "$benchmarks_file" && grep -q "\"model_id\":\"$model\"" "$benchmarks_file"; then
