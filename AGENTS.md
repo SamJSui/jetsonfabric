@@ -1,139 +1,38 @@
-# Agent Context
+# Agent Instructions
 
-This repo is JetsonFabric: an exo-inspired distributed inference runtime for
-low-cost Jetson-class edge clusters.
+This is the source repo for JetsonFabric. Keep this file intentionally small so coding agents get only the rules needed to work safely in the codebase.
 
-## Project Intent
+Long-term project memory, design journals, experiments, and ChatGPT context packs belong in the separate private knowledge-base repo: `SamJSui/jetsonfabric-kb`.
 
-Build a Go/C++ native edge AI fabric that makes multiple Jetson Orin-class
-devices behave like one observable inference cluster. The first credible target
-is not frontier-model replacement. The target is measurable edge-specific value:
-placement, routing, failover, cost-aware serving, thermal awareness, and
-evidence about when distributed inference helps or loses.
+## Project Boundary
 
-Interview pitch:
+JetsonFabric is an exo-inspired distributed inference runtime for low-cost Jetson-class edge clusters. The product story is Jetson-first edge inference orchestration: node discovery, model placement, routing, benchmarking, failover, thermal/resource awareness, and an OpenAI-compatible API surface.
 
-> I built JetsonFabric, an exo-inspired distributed inference runtime for
-> low-cost Jetson edge clusters. It auto-discovers Jetson nodes, profiles
-> compute/network/thermal behavior, places model work across devices, exposes an
-> OpenAI-compatible API, and benchmarks when layer-split inference beats or
-> loses to single-node execution.
+Do not turn this repo into a generic homelab dashboard, repo-ingestion chatbot, or single-node local chatbot.
 
-## Current Stack
+## Implementation Rules
 
-- Go control plane in `cmd/jetsonfabric-control` and `internal/control`.
-- Go node agent in `cmd/jetsonfabric-agent` and `internal/agent`.
-- Shared cluster types in `internal/cluster`.
-- Model registry in `internal/modelregistry`.
-- Model artifact catalog in `internal/modelartifacts` and
-  `configs/model-artifacts.example.json`.
-- Placement preview logic in `internal/routing`.
-- Platform/runtime detection in `internal/system`.
-- Example model config in `configs/models.example.json`.
-- POSIX `sh` scripts in `scripts/` for WSL/Linux build and dev runs.
-- PowerShell scripts remain only as Windows compatibility helpers.
-- Future distributed-runtime work should be C++ first, with CUDA introduced only
-  for GPU memory movement, TensorRT/llama.cpp integration, activation
-  compression, or measured transfer bottlenecks.
-
-## Engineering Standard
-
-This codebase should be held to a high production-quality bar even while it is
-early. Read [docs/engineering-standards.md](docs/engineering-standards.md)
-before making implementation changes.
-
-Do not merge work that is only a demo shortcut unless it is isolated, documented,
-and intentionally marked as temporary. A change is not complete until it has
-clear behavior, tests at the right level, explicit errors, and a verification
-command.
-
-Python is allowed for benchmark analysis, graphing, reports, and notebooks only.
-Do not move the production control plane, node agent, scheduler, or runtime
-transport into Python.
-
-C++ belongs in later runtime-sensitive paths. Prefer C++ over C for JetsonFabric
-runtime code because RAII and typed value ownership are a better fit for
-long-running tensor transport, CUDA resources, sockets, and runtime sessions.
-C APIs are acceptable at external boundaries such as `libibverbs`, POSIX
-sockets, CUDA, or runtime libraries, but wrap them in small C++ types instead of
-letting raw handles spread through the codebase.
-
-- TensorRT/ONNX execution wrappers
-- llama.cpp integration
-- activation/tensor transport
-- layer-shard execution
-- pinned-buffer and transfer optimization experiments
-- 10GbE TCP transport experiments
-- optional RDMA transport experiments
-
-CUDA belongs only where it is required for runtime work:
-
-- pinned or mapped host buffers
-- CPU/GPU transfer measurement
-- TensorRT or llama.cpp GPU integration
-- activation compression kernels
-- possible GPUDirect/RDMA experiments after TCP and 10GbE baselines exist
-
-## Hardware Framing
-
-- Beelink Mini S13: optional control plane, dashboard host, storage, and
-  development node.
-- Jetson Orin Nano / Orin Nano Super: primary AI compute worker class.
-- Raspberry Pi 5: optional future sentinel, sensor, or compatibility node. It is
-  not the core performance story for model inference.
-
-The cleanest product story is Jetson-first. Avoid turning the repo into a
-generic homelab dashboard or a single-node local chatbot.
-
-## Non-Goals And Honesty Boundaries
-
-- Do not claim JetsonFabric beats frontier models.
-- Do not claim distributed inference is always faster.
-- Do not make replicated serving the only product identity; keep it as a
-  baseline/control mode.
-- Do not make Kubernetes mandatory before the scheduler and benchmark loop are
-  useful.
-- Do not overstate tensor parallelism over Ethernet. Treat it as a stretch
-  experiment unless benchmarks prove otherwise.
-- Do not spend time on repo/document digestion features; the desired UX is closer
-  to Codex/exo-style routing and orchestration.
-
-## Primary Technical Direction
-
-The core research/product lane is profile-driven distributed inference on cheap
-edge compute:
-
-1. Discover nodes and collect hardware/runtime/thermal capabilities.
-2. Get one real model serving on one Jetson and route one prompt through the
-   control plane as the POC single full-model replica baseline.
-3. Benchmark that single-Jetson backend against known prompts and metrics.
-4. Implement real layer-split inference as P0/MVP after the POC baseline works.
-5. Plan routes for single-node, replica_serving, layer_split, and fallback
-   modes.
-6. Make route decisions observable with latency, throughput, memory, thermal,
-   power, network bytes/token, and failure data.
-7. Test tensor parallelism as P1 only after layer split exists, because network
-   synchronization can dominate on ordinary Ethernet.
-8. Build P2 operational fabric work after the runtime questions have evidence:
-   model lifecycle, persistent state, placement, failover, dashboard/API
-   visibility, and measured transport optimization.
+- Production control-plane and agent code should stay in Go.
+- Runtime-sensitive inference paths should be C++ first when they become real: TensorRT/ONNX wrappers, llama.cpp integration, activation/tensor transport, layer-shard execution, pinned-buffer experiments, and transport optimization.
+- Python is allowed for benchmark analysis, graphing, reports, and notebooks only.
+- CUDA belongs only where required for runtime work: pinned or mapped buffers, CPU/GPU transfer measurement, TensorRT or llama.cpp GPU integration, activation compression, or measured GPUDirect/RDMA experiments.
+- Do not make Kubernetes mandatory before the scheduler and benchmark loop are useful.
+- Do not overstate distributed inference performance; benchmark claims before presenting them as wins.
 
 ## Current Priority
 
-Current priority is the POC: single-node full-model replica serving. Do not
-begin real layer-split implementation until JetsonFabric can:
+Finish the POC before starting real layer-split implementation:
 
-- register one Jetson agent;
-- detect useful Jetson hardware/runtime facts;
-- route a prompt through `jetsonfabric-control` to the Jetson agent proxy;
-- have the agent proxy that request to a real node-local model backend;
-- return a model response through the control-plane API;
-- record a benchmark result with latency, throughput, memory, and thermal data.
+1. Register one Jetson agent.
+2. Detect useful Jetson hardware/runtime facts.
+3. Route a prompt through `jetsonfabric-control` to the Jetson agent proxy.
+4. Have the agent proxy request a real node-local model backend.
+5. Return a model response through the control-plane API.
+6. Record benchmark data: latency, throughput, memory, thermal, and failures.
 
-After the POC is real and benchmarked, P0/MVP becomes real layer-split inference
-across Jetson nodes.
+After the POC is real and benchmarked, P0/MVP becomes real layer-split inference across Jetson nodes.
 
-## Verification Commands
+## Required Checks
 
 Use the WSL/Linux shell workflow by default:
 
@@ -143,41 +42,19 @@ go test ./...
 sh scripts/build.sh
 ```
 
-For implementation changes, prefer the full sequence above. Add narrower tests
-only when they support the full check; do not use them as a substitute for final
-verification.
-
 For docs-only edits, at least run:
 
 ```sh
 git diff --check
 ```
 
-## Git And Repo State
+## Source Of Truth
 
-The GitHub repo is private:
+- Project/product context: `docs/project-context.md`
+- Engineering bar: `docs/engineering-standards.md`
+- Roadmap: `docs/roadmap.md`
+- POC plan: `docs/poc-single-node-serving.md`
+- P0 layer-split plan: `docs/p0-layer-split-mvp.md`
+- KB boundary and external context plan: `docs/knowledge-base-boundary.md`
 
-```text
-https://github.com/SamJSui/jetsonfabric
-```
-
-Preserve user changes. Do not reset or revert unrelated work. Keep commits small
-and explain what changed.
-
-## Next Useful Work
-
-- Add Jetson-specific detection for JetPack, CUDA, TensorRT, power mode,
-  temperature, throttling, and `tegrastats`.
-- Expand model artifact management from a catalog into verified download and
-  runtime launch lifecycle.
-- Add request logging and route-decision logging for control and agent proxy
-  calls.
-- Add authenticated request handling between control and agent proxy.
-- Add dev resource overrides so Windows smoke tests can preview plausible
-  Jetson memory/accelerator data.
-- Implement a dashboard/API surface that mirrors exo-style node and route
-  visibility.
-- Add a real single-Jetson model backend to finish the POC.
-- Start real layer-split runtime work only after the POC path is benchmarked.
-- Defer 10GbE, RDMA, GPUDirect, and broad transport optimization until layer
-  split or tensor-parallel measurements prove that transport is the bottleneck.
+Preserve user changes. Do not reset or revert unrelated work. Keep commits small and explain what changed.
