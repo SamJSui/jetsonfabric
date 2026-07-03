@@ -123,6 +123,9 @@ func parseMemTotalGB(reader io.Reader) float64 {
 		}
 		return round2(kb / kibPerGiB)
 	}
+	if err := scanner.Err(); err != nil {
+		return 0
+	}
 	return 0
 }
 
