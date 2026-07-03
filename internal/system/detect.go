@@ -16,27 +16,29 @@ const (
 )
 
 type Snapshot struct {
-	Hostname     string         `json:"hostname"`
-	Arch         string         `json:"arch"`
-	OS           string         `json:"os"`
-	Capabilities map[string]any `json:"capabilities"`
-	Metrics      map[string]any `json:"metrics"`
+	Hostname     string                  `json:"hostname"`
+	Arch         string                  `json:"arch"`
+	OS           cluster.OperatingSystem `json:"os"`
+	Capabilities map[string]any          `json:"capabilities"`
+	Metrics      map[string]any          `json:"metrics"`
 }
 
 func Detect() Snapshot {
 	hostname, _ := os.Hostname()
+	operatingSystem := detectOperatingSystem()
 
-	capabilities := map[string]any{
-		cluster.CapabilityMemoryGB:        memoryGB(),
-		cluster.CapabilityDeviceClass:     string(deviceClass()),
-		cluster.CapabilityComputeBackends: computeBackends(),
-		capabilityEngines:                 engines(),
-		capabilityContainerRuntimes:       containerRuntimes(),
-		capabilityTegrastats:              commandExists(commandTegrastats),
+	return Snapshot{
+		Hostname:     hostname,
+		Arch:         runtime.GOARCH,
+		OS:           operatingSystem,
+		Capabilities: detectCapabilities(operatingSystem),
+		Metrics:      detectMetrics(operatingSystem),
 	}
+}
 
+func detectMetrics(operatingSystem cluster.OperatingSystem) map[string]any {
 	metrics := map[string]any{
-		metricLoadAverage: loadAverage(),
+		metricLoadAverage: loadAverage(operatingSystem),
 		metricQueueDepth:  0,
 	}
 
@@ -44,11 +46,5 @@ func Detect() Snapshot {
 		metrics[metricJetsonHint] = jetsonHintTegrastats
 	}
 
-	return Snapshot{
-		Hostname:     hostname,
-		Arch:         runtime.GOARCH,
-		OS:           runtime.GOOS,
-		Capabilities: capabilities,
-		Metrics:      metrics,
-	}
+	return metrics
 }

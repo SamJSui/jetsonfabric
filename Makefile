@@ -6,7 +6,6 @@ DOCKER ?= docker
 COMPOSE ?= docker compose
 
 DIST_DIR ?= dist
-GO_CACHE ?= .cache/go-build
 RUNTIME_BUILD_DIR ?= runtime/build
 
 CONTROL_ENV ?= .env
@@ -15,21 +14,21 @@ NODE_ENV ?= /etc/jetsonfabric/node.env
 CONTROL_LISTEN ?= 127.0.0.1:52415
 JOIN_TOKEN ?= dev-token
 BENCHMARKS_PATH ?= data/benchmarks.jsonl
-MODEL_REGISTRY ?= configs/models.example.json
+MODELS_PATH ?= configs/models.example.json
 
 NODE_NAME ?= dopey
 MODEL ?= qwen2.5-coder-1.5b-q4
 
 CONTROL_URL ?= http://127.0.0.1:52415
-AGENT_URL ?= http://dopey.local:52416
+AGENT_URL ?= http://127.0.0.1:52416
 AGENT_LISTEN ?= 0.0.0.0:52416
-AGENT_ADVERTISE_URL ?=
+AGENT_ADVERTISE_URL ?= http://127.0.0.1:52416
 
 ENGINE ?= jetsonfabric-runtime
 ENGINE_URL ?= http://127.0.0.1:9090
 
 RUNTIME_LISTEN ?= 127.0.0.1:9090
-RUNTIME_MODE ?= single_node
+RUNTIME_MODE ?= data_parallel
 
 HOST ?=
 EXPECTED_HOSTNAME ?= dopey
@@ -77,29 +76,28 @@ help:
 
 .PHONY: test
 test:
-	mkdir -p $(GO_CACHE)
-	GOCACHE=$(GO_CACHE) $(GO) test ./...
+	$(GO) test ./...
 
 .PHONY: build
-build: test control agent bench runtime
+build: test control agent runtime bench
 
 .PHONY: control
 control:
-	mkdir -p $(DIST_DIR) $(GO_CACHE)
-	GOCACHE=$(GO_CACHE) GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-control-linux-amd64 ./cmd/jetsonfabric-control
-	GOCACHE=$(GO_CACHE) GOOS=linux GOARCH=arm64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-control-linux-arm64 ./cmd/jetsonfabric-control
+	mkdir -p $(DIST_DIR)
+	GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-control-linux-amd64 ./cmd/jetsonfabric-control
+	GOOS=linux GOARCH=arm64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-control-linux-arm64 ./cmd/jetsonfabric-control
 
 .PHONY: agent
 agent:
-	mkdir -p $(DIST_DIR) $(GO_CACHE)
-	GOCACHE=$(GO_CACHE) GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-agent-linux-amd64 ./cmd/jetsonfabric-agent
-	GOCACHE=$(GO_CACHE) GOOS=linux GOARCH=arm64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-agent-linux-arm64 ./cmd/jetsonfabric-agent
+	mkdir -p $(DIST_DIR)
+	GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-agent-linux-amd64 ./cmd/jetsonfabric-agent
+	GOOS=linux GOARCH=arm64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-agent-linux-arm64 ./cmd/jetsonfabric-agent
 
 .PHONY: bench
 bench:
-	mkdir -p $(DIST_DIR) $(GO_CACHE)
-	GOCACHE=$(GO_CACHE) GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-bench-linux-amd64 ./cmd/jetsonfabric-bench
-	GOCACHE=$(GO_CACHE) GOOS=linux GOARCH=arm64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-bench-linux-arm64 ./cmd/jetsonfabric-bench
+	mkdir -p $(DIST_DIR)
+	GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-bench-linux-amd64 ./cmd/jetsonfabric-bench
+	GOOS=linux GOARCH=arm64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-bench-linux-arm64 ./cmd/jetsonfabric-bench
 
 .PHONY: runtime
 runtime:
@@ -110,17 +108,15 @@ runtime:
 
 .PHONY: control-run
 control-run:
-	mkdir -p $(GO_CACHE)
-	GOCACHE=$(GO_CACHE) $(GO) run ./cmd/jetsonfabric-control \
+	$(GO) run ./cmd/jetsonfabric-control \
 		--listen $(CONTROL_LISTEN) \
 		--join-token $(JOIN_TOKEN) \
 		--benchmarks $(BENCHMARKS_PATH) \
-		--model-registry $(MODEL_REGISTRY)
+		--models $(MODELS_PATH)
 
 .PHONY: agent-run
 agent-run:
-	mkdir -p $(GO_CACHE)
-	GOCACHE=$(GO_CACHE) $(GO) run ./cmd/jetsonfabric-agent \
+	$(GO) run ./cmd/jetsonfabric-agent \
 		--control-url $(CONTROL_URL) \
 		--join-token $(JOIN_TOKEN) \
 		--node-name $(NODE_NAME) \
@@ -202,7 +198,7 @@ smoke:
 	NODE_NAME=$(NODE_NAME) \
 	MODEL=$(MODEL) \
 	EXPECTED_ENGINE=$(ENGINE) \
-	EXPECTED_ROUTE_MODE=single_node \
+	EXPECTED_ROUTE_MODE=data_parallel \
 	sh scripts/smoke-node.sh
 
 .PHONY: check-node
@@ -219,4 +215,4 @@ install-node-layout:
 
 .PHONY: clean
 clean:
-	rm -rf $(DIST_DIR) $(RUNTIME_BUILD_DIR) $(GO_CACHE)
+	rm -rf $(DIST_DIR) $(RUNTIME_BUILD_DIR)

@@ -38,7 +38,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		NodeName:     heartbeat.NodeName,
 		Hostname:     fallback(heartbeat.Hostname, heartbeat.NodeName),
 		Arch:         fallback(heartbeat.Arch, "unknown"),
-		OS:           fallback(heartbeat.OS, "unknown"),
+		OS:           heartbeat.OS,
 		Capabilities: fallbackMap(heartbeat.Capabilities),
 		Metrics:      fallbackMap(heartbeat.Metrics),
 		Engines:      heartbeat.Engines,

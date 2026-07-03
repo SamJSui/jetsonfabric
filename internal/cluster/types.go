@@ -37,6 +37,16 @@ const (
 	DeviceClassMac     DeviceClass = "mac"
 )
 
+// OperatingSystem identifies the OS family reported by the node.
+type OperatingSystem string
+
+const (
+	OperatingSystemUnknown OperatingSystem = "unknown"
+	OperatingSystemLinux   OperatingSystem = "linux"
+	OperatingSystemDarwin  OperatingSystem = "darwin"
+	OperatingSystemWindows OperatingSystem = "windows"
+)
+
 // ComputeBackend identifies available local compute APIs/backends.
 type ComputeBackend string
 
@@ -74,7 +84,7 @@ type NodeRecord struct {
 	NodeName     string           `json:"node_name"`
 	Hostname     string           `json:"hostname"`
 	Arch         string           `json:"arch"`
-	OS           string           `json:"os"`
+	OS           OperatingSystem  `json:"os"`
 	Capabilities map[string]any   `json:"capabilities"`
 	Metrics      map[string]any   `json:"metrics"`
 	Engines      []EngineEndpoint `json:"engines,omitempty"`
@@ -85,7 +95,7 @@ type HeartbeatRequest struct {
 	NodeName     string           `json:"node_name"`
 	Hostname     string           `json:"hostname"`
 	Arch         string           `json:"arch"`
-	OS           string           `json:"os"`
+	OS           OperatingSystem  `json:"os"`
 	Capabilities map[string]any   `json:"capabilities"`
 	Metrics      map[string]any   `json:"metrics"`
 	Engines      []EngineEndpoint `json:"engines,omitempty"`

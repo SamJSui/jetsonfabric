@@ -1,9 +1,6 @@
 package system
 
 import (
-	"runtime"
-	"strings"
-
 	"github.com/SamJSui/jetsonfabric/internal/cluster"
 )
 
@@ -22,13 +19,24 @@ const (
 	commandTegrastats          = "tegrastats"
 )
 
-func deviceClass() cluster.DeviceClass {
+func detectCapabilities(operatingSystem cluster.OperatingSystem) map[string]any {
+	return map[string]any{
+		cluster.CapabilityMemoryGB:        memoryGB(operatingSystem),
+		cluster.CapabilityDeviceClass:     string(deviceClass(operatingSystem)),
+		cluster.CapabilityComputeBackends: computeBackends(),
+		capabilityEngines:                 engines(),
+		capabilityContainerRuntimes:       containerRuntimes(),
+		capabilityTegrastats:              commandExists(commandTegrastats),
+	}
+}
+
+func deviceClass(operatingSystem cluster.OperatingSystem) cluster.DeviceClass {
 	switch {
 	case commandExists(commandTegrastats):
 		return cluster.DeviceClassJetson
-	case runtime.GOOS == "darwin":
+	case operatingSystem == cluster.OperatingSystemDarwin:
 		return cluster.DeviceClassMac
-	case runtime.GOOS == "linux":
+	case operatingSystem == cluster.OperatingSystemLinux:
 		return cluster.DeviceClassLinuxPC
 	default:
 		return cluster.DeviceClassUnknown
@@ -76,10 +84,12 @@ func cudaAvailable() bool {
 	if err != nil {
 		return false
 	}
+
 	for _, entry := range entries {
-		if strings.HasPrefix(entry, "cuda-") {
+		if len(entry) >= len("cuda-") && entry[:len("cuda-")] == "cuda-" {
 			return true
 		}
 	}
+
 	return false
 }

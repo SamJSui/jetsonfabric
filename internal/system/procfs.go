@@ -12,13 +12,14 @@ const (
 	procMeminfoPath = "/proc/meminfo"
 	procLoadavgPath = "/proc/loadavg"
 
-	meminfoTotalField     = "MemTotal:"
-	meminfoValueField     = 1
+	meminfoTotalField = "MemTotal:"
+	meminfoValueField = 1
+
 	loadAverageFieldCount = 3
 	kibPerGiB             = 1024 * 1024
 )
 
-func memoryGB() float64 {
+func procMemTotalGB() float64 {
 	file, err := os.Open(procMeminfoPath)
 	if err != nil {
 		return 0
@@ -57,7 +58,7 @@ func parseMemTotalGB(reader io.Reader) float64 {
 	return 0
 }
 
-func loadAverage() []float64 {
+func procLoadAverage() []float64 {
 	content, err := os.ReadFile(procLoadavgPath)
 	if err != nil {
 		return nil

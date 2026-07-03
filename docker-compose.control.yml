@@ -12,8 +12,8 @@ services:
       - ${JOIN_TOKEN:-dev-token}
       - --benchmarks
       - ${BENCHMARKS_PATH:-/data/benchmarks.jsonl}
-      - --model-registry
-      - ${MODEL_REGISTRY_PATH:-/app/configs/models.example.json}
+      - --models
+      - ${MODELS_PATH:-/app/configs/models.example.json}
     ports:
       - "${CONTROL_PORT:-52415}:52415"
     volumes:
