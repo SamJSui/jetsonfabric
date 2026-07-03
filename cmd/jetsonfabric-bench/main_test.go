@@ -34,11 +34,11 @@ func TestRunBenchmarkRecordsSuccessfulRequests(t *testing.T) {
 			},
 			Usage: &chat.Usage{CompletionTokens: 2, TotalTokens: 8},
 			Route: &chat.RouteMetadata{
-				Mode:        cluster.RouteModeSingleNode,
-				NodeName:    "desktop-agent-1",
-				BackendID:   cluster.BackendIDLlamaLocal,
-				BackendKind: cluster.RuntimeKindLlamaCPP,
-				LatencyMS:   3,
+				Mode:             cluster.ExecutionModeDataParallel,
+				NodeName:         "desktop-agent-1",
+				Engine:           cluster.EngineLlamaCPP,
+				EngineInstanceID: cluster.DefaultEngineInstanceID,
+				LatencyMS:        3,
 			},
 		})
 	}))

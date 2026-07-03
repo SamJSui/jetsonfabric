@@ -17,6 +17,7 @@ const (
 // A one-node full-model route is data_parallel with replica_count=1.
 //
 // PipelineParallel means transformer layers/stages are split across stages/nodes.
+//
 // TensorParallel means tensor operations such as matmuls are split across devices/nodes.
 type ExecutionMode string
 

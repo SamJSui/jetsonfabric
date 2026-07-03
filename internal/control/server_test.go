@@ -72,7 +72,7 @@ func TestChatCompletionsRoutesToSingleNodeBackend(t *testing.T) {
 		},
 		Engines: []cluster.EngineEndpoint{
 			{
-				InstanceID:       cluster.Llm,
+				InstanceID:       cluster.DefaultEngineInstanceID,
 				Engine:           cluster.EngineLlamaCPP,
 				BaseURL:          backend.URL,
 				Models:           []string{"qwen2.5-coder-1.5b-q4"},
@@ -101,14 +101,18 @@ func TestChatCompletionsRoutesToSingleNodeBackend(t *testing.T) {
 	if decoded.Route == nil {
 		t.Fatal("expected route metadata")
 	}
-	if decoded.Route.Mode != cluster.RouteModeSingleNode || decoded.Route.NodeName != "jetson-01" || decoded.Route.BackendID != cluster.BackendIDLlamaLocal {
+	if decoded.Route.Mode != cluster.ExecutionModeDataParallel || decoded.Route.NodeName != "jetson-01" || decoded.Route.Engine != cluster.EngineLlamaCPP {
 		t.Fatalf("unexpected route metadata: %+v", decoded.Route)
 	}
 	if len(recorder.records) != 1 {
 		t.Fatalf("expected one benchmark record, got %d", len(recorder.records))
 	}
 	record := firstRecord(t, recorder.records)
-	if record.ModelID != "qwen2.5-coder-1.5b-q4" || record.NodeName != "jetson-01" || record.RouteMode != cluster.RouteModeSingleNode {
+	if record.ModelID != "qwen2.5-coder-1.5b-q4" ||
+		record.NodeName != "jetson-01" ||
+		record.ExecutionMode != cluster.ExecutionModeDataParallel ||
+		record.Engine != cluster.EngineLlamaCPP ||
+		record.EngineInstanceID != cluster.DefaultEngineInstanceID {
 		t.Fatalf("unexpected benchmark record: %+v", record)
 	}
 	if record.MemoryGB == nil || *record.MemoryGB != 8.0 {
@@ -159,10 +163,10 @@ func TestServerRunsOverHTTPForSingleNodeChatFlow(t *testing.T) {
 		Capabilities: map[string]any{
 			cluster.CapabilityMemoryGB: 8.0,
 		},
-		Backends: []cluster.RuntimeBackend{
+		Engines: []cluster.EngineEndpoint{
 			{
-				ID:               cluster.BackendIDLlamaLocal,
-				Kind:             cluster.RuntimeKindLlamaCPP,
+				InstanceID:       cluster.DefaultEngineInstanceID,
+				Engine:           cluster.EngineLlamaCPP,
 				BaseURL:          backend.URL,
 				Models:           []string{"qwen2.5-coder-1.5b-q4"},
 				OpenAICompatible: true,
@@ -183,7 +187,10 @@ func TestServerRunsOverHTTPForSingleNodeChatFlow(t *testing.T) {
 	if decoded.Route == nil {
 		t.Fatal("expected route metadata")
 	}
-	if decoded.Route.NodeName != "jetson-01" || decoded.Route.Mode != cluster.RouteModeSingleNode {
+	if decoded.Route.Mode != cluster.ExecutionModeDataParallel ||
+		decoded.Route.NodeName != "jetson-01" ||
+		decoded.Route.Engine != cluster.EngineLlamaCPP ||
+		decoded.Route.EngineInstanceID != cluster.DefaultEngineInstanceID {
 		t.Fatalf("unexpected route metadata: %+v", decoded.Route)
 	}
 	if len(recorder.records) != 1 {
@@ -245,10 +252,10 @@ func TestServerRunsOverHTTPThroughAgentProxy(t *testing.T) {
 		Capabilities: map[string]any{
 			cluster.CapabilityMemoryGB: 8.0,
 		},
-		Backends: []cluster.RuntimeBackend{
+		Engines: []cluster.EngineEndpoint{
 			{
-				ID:               cluster.BackendIDLlamaLocal,
-				Kind:             cluster.RuntimeKindLlamaCPP,
+				InstanceID:       cluster.DefaultEngineInstanceID,
+				Engine:           cluster.EngineLlamaCPP,
 				BaseURL:          agentServer.URL,
 				Models:           []string{"qwen2.5-coder-1.5b-q4"},
 				OpenAICompatible: true,
@@ -269,11 +276,11 @@ func TestServerRunsOverHTTPThroughAgentProxy(t *testing.T) {
 	if decoded.Route == nil {
 		t.Fatal("expected route metadata")
 	}
-	if decoded.Route.NodeName != "jetson-agent-01" || decoded.Route.BackendID != cluster.BackendIDLlamaLocal {
+	if decoded.Route.NodeName != "jetson-agent-01" ||
+		decoded.Route.Mode != cluster.ExecutionModeDataParallel ||
+		decoded.Route.Engine != cluster.EngineLlamaCPP ||
+		decoded.Route.EngineInstanceID != cluster.DefaultEngineInstanceID {
 		t.Fatalf("unexpected route metadata: %+v", decoded.Route)
-	}
-	if decoded.Route.BackendKind != cluster.RuntimeKindLlamaCPP {
-		t.Fatalf("unexpected backend kind: %s", decoded.Route.BackendKind)
 	}
 	if len(recorder.records) != 1 {
 		t.Fatalf("expected one benchmark record, got %d", len(recorder.records))
@@ -301,7 +308,7 @@ func TestLayerSplitPlanUsesRegisteredAgents(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
 		t.Fatalf("decode layer split plan: %v", err)
 	}
-	if decoded["mode"] != string(cluster.RouteModeLayerSplit) {
+	if decoded["mode"] != string(cluster.ExecutionModePipelineParallel) {
 		t.Fatalf("unexpected mode: %+v", decoded)
 	}
 	stages, ok := decoded["stages"].([]any)
@@ -365,7 +372,7 @@ func TestLayerSplitCompletionsRunsAllStages(t *testing.T) {
 	if choice.Message.Content != expected {
 		t.Fatalf("unexpected content: %s", choice.Message.Content)
 	}
-	if decoded.Route == nil || decoded.Route.Mode != cluster.RouteModeLayerSplit {
+	if decoded.Route == nil || decoded.Route.Mode != cluster.ExecutionModePipelineParallel {
 		t.Fatalf("expected layer split route, got %+v", decoded.Route)
 	}
 	if len(decoded.Route.Stages) != 2 {
@@ -377,7 +384,7 @@ func TestLayerSplitCompletionsRunsAllStages(t *testing.T) {
 	if len(transport.Requests) != 2 {
 		t.Fatalf("expected two transport requests, got %d", len(transport.Requests))
 	}
-	if len(recorder.records) != 1 || recorder.records[0].RouteMode != cluster.RouteModeLayerSplit {
+	if len(recorder.records) != 1 || recorder.records[0].ExecutionMode != cluster.ExecutionModePipelineParallel {
 		t.Fatalf("expected one layer split benchmark record, got %+v", recorder.records)
 	}
 }
@@ -424,10 +431,10 @@ func TestChatCompletionsRejectsInvalidBackendURL(t *testing.T) {
 		Capabilities: map[string]any{
 			cluster.CapabilityMemoryGB: 8.0,
 		},
-		Backends: []cluster.RuntimeBackend{
+		Engines: []cluster.EngineEndpoint{
 			{
-				ID:               cluster.BackendIDLlamaLocal,
-				Kind:             cluster.RuntimeKindLlamaCPP,
+				InstanceID:       cluster.DefaultEngineInstanceID,
+				Engine:           cluster.EngineLlamaCPP,
 				BaseURL:          "127.0.0.1:8080",
 				Models:           []string{"qwen2.5-coder-1.5b-q4"},
 				OpenAICompatible: true,
@@ -451,12 +458,15 @@ func testRegistry() modelregistry.Registry {
 	return modelregistry.Registry{
 		Models: []cluster.ModelProfile{
 			{
-				ID:             "qwen2.5-coder-1.5b-q4",
-				Family:         "llm",
-				Runtime:        cluster.RuntimeKindLlamaCPP,
-				LayerCount:     28,
-				MinMemoryGB:    3,
-				PlacementModes: []cluster.RouteMode{cluster.RouteModeSingleNode, cluster.RouteModeLayerSplit},
+				ID:               "qwen2.5-coder-1.5b-q4",
+				Family:           "llm",
+				SupportedEngines: []cluster.Engine{cluster.EngineLlamaCPP, cluster.EngineJetsonFabric},
+				LayerCount:       28,
+				MinMemoryGB:      3,
+				PlacementModes: []cluster.ExecutionMode{
+					cluster.ExecutionModeDataParallel,
+					cluster.ExecutionModePipelineParallel,
+				},
 			},
 		},
 	}
@@ -468,14 +478,15 @@ func layerSplitHeartbeat(nodeName string, weight float64) cluster.HeartbeatReque
 		Arch:     "amd64",
 		OS:       "linux",
 		Capabilities: map[string]any{
-			cluster.CapabilityMemoryGB:     16.0,
-			cluster.CapabilityLayerWeight:  weight,
-			cluster.CapabilityAccelerators: []any{cluster.AcceleratorCUDA},
+			cluster.CapabilityMemoryGB:        16.0,
+			cluster.CapabilityPipelineWeight:  weight,
+			cluster.CapabilityDeviceClass:     string(cluster.DeviceClassLinuxPC),
+			cluster.CapabilityComputeBackends: []any{string(cluster.ComputeBackendCPU), string(cluster.ComputeBackendCUDA)},
 		},
-		Backends: []cluster.RuntimeBackend{
+		Engines: []cluster.EngineEndpoint{
 			{
-				ID:               cluster.BackendIDLlamaLocal,
-				Kind:             cluster.RuntimeKindLlamaCPP,
+				InstanceID:       cluster.DefaultEngineInstanceID,
+				Engine:           cluster.EngineLlamaCPP,
 				BaseURL:          "http://127.0.0.1:52416",
 				Models:           []string{"qwen2.5-coder-1.5b-q4"},
 				OpenAICompatible: true,

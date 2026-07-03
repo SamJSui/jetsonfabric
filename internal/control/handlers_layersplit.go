@@ -124,14 +124,14 @@ func (s *Server) handleLayerSplitCompletions(w http.ResponseWriter, r *http.Requ
 		Route: s.layerSplitRouteMetadata(plan, stageResponses, latency),
 	}
 	if err := s.benchmarkRecorder.Record(r.Context(), benchmarks.Record{
-		Timestamp:    s.now(),
-		ModelID:      model.ID,
-		NodeName:     strings.Join(stageNodeNames(stageResponses), ","),
-		RouteMode:    cluster.RouteModeLayerSplit,
-		BackendID:    "layer-split",
-		BackendKind:  cluster.RuntimeKindLlamaCPP,
-		LatencyMS:    latency.Milliseconds(),
-		OutputTokens: outputTokens,
+		Timestamp:        s.now(),
+		ModelID:          model.ID,
+		NodeName:         strings.Join(stageNodeNames(stageResponses), ","),
+		ExecutionMode:    cluster.ExecutionModePipelineParallel,
+		Engine:           cluster.EngineJetsonFabric,
+		EngineInstanceID: cluster.DefaultEngineInstanceID,
+		LatencyMS:        latency.Milliseconds(),
+		OutputTokens:     outputTokens,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, errorBenchmarkRecordFailed, err.Error())
 		return

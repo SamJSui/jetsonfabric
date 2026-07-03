@@ -34,8 +34,8 @@ func Load(path string) (Catalog, error) {
 		if artifact.ModelID == "" {
 			return Catalog{}, fmt.Errorf("model artifact catalog contains an empty model id")
 		}
-		if artifact.Runtime == "" {
-			return Catalog{}, fmt.Errorf("model artifact %q contains an empty runtime", artifact.ModelID)
+		if artifact.Engine == "" {
+			return Catalog{}, fmt.Errorf("model artifact %q contains an empty engine", artifact.ModelID)
 		}
 		if artifact.SourceURL == "" {
 			return Catalog{}, fmt.Errorf("model artifact %q contains an empty source url", artifact.ModelID)

@@ -6,19 +6,19 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/cluster"
 )
 
-func TestPreviewRejectsMissingAccelerator(t *testing.T) {
-	accel := cluster.AcceleratorCUDA
+func TestPreviewRejectsMissingCompute(t *testing.T) {
+	compute := cluster.ComputeBackendCUDA
 	model := cluster.ModelProfile{
-		ID:                   "model",
-		MinMemoryGB:          4,
-		PreferredAccelerator: &accel,
+		ID:               "model",
+		MinMemoryGB:      4,
+		PreferredCompute: &compute,
 	}
 	nodes := []cluster.NodeRecord{
 		{
 			NodeName: "cpu-node",
 			Capabilities: map[string]any{
-				cluster.CapabilityMemoryGB:     8.0,
-				cluster.CapabilityAccelerators: []any{},
+				cluster.CapabilityMemoryGB:        8.0,
+				cluster.CapabilityComputeBackends: []any{string(cluster.ComputeBackendCPU)},
 			},
 		},
 	}
@@ -27,25 +27,26 @@ func TestPreviewRejectsMissingAccelerator(t *testing.T) {
 	if placement.Valid {
 		t.Fatalf("expected placement to be invalid")
 	}
-	expectedReason := MissingAcceleratorReason(cluster.AcceleratorCUDA)
+	expectedReason := MissingComputeReason(string(cluster.ComputeBackendCUDA))
 	if placement.Reason != expectedReason {
 		t.Fatalf("unexpected reason: %s", placement.Reason)
 	}
 }
 
 func TestPreviewAcceptsCandidate(t *testing.T) {
-	accel := cluster.AcceleratorCUDA
+	compute := cluster.ComputeBackendCUDA
 	model := cluster.ModelProfile{
-		ID:                   "model",
-		MinMemoryGB:          4,
-		PreferredAccelerator: &accel,
+		ID:               "model",
+		MinMemoryGB:      4,
+		PreferredCompute: &compute,
 	}
 	nodes := []cluster.NodeRecord{
 		{
 			NodeName: "jetson-node",
 			Capabilities: map[string]any{
-				cluster.CapabilityMemoryGB:     8.0,
-				cluster.CapabilityAccelerators: []any{cluster.AcceleratorCUDA, cluster.AcceleratorJetson},
+				cluster.CapabilityMemoryGB:        8.0,
+				cluster.CapabilityDeviceClass:     string(cluster.DeviceClassJetson),
+				cluster.CapabilityComputeBackends: []any{string(cluster.ComputeBackendCPU), string(cluster.ComputeBackendCUDA)},
 			},
 		},
 	}

@@ -34,6 +34,7 @@ func Preview(model cluster.ModelProfile, nodes []cluster.NodeRecord) RoutePrevie
 	placements := make([]PlacementPreview, 0, len(nodes))
 	for _, node := range nodes {
 		memory := floatCapability(node.Capabilities, cluster.CapabilityMemoryGB)
+
 		computeOK := true
 		if model.PreferredCompute != nil && *model.PreferredCompute != "" {
 			computeOK = containsStringCapability(
@@ -42,7 +43,9 @@ func Preview(model cluster.ModelProfile, nodes []cluster.NodeRecord) RoutePrevie
 				string(*model.PreferredCompute),
 			)
 		}
+
 		memoryOK := memory >= model.MinMemoryGB
+
 		placements = append(placements, PlacementPreview{
 			NodeName:  node.NodeName,
 			Valid:     memoryOK && computeOK,
@@ -99,6 +102,7 @@ func containsStringCapability(caps map[string]any, key string, expected string) 
 	if !ok {
 		return false
 	}
+
 	switch items := value.(type) {
 	case []string:
 		for _, item := range items {
@@ -113,5 +117,6 @@ func containsStringCapability(caps map[string]any, key string, expected string) 
 			}
 		}
 	}
+
 	return false
 }
