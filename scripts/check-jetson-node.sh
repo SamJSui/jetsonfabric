@@ -136,5 +136,11 @@ else
   printf 'MISS tegrastats\n'
 fi
 
+command_status docker
+command_status docker-compose
+run_optional 'docker compose version' sh -c 'docker compose version 2>/dev/null || true'
+run_optional 'nvidia container runtime' sh -c 'command -v nvidia-ctk >/dev/null 2>&1 && nvidia-ctk --version || true'
+run_optional 'jetsonfabric dirs' sh -c 'ls -ld /etc/jetsonfabric /var/lib/jetsonfabric 2>/dev/null || true'
+
 section 'summary'
 printf 'Node readiness check complete for expected hostname %s. Review WARN/MISS lines before running JetsonFabric POC.\n' "$expected_hostname"

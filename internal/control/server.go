@@ -16,7 +16,7 @@ import (
 type Server struct {
 	joinToken          string
 	registry           modelregistry.Registry
-	backendFactory     BackendFactory
+	engineFactory      EngineFactory
 	benchmarkRecorder  benchmarks.Recorder
 	layerTransport     layersplit.ActivationTransport
 	layerTransportKind layersplit.TransportKind
@@ -25,13 +25,13 @@ type Server struct {
 	nodes              map[string]cluster.NodeRecord
 }
 
-type BackendFactory func(cluster.RuntimeBackend) (runtimeclient.ChatBackend, error)
+type EngineFactory func(cluster.EngineEndpoint) (runtimeclient.ChatBackend, error)
 
 type Option func(*Server)
 
-func WithBackendFactory(factory BackendFactory) Option {
+func WithEngineFactory(factory EngineFactory) Option {
 	return func(s *Server) {
-		s.backendFactory = factory
+		s.engineFactory = factory
 	}
 }
 
@@ -58,7 +58,7 @@ func NewServer(joinToken string, registry modelregistry.Registry, opts ...Option
 	server := &Server{
 		joinToken:          joinToken,
 		registry:           registry,
-		backendFactory:     defaultBackendFactory,
+		engineFactory:      defaultEngineFactory,
 		benchmarkRecorder:  benchmarks.NoopRecorder{},
 		layerTransportKind: layersplit.TransportHTTP,
 		now:                func() time.Time { return time.Now().UTC() },
@@ -67,8 +67,8 @@ func NewServer(joinToken string, registry modelregistry.Registry, opts ...Option
 	for _, opt := range opts {
 		opt(server)
 	}
-	if server.backendFactory == nil {
-		server.backendFactory = defaultBackendFactory
+	if server.engineFactory == nil {
+		server.engineFactory = defaultEngineFactory
 	}
 	if server.benchmarkRecorder == nil {
 		server.benchmarkRecorder = benchmarks.NoopRecorder{}

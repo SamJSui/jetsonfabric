@@ -14,11 +14,11 @@ type Catalog struct {
 }
 
 type Artifact struct {
-	ModelID        string              `json:"model_id"`
-	Runtime        cluster.RuntimeKind `json:"runtime"`
-	SourceURL      string              `json:"source_url"`
-	LocalPath      string              `json:"local_path"`
-	ExpectedSHA256 string              `json:"expected_sha256,omitempty"`
+	ModelID        string         `json:"model_id"`
+	Engine         cluster.Engine `json:"engine"`
+	SourceURL      string         `json:"source_url"`
+	LocalPath      string         `json:"local_path"`
+	ExpectedSHA256 string         `json:"expected_sha256,omitempty"`
 }
 
 func Load(path string) (Catalog, error) {

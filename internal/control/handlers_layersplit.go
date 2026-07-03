@@ -25,7 +25,7 @@ func (s *Server) handleLayerSplitPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errorUnknownModel, fmt.Sprintf("model %q is not in the registry", modelID))
 		return
 	}
-	if !slices.Contains(model.PlacementModes, cluster.RouteModeLayerSplit) {
+	if !slices.Contains(model.PlacementModes, cluster.ExecutionModePipelineParallel) {
 		writeError(w, http.StatusBadRequest, errorLayerSplitUnsupported, fmt.Sprintf("model %q does not allow layer_split placement", model.ID))
 		return
 	}
@@ -61,7 +61,7 @@ func (s *Server) handleLayerSplitCompletions(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, errorUnknownModel, fmt.Sprintf("model %q is not in the registry", req.Model))
 		return
 	}
-	if !slices.Contains(model.PlacementModes, cluster.RouteModeLayerSplit) {
+	if !slices.Contains(model.PlacementModes, cluster.ExecutionModePipelineParallel) {
 		writeError(w, http.StatusBadRequest, errorLayerSplitUnsupported, fmt.Sprintf("model %q does not allow layer_split placement", model.ID))
 		return
 	}

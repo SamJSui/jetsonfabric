@@ -2,37 +2,72 @@ package cluster
 
 import "time"
 
-type RuntimeKind string
+// Engine identifies the local inference implementation behind an agent.
+// It answers: "What software executes inference?"
+type Engine string
 
 const (
-	RuntimeKindLlamaCPP RuntimeKind = "llama.cpp"
-	RuntimeKindTensorRT RuntimeKind = "tensorrt"
-	RuntimeKindOllama   RuntimeKind = "ollama"
+	EngineLlamaCPP     Engine = "llama.cpp"
+	EngineJetsonFabric Engine = "jetsonfabric-runtime"
 )
 
-type RouteMode string
-
-const (
-	RouteModeSingleNode     RouteMode = "single_node"
-	RouteModeReplicaServing RouteMode = "replica_serving"
-	RouteModeLayerSplit     RouteMode = "layer_split"
-)
-
-const (
-	BackendIDLlamaLocal = "llama-local"
-)
+// ExecutionMode identifies how inference work is distributed.
+//
+// DataParallel means each participating node/engine owns a complete model replica.
+// A one-node full-model route is data_parallel with replica_count=1.
+//
+// PipelineParallel means transformer layers/stages are split across stages/nodes.
+// TensorParallel means tensor operations such as matmuls are split across devices/nodes.
+type ExecutionMode string
 
 const (
-	CapabilityMemoryGB     = "memory_gb"
-	CapabilityAccelerators = "accelerators"
-	CapabilityLayerWeight  = "layer_split_weight"
-	MetricTemperatureC     = "temperature_c"
+	ExecutionModeDataParallel     ExecutionMode = "data_parallel"
+	ExecutionModePipelineParallel ExecutionMode = "pipeline_parallel"
+	ExecutionModeTensorParallel   ExecutionMode = "tensor_parallel"
+)
+
+// DeviceClass identifies the physical platform family.
+type DeviceClass string
+
+const (
+	DeviceClassUnknown DeviceClass = "unknown"
+	DeviceClassJetson  DeviceClass = "jetson"
+	DeviceClassLinuxPC DeviceClass = "linux_pc"
+	DeviceClassMac     DeviceClass = "mac"
+)
+
+// ComputeBackend identifies available local compute APIs/backends.
+type ComputeBackend string
+
+const (
+	ComputeBackendCPU  ComputeBackend = "cpu"
+	ComputeBackendCUDA ComputeBackend = "cuda"
 )
 
 const (
-	AcceleratorJetson = "jetson"
-	AcceleratorCUDA   = "cuda"
+	DefaultEngineInstanceID = "default"
 )
+
+const (
+	CapabilityMemoryGB        = "memory_gb"
+	CapabilityDeviceClass     = "device_class"
+	CapabilityComputeBackends = "compute_backends"
+	CapabilityPipelineWeight  = "pipeline_weight"
+
+	MetricTemperatureC = "temperature_c"
+)
+
+// EngineEndpoint is the agent-advertised endpoint for a local engine.
+//
+// BaseURL should usually be the agent URL, not the raw local engine URL,
+// because control routes requests through the agent proxy.
+type EngineEndpoint struct {
+	InstanceID       string   `json:"instance_id,omitempty"`
+	Engine           Engine   `json:"engine"`
+	BaseURL          string   `json:"base_url"`
+	Models           []string `json:"models,omitempty"`
+	OpenAICompatible bool     `json:"openai_compatible"`
+}
 
 type NodeRecord struct {
 	NodeName     string           `json:"node_name"`
@@ -41,7 +76,7 @@ type NodeRecord struct {
 	OS           string           `json:"os"`
 	Capabilities map[string]any   `json:"capabilities"`
 	Metrics      map[string]any   `json:"metrics"`
-	Backends     []RuntimeBackend `json:"backends,omitempty"`
+	Engines      []EngineEndpoint `json:"engines,omitempty"`
 	LastSeen     time.Time        `json:"last_seen"`
 }
 
@@ -52,23 +87,15 @@ type HeartbeatRequest struct {
 	OS           string           `json:"os"`
 	Capabilities map[string]any   `json:"capabilities"`
 	Metrics      map[string]any   `json:"metrics"`
-	Backends     []RuntimeBackend `json:"backends,omitempty"`
-}
-
-type RuntimeBackend struct {
-	ID               string      `json:"id"`
-	Kind             RuntimeKind `json:"kind"`
-	BaseURL          string      `json:"base_url"`
-	Models           []string    `json:"models,omitempty"`
-	OpenAICompatible bool        `json:"openai_compatible"`
+	Engines      []EngineEndpoint `json:"engines,omitempty"`
 }
 
 type ModelProfile struct {
-	ID                   string      `json:"id"`
-	Family               string      `json:"family"`
-	Runtime              RuntimeKind `json:"runtime"`
-	LayerCount           int         `json:"layer_count,omitempty"`
-	MinMemoryGB          float64     `json:"min_memory_gb"`
-	PreferredAccelerator *string     `json:"preferred_accelerator"`
-	PlacementModes       []RouteMode `json:"placement_modes"`
+	ID               string          `json:"id"`
+	Family           string          `json:"family"`
+	SupportedEngines []Engine        `json:"supported_engines,omitempty"`
+	LayerCount       int             `json:"layer_count,omitempty"`
+	MinMemoryGB      float64         `json:"min_memory_gb"`
+	PreferredCompute *ComputeBackend `json:"preferred_compute,omitempty"`
+	PlacementModes   []ExecutionMode `json:"placement_modes"`
 }

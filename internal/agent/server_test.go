@@ -43,7 +43,7 @@ func TestServerProxiesChatCompletionsToRuntimeBackend(t *testing.T) {
 			},
 			Usage: &chat.Usage{CompletionTokens: 3, TotalTokens: 8},
 			Route: &chat.RouteMetadata{
-				Mode:      cluster.RouteModeSingleNode,
+				Mode:      cluster.ExecutionModeDataParallel,
 				NodeName:  "runtime-should-not-set-control-route",
 				LatencyMS: 1,
 			},

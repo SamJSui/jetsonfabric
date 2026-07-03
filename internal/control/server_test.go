@@ -64,16 +64,16 @@ func TestChatCompletionsRoutesToSingleNodeBackend(t *testing.T) {
 		Arch:     "arm64",
 		OS:       "linux",
 		Capabilities: map[string]any{
-			cluster.CapabilityMemoryGB:     8.0,
-			cluster.CapabilityAccelerators: []any{cluster.AcceleratorJetson, cluster.AcceleratorCUDA},
+			cluster.CapabilityMemoryGB:        8.0,
+			cluster.CapabilityComputeBackends: []any{cluster.ComputeBackendCPU, cluster.ComputeBackendCUDA},
 		},
 		Metrics: map[string]any{
 			cluster.MetricTemperatureC: 42.5,
 		},
-		Backends: []cluster.RuntimeBackend{
+		Engines: []cluster.EngineEndpoint{
 			{
-				ID:               cluster.BackendIDLlamaLocal,
-				Kind:             cluster.RuntimeKindLlamaCPP,
+				InstanceID:       cluster.Llm,
+				Engine:           cluster.EngineLlamaCPP,
 				BaseURL:          backend.URL,
 				Models:           []string{"qwen2.5-coder-1.5b-q4"},
 				OpenAICompatible: true,

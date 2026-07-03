@@ -65,7 +65,7 @@ func mustPlan(t *testing.T, layerCount int, candidates []NodeCandidate) Plan {
 	if err != nil {
 		t.Fatalf("plan layer split: %v", err)
 	}
-	if plan.Mode != cluster.RouteModeLayerSplit {
+	if plan.Mode != cluster.ExecutionModePipelineParallel {
 		t.Fatalf("unexpected mode: %s", plan.Mode)
 	}
 	return plan
