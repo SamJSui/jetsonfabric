@@ -50,113 +50,104 @@ Distributed runtime phases:
   fabric work.
 - [docs/engineering-standards.md](docs/engineering-standards.md) captures the
   required implementation quality bar.
-- [docs/desktop-multi-agent.md](docs/desktop-multi-agent.md) captures the local
-  multi-agent simulation and benchmark workflow.
 
-## Quick Start
+## Quick Start - Real Jetson POC
 
-Download the local desktop smoke assets:
+The current target node is `dopey`. The POC path is:
 
-```sh
-sh scripts/download-poc-desktop-model.sh
+```text
+control plane on dev machine or Beelink
+  -> JetsonFabric agent on dopey
+  -> agent proxy on dopey
+  -> local OpenAI-compatible model backend on dopey
+  -> benchmark JSONL on the control machine
 ```
 
-Download any configured model artifact by ID:
+### 1. Build
+
+From the repo root on the development machine:
 
 ```sh
-sh scripts/download-model-artifact.sh --model-id qwen2.5-coder-3b-q4
+sh scripts/build.sh
 ```
 
-Start the local llama.cpp backend:
+This builds Linux development binaries and Linux arm64 binaries for Jetson.
+
+### 2. Check dopey
+
+Verify the Jetson is reachable and has the expected hardware/runtime basics:
 
 ```sh
-sh scripts/run-local-llama.sh --background
+sh scripts/check-jetson-node.sh --host dopey --expected-hostname dopey
 ```
 
-Start the control plane from WSL/Linux:
+### 3. Start the control plane
+
+Run the control plane on the development machine or Beelink. Listen on all
+interfaces so `dopey` can reach it over the LAN:
 
 ```sh
-sh scripts/run-control.sh --background
+sh scripts/run-control.sh --listen 0.0.0.0:52415 --background
 ```
 
-Start a local test agent:
+Use the development machine or Beelink LAN IP as the control URL from the Jetson,
+not `127.0.0.1`.
+
+### 4. Deploy the agent to dopey
 
 ```sh
-sh scripts/run-agent.sh \
-  --node-name dev-node \
-  --advertise-url http://127.0.0.1:52416 \
+sh scripts/deploy-agent.sh \
+  --host dopey \
+  --control-url http://<control-host-ip>:52415 \
+  --smoke-test
+```
+
+The smoke test sends a one-shot heartbeat. It proves the agent binary runs on
+`dopey` and can register with the control plane. It does not prove model serving
+yet.
+
+### 5. Start a model backend on dopey
+
+Start a real OpenAI-compatible backend on `dopey`, such as `llama-server`, bound
+to `127.0.0.1:8080` on the Jetson.
+
+For the POC, prefer a small quantized GGUF model such as
+`qwen2.5-coder-1.5b-q4`.
+
+### 6. Start the long-running agent proxy on dopey
+
+Run the agent in proxy mode so the control plane can route requests through the
+agent to the node-local model backend:
+
+```sh
+ssh dopey '/usr/local/bin/jetsonfabric-agent \
+  --control-url http://<control-host-ip>:52415 \
+  --join-token dev-token \
+  --node-name dopey \
+  --listen 0.0.0.0:52416 \
+  --advertise-url http://dopey.local:52416 \
   --llama-url http://127.0.0.1:8080 \
-  --model qwen2.5-coder-1.5b-q4 \
-  --background
+  --model qwen2.5-coder-1.5b-q4'
 ```
 
-Inspect cluster state:
+### 7. Run the POC smoke test
+
+From the control/development machine:
 
 ```sh
-curl -sS http://127.0.0.1:52416/healthz
-curl -sS http://127.0.0.1:52415/healthz
-curl -sS http://127.0.0.1:52415/v1/nodes
-curl -sS "http://127.0.0.1:52415/v1/routes/preview?model=qwen2.5-coder-1.5b-q4"
+sh scripts/poc-dopey-smoke.sh \
+  --control-url http://127.0.0.1:52415
 ```
 
-Send one prompt through JetsonFabric to the agent-proxied local model backend:
+The smoke test verifies control health, agent health, `dopey` registration,
+route preview validity, chat completion output, route metadata, and benchmark
+JSONL presence.
 
-```sh
-curl -sS -X POST http://127.0.0.1:52415/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  --data-binary @examples/poc-local-smoke/chat-request.json
-```
+## Agent Container
 
-The local POC request path is shown in
-[docs/poc-local-smoke-sequence.svg](docs/poc-local-smoke-sequence.svg).
-
-### Desktop Multi-Agent Simulation
-
-Before the Jetson arrives, run multiple desktop agents against the same local
-llama.cpp backend:
-
-```sh
-sh scripts/run-desktop-agents.sh --count 3
-```
-
-Inspect the generated layer-split plan:
-
-```sh
-curl -sS "http://127.0.0.1:52415/v1/layer-split/plan?model=qwen2.5-coder-1.5b-q4"
-```
-
-Run a synthetic layer-split prompt through all planned agents:
-
-```sh
-curl -sS -X POST http://127.0.0.1:52415/v1/layer-split/completions \
-  -H 'Content-Type: application/json' \
-  --data-binary @examples/poc-local-smoke/chat-request.json
-```
-
-This tests discovery, heartbeat registration, agent proxying, route planning,
-stage transport, and benchmark recording. It does not execute real distributed
-transformer layers yet; all desktop simulation agents can point at the same
-local model runtime.
-
-Run a repeatable desktop chat benchmark through the control plane:
-
-```sh
-sh scripts/bench-desktop-chat.sh --count 5 --concurrency 1
-```
-
-The control plane appends request records to `data/benchmarks.jsonl`, and the
-benchmark command writes a client-side summary to
-`data/desktop-chat-benchmark.json`.
-
-Stop the desktop simulation agents:
-
-```sh
-sh scripts/stop-desktop-agents.sh --count 3
-```
-
-### Agent Container
-
-The agent can be built as a small container image:
+The agent can be built as a small container image, but the preferred POC deploy
+path is the native Go binary under host/systemd control. Containerizing the agent
+can be revisited after the host telemetry and runtime-management path is stable.
 
 ```sh
 docker build -f Dockerfile.agent -t jetsonfabric-agent:dev .
@@ -170,8 +161,8 @@ docker buildx build --platform linux/arm64 -f Dockerfile.agent -t jetsonfabric-a
 
 ## Expanding To More Jetsons
 
-Yes: eventually a new Jetson should be added by installing the agent and giving it
-the control-plane URL plus a join token.
+Eventually a new Jetson should be added by installing the agent and giving it the
+control-plane URL plus a join token.
 
 Expected join flow:
 
@@ -179,7 +170,7 @@ Expected join flow:
 ./jetsonfabric-agent \
   --control-url http://beelink:52415 \
   --join-token <token> \
-  --node-name jetson-02
+  --node-name sleepy
 ```
 
 The control plane should then discover its hardware profile, runtime capabilities,
