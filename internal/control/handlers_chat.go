@@ -34,7 +34,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	node, engine, err := s.selectDataParallelEngine(model)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, errorNoSingleNodeRoute, err.Error())
+		writeError(w, http.StatusServiceUnavailable, errorNoDataParallelRoute, err.Error())
 		return
 	}
 

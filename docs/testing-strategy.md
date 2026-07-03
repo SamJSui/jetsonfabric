@@ -43,7 +43,7 @@ Test config parsing:
 - missing model ID
 - missing runtime
 - invalid source URL
-- layer_split model without enough layers
+- pipeline_parallel model without enough layers
 - artifact lookup by model ID
 
 ### `internal/runtimeclient`

@@ -330,7 +330,7 @@ func TestLayerSplitPlanRequiresTwoCandidates(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected status 503, got %d: %s", response.Code, response.Body.String())
 	}
-	assertErrorCode(t, response, errorNoLayerSplitRoute)
+	assertErrorCode(t, response, errorNoPipelineParallelRoute)
 }
 
 func TestLayerSplitCompletionsRunsAllStages(t *testing.T) {
@@ -368,7 +368,7 @@ func TestLayerSplitCompletionsRunsAllStages(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 	choice := firstChoice(t, decoded)
-	expected := "synthetic layer_split response: Say hello from both agents. -> desktop-agent-1[0:14] -> desktop-agent-2[14:28]"
+	expected := "synthetic pipeline_parallel response: Say hello from both agents. -> desktop-agent-1[0:14] -> desktop-agent-2[14:28]"
 	if choice.Message.Content != expected {
 		t.Fatalf("unexpected content: %s", choice.Message.Content)
 	}
@@ -407,7 +407,7 @@ func TestChatCompletionsRejectsMissingBackend(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected status 503, got %d: %s", response.Code, response.Body.String())
 	}
-	assertErrorCode(t, response, errorNoSingleNodeRoute)
+	assertErrorCode(t, response, errorNoDataParallelRoute)
 }
 
 func TestChatCompletionsRejectsUnknownModel(t *testing.T) {

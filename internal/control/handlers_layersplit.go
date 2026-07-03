@@ -26,14 +26,14 @@ func (s *Server) handleLayerSplitPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !slices.Contains(model.PlacementModes, cluster.ExecutionModePipelineParallel) {
-		writeError(w, http.StatusBadRequest, errorLayerSplitUnsupported, fmt.Sprintf("model %q does not allow layer_split placement", model.ID))
+		writeError(w, http.StatusBadRequest, errorLayerSplitUnsupported, fmt.Sprintf("model %q does not allow pipeline_parallel placement", model.ID))
 		return
 	}
 
 	candidates := s.layerSplitCandidates(model)
 	plan, err := layersplit.PlanForModel(model, candidates)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, errorNoLayerSplitRoute, err.Error())
+		writeError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, plan)
@@ -62,14 +62,14 @@ func (s *Server) handleLayerSplitCompletions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if !slices.Contains(model.PlacementModes, cluster.ExecutionModePipelineParallel) {
-		writeError(w, http.StatusBadRequest, errorLayerSplitUnsupported, fmt.Sprintf("model %q does not allow layer_split placement", model.ID))
+		writeError(w, http.StatusBadRequest, errorLayerSplitUnsupported, fmt.Sprintf("model %q does not allow pipeline_parallel placement", model.ID))
 		return
 	}
 
 	candidates := s.layerSplitCandidates(model)
 	plan, err := layersplit.PlanForModel(model, candidates)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, errorNoLayerSplitRoute, err.Error())
+		writeError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, err.Error())
 		return
 	}
 
@@ -91,7 +91,7 @@ func (s *Server) handleLayerSplitCompletions(w http.ResponseWriter, r *http.Requ
 			Stage:    stage,
 		}, stageReq)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, errorLayerSplitStageFailed, err.Error())
+			writeError(w, http.StatusBadGateway, errorPipelineStageFailed, err.Error())
 			return
 		}
 		stageResponses = append(stageResponses, resp)
@@ -99,7 +99,7 @@ func (s *Server) handleLayerSplitCompletions(w http.ResponseWriter, r *http.Requ
 	}
 
 	latency := time.Since(start)
-	content := fmt.Sprintf("synthetic layer_split response: %s", payload)
+	content := fmt.Sprintf("synthetic pipeline_parallel response: %s", payload)
 	outputTokens := len(strings.Fields(content))
 	resp := chat.CompletionResponse{
 		ID:      requestID,
