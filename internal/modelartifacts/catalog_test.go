@@ -15,7 +15,7 @@ func TestLoadValidatesAndFindsArtifacts(t *testing.T) {
   "artifacts": [
     {
       "model_id": "qwen2.5-coder-1.5b-q4",
-      "runtime": "llama.cpp",
+      "engine": "llama.cpp",
       "source_url": "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
       "local_path": ".cache/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
     }
@@ -30,8 +30,8 @@ func TestLoadValidatesAndFindsArtifacts(t *testing.T) {
 	if !ok {
 		t.Fatal("expected artifact")
 	}
-	if artifact.Runtime != cluster.RuntimeKindLlamaCPP {
-		t.Fatalf("unexpected runtime: %s", artifact.Runtime)
+	if artifact.Engine != cluster.EngineLlamaCPP {
+		t.Fatalf("unexpected engine: %s", artifact.Engine)
 	}
 	if artifact.LocalPath != ".cache/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" {
 		t.Fatalf("unexpected local path: %s", artifact.LocalPath)
@@ -43,7 +43,7 @@ func TestLoadRejectsInvalidSourceURL(t *testing.T) {
   "artifacts": [
     {
       "model_id": "qwen2.5-coder-1.5b-q4",
-      "runtime": "llama.cpp",
+      "engine": "llama.cpp",
       "source_url": "not-a-url",
       "local_path": ".cache/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
     }

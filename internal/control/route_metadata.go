@@ -28,21 +28,21 @@ func (s *Server) layerSplitRouteMetadata(plan layersplit.Plan, responses []layer
 		bytesIn += response.BytesIn
 		bytesOut += response.BytesOut
 		stages = append(stages, chat.RouteStage{
-			Index:       response.StageIndex,
-			NodeName:    response.NodeName,
-			BackendID:   planStage.BackendID,
-			BackendKind: planStage.BackendKind,
-			Role:        string(response.Role),
-			LayerStart:  response.LayerStart,
-			LayerEnd:    response.LayerEnd,
-			Transport:   response.Transport,
-			LatencyMS:   response.LatencyMS,
-			BytesIn:     response.BytesIn,
-			BytesOut:    response.BytesOut,
+			Index:            response.StageIndex,
+			NodeName:         response.NodeName,
+			EngineInstanceID: planStage.EngineInstanceID,
+			Engine:           planStage.Engine,
+			Role:             string(response.Role),
+			LayerStart:       response.LayerStart,
+			LayerEnd:         response.LayerEnd,
+			Transport:        response.Transport,
+			LatencyMS:        response.LatencyMS,
+			BytesIn:          response.BytesIn,
+			BytesOut:         response.BytesOut,
 		})
 	}
 	metadata := &chat.RouteMetadata{
-		Mode:      cluster.RouteModeLayerSplit,
+		Mode:      cluster.ExecutionModePipelineParallel,
 		LatencyMS: latency.Milliseconds(),
 		Stages:    stages,
 		BytesIn:   bytesIn,
@@ -50,8 +50,8 @@ func (s *Server) layerSplitRouteMetadata(plan layersplit.Plan, responses []layer
 	}
 	if len(plan.Stages) > 0 {
 		metadata.NodeName = plan.Stages[0].NodeName
-		metadata.BackendID = plan.Stages[0].BackendID
-		metadata.BackendKind = plan.Stages[0].BackendKind
+		metadata.Engine = plan.Stages[0].Engine
+		metadata.EngineInstanceID = plan.Stages[0].EngineInstanceID
 	}
 	return metadata
 }

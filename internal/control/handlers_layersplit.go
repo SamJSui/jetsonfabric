@@ -25,15 +25,15 @@ func (s *Server) handleLayerSplitPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errorUnknownModel, fmt.Sprintf("model %q is not in the registry", modelID))
 		return
 	}
-	if !slices.Contains(model.PlacementModes, cluster.RouteModeLayerSplit) {
-		writeError(w, http.StatusBadRequest, errorLayerSplitUnsupported, fmt.Sprintf("model %q does not allow layer_split placement", model.ID))
+	if !slices.Contains(model.PlacementModes, cluster.ExecutionModePipelineParallel) {
+		writeError(w, http.StatusBadRequest, errorLayerSplitUnsupported, fmt.Sprintf("model %q does not allow pipeline_parallel placement", model.ID))
 		return
 	}
 
 	candidates := s.layerSplitCandidates(model)
 	plan, err := layersplit.PlanForModel(model, candidates)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, errorNoLayerSplitRoute, err.Error())
+		writeError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, plan)
@@ -61,15 +61,15 @@ func (s *Server) handleLayerSplitCompletions(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, errorUnknownModel, fmt.Sprintf("model %q is not in the registry", req.Model))
 		return
 	}
-	if !slices.Contains(model.PlacementModes, cluster.RouteModeLayerSplit) {
-		writeError(w, http.StatusBadRequest, errorLayerSplitUnsupported, fmt.Sprintf("model %q does not allow layer_split placement", model.ID))
+	if !slices.Contains(model.PlacementModes, cluster.ExecutionModePipelineParallel) {
+		writeError(w, http.StatusBadRequest, errorLayerSplitUnsupported, fmt.Sprintf("model %q does not allow pipeline_parallel placement", model.ID))
 		return
 	}
 
 	candidates := s.layerSplitCandidates(model)
 	plan, err := layersplit.PlanForModel(model, candidates)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, errorNoLayerSplitRoute, err.Error())
+		writeError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, err.Error())
 		return
 	}
 
@@ -91,7 +91,7 @@ func (s *Server) handleLayerSplitCompletions(w http.ResponseWriter, r *http.Requ
 			Stage:    stage,
 		}, stageReq)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, errorLayerSplitStageFailed, err.Error())
+			writeError(w, http.StatusBadGateway, errorPipelineStageFailed, err.Error())
 			return
 		}
 		stageResponses = append(stageResponses, resp)
@@ -99,7 +99,7 @@ func (s *Server) handleLayerSplitCompletions(w http.ResponseWriter, r *http.Requ
 	}
 
 	latency := time.Since(start)
-	content := fmt.Sprintf("synthetic layer_split response: %s", payload)
+	content := fmt.Sprintf("synthetic pipeline_parallel response: %s", payload)
 	outputTokens := len(strings.Fields(content))
 	resp := chat.CompletionResponse{
 		ID:      requestID,
@@ -124,14 +124,14 @@ func (s *Server) handleLayerSplitCompletions(w http.ResponseWriter, r *http.Requ
 		Route: s.layerSplitRouteMetadata(plan, stageResponses, latency),
 	}
 	if err := s.benchmarkRecorder.Record(r.Context(), benchmarks.Record{
-		Timestamp:    s.now(),
-		ModelID:      model.ID,
-		NodeName:     strings.Join(stageNodeNames(stageResponses), ","),
-		RouteMode:    cluster.RouteModeLayerSplit,
-		BackendID:    "layer-split",
-		BackendKind:  cluster.RuntimeKindLlamaCPP,
-		LatencyMS:    latency.Milliseconds(),
-		OutputTokens: outputTokens,
+		Timestamp:        s.now(),
+		ModelID:          model.ID,
+		NodeName:         strings.Join(stageNodeNames(stageResponses), ","),
+		ExecutionMode:    cluster.ExecutionModePipelineParallel,
+		Engine:           cluster.EngineJetsonFabric,
+		EngineInstanceID: cluster.DefaultEngineInstanceID,
+		LatencyMS:        latency.Milliseconds(),
+		OutputTokens:     outputTokens,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, errorBenchmarkRecordFailed, err.Error())
 		return

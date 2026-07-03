@@ -14,11 +14,11 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/runtimeclient"
 )
 
-func defaultBackendFactory(backend cluster.RuntimeBackend) (runtimeclient.ChatBackend, error) {
-	return runtimeclient.NewOpenAIClient(backend.BaseURL, 60*time.Second)
+func defaultEngineFactory(engine cluster.EngineEndpoint) (runtimeclient.ChatBackend, error) {
+	return runtimeclient.NewOpenAIClient(engine.BaseURL, 60*time.Second)
 }
 
-func (s *Server) selectSingleNodeBackend(model cluster.ModelProfile) (cluster.NodeRecord, cluster.RuntimeBackend, error) {
+func (s *Server) selectDataParallelEngine(model cluster.ModelProfile) (cluster.NodeRecord, cluster.EngineEndpoint, error) {
 	s.mu.RLock()
 	nodes := make([]cluster.NodeRecord, 0, len(s.nodes))
 	for _, node := range s.nodes {
@@ -37,16 +37,16 @@ func (s *Server) selectSingleNodeBackend(model cluster.ModelProfile) (cluster.No
 		if !placement.Valid {
 			continue
 		}
-		for _, backend := range node.Backends {
-			if backendCompatible(model, backend) {
-				return node, backend, nil
+		for _, engine := range node.Engines {
+			if engineCompatible(model, engine) {
+				return node, engine, nil
 			}
 		}
 	}
 	if len(nodes) == 0 {
-		return cluster.NodeRecord{}, cluster.RuntimeBackend{}, fmt.Errorf("no online nodes")
+		return cluster.NodeRecord{}, cluster.EngineEndpoint{}, fmt.Errorf("no online nodes")
 	}
-	return cluster.NodeRecord{}, cluster.RuntimeBackend{}, fmt.Errorf("no compatible backend for model %q", model.ID)
+	return cluster.NodeRecord{}, cluster.EngineEndpoint{}, fmt.Errorf("no compatible backend for model %q", model.ID)
 }
 
 func (s *Server) layerSplitCandidates(model cluster.ModelProfile) []layersplit.NodeCandidate {
@@ -70,46 +70,54 @@ func (s *Server) layerSplitCandidates(model cluster.ModelProfile) []layersplit.N
 		if !placement.Valid {
 			continue
 		}
-		backend, ok := firstCompatibleBackend(model, node.Backends)
+		engine, ok := firstCompatibleEngine(model, node.Engines)
 		if !ok {
 			continue
 		}
 		candidates = append(candidates, layersplit.NodeCandidate{
-			NodeName:    node.NodeName,
-			BackendID:   backend.ID,
-			BackendKind: backend.Kind,
-			BaseURL:     backend.BaseURL,
-			Weight:      layerSplitWeight(node.Capabilities),
+			NodeName:         node.NodeName,
+			EngineInstanceID: engine.InstanceID,
+			Engine:           engine.Engine,
+			BaseURL:          engine.BaseURL,
+			Weight:           pipelineWeight(node.Capabilities),
 		})
 	}
 	return candidates
 }
 
-func firstCompatibleBackend(model cluster.ModelProfile, backends []cluster.RuntimeBackend) (cluster.RuntimeBackend, bool) {
-	for _, backend := range backends {
-		if backendCompatible(model, backend) {
-			return backend, true
+func firstCompatibleEngine(model cluster.ModelProfile, engines []cluster.EngineEndpoint) (cluster.EngineEndpoint, bool) {
+	for _, engine := range engines {
+		if engineCompatible(model, engine) {
+			return engine, true
 		}
 	}
-	return cluster.RuntimeBackend{}, false
+	return cluster.EngineEndpoint{}, false
 }
 
-func backendCompatible(model cluster.ModelProfile, backend cluster.RuntimeBackend) bool {
-	if strings.TrimSpace(backend.BaseURL) == "" {
+func engineCompatible(model cluster.ModelProfile, engine cluster.EngineEndpoint) bool {
+	if strings.TrimSpace(engine.BaseURL) == "" {
 		return false
 	}
-	if !backend.OpenAICompatible {
+	if !engine.OpenAICompatible {
 		return false
 	}
-	if len(backend.Models) > 0 {
-		for _, modelID := range backend.Models {
+	if len(engine.Models) > 0 {
+		for _, modelID := range engine.Models {
 			if modelID == model.ID {
 				return true
 			}
 		}
 		return false
 	}
-	return backend.Kind == model.Runtime
+	if len(model.SupportedEngines) == 0 {
+		return true
+	}
+	for _, supported := range model.SupportedEngines {
+		if supported == engine.Engine {
+			return true
+		}
+	}
+	return false
 }
 
 func optionalFloat(values map[string]any, key string) *float64 {
@@ -139,8 +147,8 @@ func optionalFloat(values map[string]any, key string) *float64 {
 	return &output
 }
 
-func layerSplitWeight(capabilities map[string]any) float64 {
-	value := optionalFloat(capabilities, cluster.CapabilityLayerWeight)
+func pipelineWeight(capabilities map[string]any) float64 {
+	value := optionalFloat(capabilities, cluster.CapabilityPipelineWeight)
 	if value == nil || *value <= 0 {
 		return 1
 	}

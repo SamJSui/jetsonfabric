@@ -14,11 +14,11 @@ type Catalog struct {
 }
 
 type Artifact struct {
-	ModelID        string              `json:"model_id"`
-	Runtime        cluster.RuntimeKind `json:"runtime"`
-	SourceURL      string              `json:"source_url"`
-	LocalPath      string              `json:"local_path"`
-	ExpectedSHA256 string              `json:"expected_sha256,omitempty"`
+	ModelID        string         `json:"model_id"`
+	Engine         cluster.Engine `json:"engine"`
+	SourceURL      string         `json:"source_url"`
+	LocalPath      string         `json:"local_path"`
+	ExpectedSHA256 string         `json:"expected_sha256,omitempty"`
 }
 
 func Load(path string) (Catalog, error) {
@@ -34,8 +34,8 @@ func Load(path string) (Catalog, error) {
 		if artifact.ModelID == "" {
 			return Catalog{}, fmt.Errorf("model artifact catalog contains an empty model id")
 		}
-		if artifact.Runtime == "" {
-			return Catalog{}, fmt.Errorf("model artifact %q contains an empty runtime", artifact.ModelID)
+		if artifact.Engine == "" {
+			return Catalog{}, fmt.Errorf("model artifact %q contains an empty engine", artifact.ModelID)
 		}
 		if artifact.SourceURL == "" {
 			return Catalog{}, fmt.Errorf("model artifact %q contains an empty source url", artifact.ModelID)

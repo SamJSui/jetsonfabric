@@ -1,0 +1,34 @@
+# syntax=docker/dockerfile:1.7
+
+FROM ubuntu:24.04 AS build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+COPY runtime ./runtime
+
+RUN cmake -S runtime -B /build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /build --parallel
+
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --system --uid 10001 --create-home jetsonfabric
+
+COPY --from=build /build/jetsonfabric-runtime-worker /usr/local/bin/jetsonfabric-runtime-worker
+
+USER jetsonfabric
+
+EXPOSE 9090
+
+ENTRYPOINT ["/usr/local/bin/jetsonfabric-runtime-worker"]
+CMD ["--listen", "0.0.0.0:9090", "--model", "qwen2.5-coder-1.5b-q4", "--mode", "single_node"]

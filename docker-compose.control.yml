@@ -1,0 +1,22 @@
+services:
+  control:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: control
+    image: jetsonfabric-control:local
+    command:
+      - --listen
+      - ${CONTROL_LISTEN:-0.0.0.0:52415}
+      - --join-token
+      - ${JOIN_TOKEN:-dev-token}
+      - --benchmarks
+      - ${BENCHMARKS_PATH:-/data/benchmarks.jsonl}
+      - --model-registry
+      - ${MODEL_REGISTRY_PATH:-/app/configs/models.example.json}
+    ports:
+      - "${CONTROL_PORT:-52415}:52415"
+    volumes:
+      - ./configs:/app/configs:ro
+      - ./data:/data
+    restart: unless-stopped

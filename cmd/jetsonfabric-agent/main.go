@@ -32,6 +32,8 @@ type agentConfig struct {
 	modelArtifactsPath string
 	interval           time.Duration
 	once               bool
+	engine             string
+	engineURL          string
 	llamaURL           string
 	model              string
 }
@@ -51,15 +53,21 @@ func run(args []string) error {
 		return err
 	}
 
-	if cfg.llamaURL != emptyString {
-		startProxyServer(cfg.listen, cfg.llamaURL, cfg.nodeName)
+	if cfg.engineURL != emptyString {
+		startProxyServer(cfg.listen, cfg.engineURL, cfg.nodeName)
 	}
 
 	if err := logModelArtifacts(cfg.modelArtifactsPath, cfg.model); err != nil {
 		return err
 	}
 
-	client := agent.NewClient(cfg.controlURL, cfg.joinToken, cfg.nodeName, advertisedBackends(cfg.advertiseURL, cfg.llamaURL, cfg.model))
+	client := agent.NewClient(
+		cfg.controlURL,
+		cfg.joinToken,
+		cfg.nodeName,
+		advertisedEngines(cfg.advertiseURL, cluster.Engine(cfg.engine), cfg.engineURL, cfg.model),
+	)
+
 	for {
 		if err := client.SendHeartbeat(); err != nil {
 			log.Printf("heartbeat failed: %v", err)
@@ -84,12 +92,14 @@ func parseAgentConfig(args []string) (agentConfig, error) {
 	fs.StringVar(&cfg.modelArtifactsPath, "model-artifacts", config.DefaultModelArtifactsPath(), "model artifact catalog JSON path")
 	fs.DurationVar(&cfg.interval, "interval", config.DefaultHeartbeatInterval, "heartbeat interval")
 	fs.BoolVar(&cfg.once, "once", false, "send one heartbeat and exit")
-	fs.StringVar(&cfg.llamaURL, "llama-url", emptyString, "base URL for a llama.cpp OpenAI-compatible server")
-	fs.StringVar(&cfg.model, "model", emptyString, "JetsonFabric model ID served by the llama backend")
+	fs.StringVar(&cfg.engine, "engine", emptyString, "engine kind: llama.cpp or jetsonfabric-runtime")
+	fs.StringVar(&cfg.engineURL, "engine-url", emptyString, "base URL for a local OpenAI-compatible engine")
+	fs.StringVar(&cfg.llamaURL, "llama-url", emptyString, "deprecated shortcut for --engine llama.cpp --engine-url URL")
+	fs.StringVar(&cfg.model, "model", emptyString, "JetsonFabric model ID served by the engine")
 	if err := fs.Parse(args); err != nil {
 		return agentConfig{}, err
 	}
-	return resolveAgentConfigDefaults(normalizeAgentConfig(cfg))
+	return resolveAgentConfigDefaults(resolveAgentConfigCompatibility(normalizeAgentConfig(cfg)))
 }
 
 func normalizeAgentConfig(cfg agentConfig) agentConfig {
@@ -99,8 +109,23 @@ func normalizeAgentConfig(cfg agentConfig) agentConfig {
 	cfg.listen = strings.TrimSpace(cfg.listen)
 	cfg.advertiseURL = strings.TrimSpace(cfg.advertiseURL)
 	cfg.modelArtifactsPath = strings.TrimSpace(cfg.modelArtifactsPath)
+	cfg.engine = strings.TrimSpace(cfg.engine)
+	cfg.engineURL = strings.TrimSpace(cfg.engineURL)
 	cfg.llamaURL = strings.TrimSpace(cfg.llamaURL)
 	cfg.model = strings.TrimSpace(cfg.model)
+	return cfg
+}
+
+func resolveAgentConfigCompatibility(cfg agentConfig) agentConfig {
+	if cfg.llamaURL == emptyString {
+		return cfg
+	}
+	if cfg.engine == emptyString {
+		cfg.engine = string(cluster.EngineLlamaCPP)
+	}
+	if cfg.engineURL == emptyString {
+		cfg.engineURL = cfg.llamaURL
+	}
 	return cfg
 }
 
@@ -129,27 +154,45 @@ func validateAgentConfig(cfg agentConfig) error {
 	if cfg.listen == emptyString {
 		return fmt.Errorf("--listen is required")
 	}
-	runtimeConfigured := cfg.llamaURL != emptyString
+
+	engineConfigured := cfg.engineURL != emptyString
 	modelConfigured := cfg.model != emptyString
-	if cfg.once && runtimeConfigured {
-		return fmt.Errorf("--once cannot be used with --llama-url because proxied runtimes require a running agent")
+
+	if cfg.once && engineConfigured {
+		return fmt.Errorf("--once cannot be used with --engine-url because proxied engines require a running agent")
 	}
-	if runtimeConfigured && !modelConfigured {
-		return fmt.Errorf("--model is required when --llama-url is set")
+	if engineConfigured && !modelConfigured {
+		return fmt.Errorf("--model is required when --engine-url is set")
 	}
-	if modelConfigured && !runtimeConfigured {
-		return fmt.Errorf("--llama-url is required when --model is set")
+	if modelConfigured && !engineConfigured {
+		return fmt.Errorf("--engine-url is required when --model is set")
 	}
-	if runtimeConfigured && cfg.advertiseURL == emptyString {
-		return fmt.Errorf("--advertise-url is required when --llama-url is set")
+	if engineConfigured && cfg.engine == emptyString {
+		return fmt.Errorf("--engine is required when --engine-url is set")
 	}
+	if engineConfigured && cfg.advertiseURL == emptyString {
+		return fmt.Errorf("--advertise-url is required when --engine-url is set")
+	}
+	if engineConfigured && !validEngine(cluster.Engine(cfg.engine)) {
+		return fmt.Errorf("unsupported --engine %q", cfg.engine)
+	}
+
 	return nil
+}
+
+func validEngine(engine cluster.Engine) bool {
+	switch engine {
+	case cluster.EngineLlamaCPP, cluster.EngineJetsonFabric:
+		return true
+	default:
+		return false
+	}
 }
 
 func startProxyServer(listen string, runtimeURL string, nodeName string) {
 	backend, err := runtimeclient.NewOpenAIClient(runtimeURL, defaultTimeout)
 	if err != nil {
-		log.Fatalf("configure llama runtime backend: %v", err)
+		log.Fatalf("configure runtime engine backend: %v", err)
 	}
 	server := &http.Server{
 		Addr:              listen,
@@ -205,17 +248,17 @@ func resolveModelArtifacts(path string, modelIDs []string) ([]modelartifacts.Art
 	return artifacts, nil
 }
 
-func advertisedBackends(agentURL string, llamaURL string, model string) []cluster.RuntimeBackend {
+func advertisedEngines(agentURL string, engine cluster.Engine, engineURL string, model string) []cluster.EngineEndpoint {
 	agentURL = strings.TrimSpace(agentURL)
-	llamaURL = strings.TrimSpace(llamaURL)
+	engineURL = strings.TrimSpace(engineURL)
 	modelIDs := advertisedModels(model)
-	if agentURL == emptyString || llamaURL == emptyString || len(modelIDs) == 0 {
+	if agentURL == emptyString || engineURL == emptyString || len(modelIDs) == 0 {
 		return nil
 	}
-	return []cluster.RuntimeBackend{
+	return []cluster.EngineEndpoint{
 		{
-			ID:               cluster.BackendIDLlamaLocal,
-			Kind:             cluster.RuntimeKindLlamaCPP,
+			InstanceID:       cluster.DefaultEngineInstanceID,
+			Engine:           engine,
 			BaseURL:          agentURL,
 			Models:           modelIDs,
 			OpenAICompatible: true,

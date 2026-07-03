@@ -24,7 +24,7 @@ correctness, observability, and measurement over generalized runtime flexibility
 
 - Control plane loads model metadata, including layer count.
 - Agents report runtime readiness and usable hardware facts.
-- Control plans a `layer_split` route with concrete layer ranges.
+- Control plans a `pipeline_parallel` route with concrete layer ranges.
 - A shard-capable runtime process runs on each participating node.
 - Runtime A sends activation tensors and metadata to Runtime B.
 - The final response returns through `/v1/chat/completions`.

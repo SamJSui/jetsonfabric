@@ -36,26 +36,26 @@ type Usage struct {
 }
 
 type RouteMetadata struct {
-	Mode        cluster.RouteMode   `json:"mode"`
-	NodeName    string              `json:"node_name"`
-	BackendID   string              `json:"backend_id"`
-	BackendKind cluster.RuntimeKind `json:"backend_kind"`
-	LatencyMS   int64               `json:"latency_ms"`
-	Stages      []RouteStage        `json:"stages,omitempty"`
-	BytesIn     int                 `json:"bytes_in,omitempty"`
-	BytesOut    int                 `json:"bytes_out,omitempty"`
+	Mode             cluster.ExecutionMode `json:"mode"`
+	NodeName         string                `json:"node_name"`
+	Engine           cluster.Engine        `json:"engine"`
+	EngineInstanceID string                `json:"engine_instance_id,omitempty"`
+	LatencyMS        int64                 `json:"latency_ms"`
+	Stages           []RouteStage          `json:"stages,omitempty"`
+	BytesIn          int                   `json:"bytes_in,omitempty"`
+	BytesOut         int                   `json:"bytes_out,omitempty"`
 }
 
 type RouteStage struct {
-	Index       int                 `json:"index"`
-	NodeName    string              `json:"node_name"`
-	BackendID   string              `json:"backend_id,omitempty"`
-	BackendKind cluster.RuntimeKind `json:"backend_kind,omitempty"`
-	Role        string              `json:"role"`
-	LayerStart  int                 `json:"layer_start"`
-	LayerEnd    int                 `json:"layer_end"`
-	Transport   string              `json:"transport"`
-	LatencyMS   int64               `json:"latency_ms"`
-	BytesIn     int                 `json:"bytes_in"`
-	BytesOut    int                 `json:"bytes_out"`
+	Index            int            `json:"index"`
+	NodeName         string         `json:"node_name"`
+	Engine           cluster.Engine `json:"engine,omitempty"`
+	EngineInstanceID string         `json:"engine_instance_id,omitempty"`
+	Role             string         `json:"role"`
+	LayerStart       int            `json:"layer_start"`
+	LayerEnd         int            `json:"layer_end"`
+	Transport        string         `json:"transport"`
+	LatencyMS        int64          `json:"latency_ms"`
+	BytesIn          int            `json:"bytes_in"`
+	BytesOut         int            `json:"bytes_out"`
 }

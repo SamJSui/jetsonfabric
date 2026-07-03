@@ -59,7 +59,7 @@ Goal: make the first real distributed inference path work.
 - Keep replica_serving as a baseline/control, not the main novelty.
 - Start with ordinary TCP over the built-in network before buying faster
   transport hardware.
-- Compare POC single-replica serving, replica_serving, and layer_split routes on
+- Compare POC single-replica serving, replica_serving, and pipeline_parallel routes on
   the same prompt sets.
 
 P0/MVP is complete when JetsonFabric returns a real model response from a

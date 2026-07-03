@@ -26,8 +26,8 @@ func Load(path string) (Registry, error) {
 		if model.ID == "" {
 			return Registry{}, fmt.Errorf("model registry contains an empty model id")
 		}
-		if slices.Contains(model.PlacementModes, cluster.RouteModeLayerSplit) && model.LayerCount < 2 {
-			return Registry{}, fmt.Errorf("model %s advertises layer_split without at least two layers", model.ID)
+		if slices.Contains(model.PlacementModes, cluster.ExecutionModePipelineParallel) && model.LayerCount < 2 {
+			return Registry{}, fmt.Errorf("model %s advertises pipeline_parallel without at least two layers", model.ID)
 		}
 	}
 	return registry, nil

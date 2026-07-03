@@ -1,0 +1,83 @@
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: agent
+    image: jetsonfabric-agent:local
+    command:
+      - --control-url
+      - ${CONTROL_URL}
+      - --join-token
+      - ${JOIN_TOKEN:-dev-token}
+      - --node-name
+      - ${NODE_NAME}
+      - --listen
+      - ${AGENT_LISTEN:-0.0.0.0:52416}
+      - --advertise-url
+      - ${ADVERTISE_URL}
+      - --engine
+      - ${ENGINE}
+      - --engine-url
+      - http://engine:9090
+      - --model
+      - ${MODEL}
+    ports:
+      - "${AGENT_PORT:-52416}:52416"
+    environment:
+      JETSONFABRIC_PROC_ROOT: /host/proc
+      JETSONFABRIC_SYS_ROOT: /host/sys
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /etc/nv_tegra_release:/host/etc/nv_tegra_release:ro
+    restart: unless-stopped
+
+  engine-runtime:
+    profiles:
+      - runtime
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: jetsonfabric-runtime:local
+    command:
+      - --listen
+      - 0.0.0.0:9090
+      - --model
+      - ${MODEL}
+      - --mode
+      - ${RUNTIME_MODE:-single_node}
+    ports:
+      - "${ENGINE_PORT:-9090}:9090"
+    volumes:
+      - ${MODEL_DIR:-/var/lib/jetsonfabric/models}:/models:ro
+      - ${PLAN_DIR:-/var/lib/jetsonfabric/plans}:/plans:ro
+    networks:
+      default:
+        aliases:
+          - engine
+    restart: unless-stopped
+
+  engine-llama:
+    profiles:
+      - llama
+    image: ${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
+    command:
+      - -m
+      - /models/${MODEL_FILE}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9090"
+      - --ctx-size
+      - ${CTX_SIZE:-4096}
+    ports:
+      - "${ENGINE_PORT:-9090}:9090"
+    volumes:
+      - ${MODEL_DIR:-/var/lib/jetsonfabric/models}:/models:ro
+    networks:
+      default:
+        aliases:
+          - engine
+    restart: unless-stopped

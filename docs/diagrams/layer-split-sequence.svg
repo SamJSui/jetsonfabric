@@ -49,7 +49,7 @@
   <text class="text" x="128" y="222">POST /v1/chat/completions</text>
 
   <path class="arrow" d="M300 285 C250 285 250 325 300 325"/>
-  <text class="text" x="322" y="310">plan layer_split route</text>
+  <text class="text" x="322" y="310">plan pipeline_parallel route</text>
 
   <path class="arrow" d="M300 370 H525"/>
   <text class="text" x="354" y="362">start route on first stage</text>

@@ -17,31 +17,31 @@ const (
 )
 
 type NodeCandidate struct {
-	NodeName    string              `json:"node_name"`
-	BackendID   string              `json:"backend_id,omitempty"`
-	BackendKind cluster.RuntimeKind `json:"backend_kind,omitempty"`
-	BaseURL     string              `json:"-"`
-	Weight      float64             `json:"weight"`
+	NodeName         string         `json:"node_name"`
+	EngineInstanceID string         `json:"engine_instance_id,omitempty"`
+	Engine           cluster.Engine `json:"engine,omitempty"`
+	BaseURL          string         `json:"-"`
+	Weight           float64        `json:"weight"`
 }
 
 type Plan struct {
-	ModelID    string            `json:"model_id"`
-	Mode       cluster.RouteMode `json:"mode"`
-	LayerCount int               `json:"layer_count"`
-	Stages     []Stage           `json:"stages"`
+	ModelID    string                `json:"model_id"`
+	Mode       cluster.ExecutionMode `json:"mode"`
+	LayerCount int                   `json:"layer_count"`
+	Stages     []Stage               `json:"stages"`
 }
 
 type Stage struct {
-	Index       int                 `json:"index"`
-	NodeName    string              `json:"node_name"`
-	BackendID   string              `json:"backend_id,omitempty"`
-	BackendKind cluster.RuntimeKind `json:"backend_kind,omitempty"`
-	BaseURL     string              `json:"-"`
-	Role        StageRole           `json:"role"`
-	LayerStart  int                 `json:"layer_start"`
-	LayerEnd    int                 `json:"layer_end"`
-	LayerCount  int                 `json:"layer_count"`
-	Weight      float64             `json:"weight"`
+	Index            int            `json:"index"`
+	NodeName         string         `json:"node_name"`
+	EngineInstanceID string         `json:"engine_instance_id,omitempty"`
+	Engine           cluster.Engine `json:"engine,omitempty"`
+	BaseURL          string         `json:"-"`
+	Role             StageRole      `json:"role"`
+	LayerStart       int            `json:"layer_start"`
+	LayerEnd         int            `json:"layer_end"`
+	LayerCount       int            `json:"layer_count"`
+	Weight           float64        `json:"weight"`
 }
 
 func PlanForModel(model cluster.ModelProfile, candidates []NodeCandidate) (Plan, error) {
@@ -70,23 +70,23 @@ func PlanForCandidates(modelID string, layerCount int, candidates []NodeCandidat
 		count := counts[index]
 		end := start + count
 		stages = append(stages, Stage{
-			Index:       index,
-			NodeName:    candidate.NodeName,
-			BackendID:   candidate.BackendID,
-			BackendKind: candidate.BackendKind,
-			BaseURL:     candidate.BaseURL,
-			Role:        stageRole(index, stageCount),
-			LayerStart:  start,
-			LayerEnd:    end,
-			LayerCount:  count,
-			Weight:      candidate.Weight,
+			Index:            index,
+			NodeName:         candidate.NodeName,
+			EngineInstanceID: candidate.EngineInstanceID,
+			Engine:           candidate.Engine,
+			BaseURL:          candidate.BaseURL,
+			Role:             stageRole(index, stageCount),
+			LayerStart:       start,
+			LayerEnd:         end,
+			LayerCount:       count,
+			Weight:           candidate.Weight,
 		})
 		start = end
 	}
 
 	return Plan{
 		ModelID:    modelID,
-		Mode:       cluster.RouteModeLayerSplit,
+		Mode:       cluster.ExecutionModePipelineParallel,
 		LayerCount: layerCount,
 		Stages:     stages,
 	}, nil

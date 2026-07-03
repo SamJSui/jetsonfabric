@@ -41,7 +41,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		OS:           fallback(heartbeat.OS, "unknown"),
 		Capabilities: fallbackMap(heartbeat.Capabilities),
 		Metrics:      fallbackMap(heartbeat.Metrics),
-		Backends:     heartbeat.Backends,
+		Engines:      heartbeat.Engines,
 		LastSeen:     s.now(),
 	}
 	s.mu.Lock()
