@@ -20,6 +20,10 @@ runtime/build/
 .tmp/
 tmp/
 
+.env
+.env.*
+!.env.example
+
 data/
 artifacts/
 reports/
