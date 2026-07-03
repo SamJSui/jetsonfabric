@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -165,11 +166,16 @@ func startProxyServer(listen string, runtimeURL string, nodeName string) {
 
 func logModelArtifacts(path string, model string) error {
 	modelIDs := advertisedModels(model)
-	if strings.TrimSpace(path) == emptyString || len(modelIDs) == 0 {
+	path = strings.TrimSpace(path)
+	if path == emptyString || len(modelIDs) == 0 {
 		return nil
 	}
 	artifacts, err := resolveModelArtifacts(path, modelIDs)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			log.Printf("model artifact catalog %s not found; continuing without artifact metadata", path)
+			return nil
+		}
 		return err
 	}
 	for _, artifact := range artifacts {
