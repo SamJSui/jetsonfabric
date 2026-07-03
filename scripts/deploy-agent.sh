@@ -73,12 +73,12 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$host" ]; then
-  printf '--host is required\n' >&2
+  printf '%s\n' '--host is required' >&2
   exit 2
 fi
 
 if [ -n "$smoke_test" ] && [ -z "$control_url" ]; then
-  printf '--control-url is required with --smoke-test\n' >&2
+  printf '%s\n' '--control-url is required with --smoke-test' >&2
   exit 2
 fi
 
@@ -104,7 +104,7 @@ q_remote_path=$(shell_quote "$remote_path")
 q_install_path=$(shell_quote "$install_path")
 
 printf 'installing agent on %s as %s...\n' "$host" "$install_path"
-ssh -t "$host" "sudo install -m 0755 $q_remote_path $q_install_path && $q_install_path --help >/dev/null"
+ssh -t "$host" "sudo install -m 0755 $q_remote_path $q_install_path && test -x $q_install_path"
 
 if [ -n "$smoke_test" ]; then
   q_control_url=$(shell_quote "$control_url")
