@@ -36,11 +36,11 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	record := cluster.NodeRecord{
 		NodeName:     heartbeat.NodeName,
-		Hostname:     fallback(heartbeat.Hostname, heartbeat.NodeName),
-		Arch:         fallback(heartbeat.Arch, "unknown"),
+		Hostname:     defaultString(heartbeat.Hostname, heartbeat.NodeName),
+		Arch:         defaultString(heartbeat.Arch, "unknown"),
 		OS:           heartbeat.OS,
-		Capabilities: fallbackMap(heartbeat.Capabilities),
-		Metrics:      fallbackMap(heartbeat.Metrics),
+		Capabilities: defaultMap(heartbeat.Capabilities),
+		Metrics:      defaultMap(heartbeat.Metrics),
 		Engines:      heartbeat.Engines,
 		LastSeen:     s.now(),
 	}
@@ -57,14 +57,15 @@ func (s *Server) authorized(r *http.Request) bool {
 	return r.Header.Get("Authorization") == "Bearer "+s.joinToken
 }
 
-func fallback(value string, defaultValue string) string {
-	if strings.TrimSpace(value) == "" {
-		return defaultValue
+func defaultString(value string, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
 	}
 	return value
 }
 
-func fallbackMap(value map[string]any) map[string]any {
+func defaultMap(value map[string]any) map[string]any {
 	if value == nil {
 		return map[string]any{}
 	}
