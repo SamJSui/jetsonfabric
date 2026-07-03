@@ -1,5 +1,7 @@
 package control
 
+import "net/http"
+
 type errorCode string
 
 const (
@@ -18,7 +20,7 @@ const (
 	errorNoLayerSplitRoute     errorCode = "no_layer_split_route"
 )
 
-func writeError(w responseWriter, status int, code errorCode, message string) {
+func writeError(w http.ResponseWriter, status int, code errorCode, message string) {
 	writeJSON(w, status, map[string]string{
 		"error":   string(code),
 		"message": message,
