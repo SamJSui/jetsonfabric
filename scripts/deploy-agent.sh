@@ -104,7 +104,7 @@ q_remote_path=$(shell_quote "$remote_path")
 q_install_path=$(shell_quote "$install_path")
 
 printf 'installing agent on %s as %s...\n' "$host" "$install_path"
-ssh "$host" "sudo install -m 0755 $q_remote_path $q_install_path && $q_install_path --help >/dev/null"
+ssh -t "$host" "sudo install -m 0755 $q_remote_path $q_install_path && $q_install_path --help >/dev/null"
 
 if [ -n "$smoke_test" ]; then
   q_control_url=$(shell_quote "$control_url")
