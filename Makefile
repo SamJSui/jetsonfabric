@@ -27,11 +27,24 @@ AGENT_URL ?= http://127.0.0.1:52416
 AGENT_LISTEN ?= 0.0.0.0:52416
 AGENT_ADVERTISE_URL ?= http://127.0.0.1:52416
 
+NODE_CLUSTER_ID ?= default
+NODE_LISTEN ?= 0.0.0.0:52415
+NODE_ADVERTISE_URL ?= http://127.0.0.1:52415
+NODE_SEEDS ?=
+NODE_DATA_DIR ?= .cache/jetsonfabric
+NODE_CONTROL_ELIGIBLE ?= true
+NODE_CONTROL_PRIORITY ?= 10
+NODE_RUNTIME_URL ?= http://127.0.0.1:9090
+
 ENGINE ?= jetsonfabric-runtime
 ENGINE_URL ?= http://127.0.0.1:9090
 
 RUNTIME_LISTEN ?= 127.0.0.1:9090
 RUNTIME_MODE ?= data_parallel
+STAGE_INDEX ?= 0
+STAGE_COUNT ?= 1
+LAYER_START ?= 0
+LAYER_END ?= 0
 
 HOST ?=
 EXPECTED_HOSTNAME ?= dopey
@@ -51,11 +64,13 @@ help:
 	@printf '  make build                Build Go binaries and runtime\n'
 	@printf '  make control              Build control binaries\n'
 	@printf '  make agent                Build agent binaries\n'
+	@printf '  make node                 Build node binaries\n'
 	@printf '  make bench                Build bench binaries\n'
 	@printf '  make runtime              Build C++ runtime worker\n\n'
 	@printf 'Local run:\n'
 	@printf '  make control-run          Run control locally via go run\n'
 	@printf '  make agent-run            Run agent locally via go run\n'
+	@printf '  make node-run             Run Exo-like all-in-one node locally\n'
 	@printf '  make runtime-run          Run runtime locally\n\n'
 	@printf 'Docker images:\n'
 	@printf '  make docker-control       Build control image\n'
@@ -82,7 +97,7 @@ test:
 	$(GO) test ./...
 
 .PHONY: build
-build: test control agent runtime bench
+build: test control agent node runtime bench
 
 .PHONY: control
 control:
@@ -95,6 +110,12 @@ agent:
 	mkdir -p $(DIST_DIR)
 	GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-agent-linux-amd64 ./cmd/jetsonfabric-agent
 	GOOS=linux GOARCH=arm64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-agent-linux-arm64 ./cmd/jetsonfabric-agent
+
+.PHONY: node
+node:
+	mkdir -p $(DIST_DIR)
+	GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-node-linux-amd64 ./cmd/jetsonfabric-node
+	GOOS=linux GOARCH=arm64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-node-linux-arm64 ./cmd/jetsonfabric-node
 
 .PHONY: bench
 bench:
@@ -129,15 +150,33 @@ agent-run:
 		--engine-url $(ENGINE_URL) \
 		--model $(MODEL)
 
+.PHONY: node-run
+node-run:
+	$(GO) run ./cmd/jetsonfabric-node \
+		--cluster-id $(NODE_CLUSTER_ID) \
+		--node-name $(NODE_NAME) \
+		--listen $(NODE_LISTEN) \
+		--advertise-url $(NODE_ADVERTISE_URL) \
+		--data-dir $(NODE_DATA_DIR) \
+		--runtime-url $(NODE_RUNTIME_URL) \
+		--engine $(ENGINE) \
+		--model $(MODEL) \
+		--control-eligible $(NODE_CONTROL_ELIGIBLE) \
+		--control-priority $(NODE_CONTROL_PRIORITY) \
+		--seeds $(NODE_SEEDS) \
+		--join-token $(JOIN_TOKEN) \
+		--benchmarks $(BENCHMARKS_PATH) \
+		--models $(MODELS_PATH)
+
 .PHONY: runtime-run
 runtime-run: runtime
 	./$(DIST_DIR)/jetsonfabric-runtime-worker \
 		--listen $(RUNTIME_LISTEN) \
+		--node-name $(NODE_NAME) \
 		--model $(MODEL) \
-		--mode $(RUNTIME_MODE)
+		--mode $(RUNTIME_MODE) \
 		--stage-index $(STAGE_INDEX) \
 		--stage-count $(STAGE_COUNT) \
-		--stage-role $(STAGE_ROLE) \
 		--layer-start $(LAYER_START) \
 		--layer-end $(LAYER_END)
 
