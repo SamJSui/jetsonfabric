@@ -35,6 +35,11 @@ STAGE_COUNT ?= 1
 LAYER_START ?= 0
 LAYER_END ?= 0
 
+BENCH_URL ?= http://127.0.0.1:52415/v1/chat/completions
+BENCH_REQUEST ?= examples/poc-local-smoke/chat-request.json
+BENCH_COUNT ?= 1
+BENCH_CONCURRENCY ?= 1
+
 HOST ?=
 EXPECTED_HOSTNAME ?= dopey
 
@@ -47,13 +52,14 @@ help:
 	@printf 'JetsonFabric targets\n\n'
 	@printf 'Build/test:\n'
 	@printf '  make test                 Run Go tests\n'
-	@printf '  make build                Build node binaries, runtime, and bench\n'
+	@printf '  make build                Build node binaries and runtime\n'
 	@printf '  make node                 Build node binaries\n'
-	@printf '  make bench                Build bench binaries\n'
 	@printf '  make runtime              Build C++ runtime worker\n\n'
 	@printf 'Local run:\n'
 	@printf '  make node-run             Run Exo-like all-in-one node locally\n'
 	@printf '  make runtime-run          Run runtime locally\n\n'
+	@printf 'Developer tools:\n'
+	@printf '  make bench                Run developer benchmark client against a node API\n\n'
 	@printf 'Docker images:\n'
 	@printf '  make docker-runtime       Build runtime image\n'
 	@printf '  make docker-push          Push runtime image\n\n'
@@ -67,19 +73,13 @@ test:
 	$(GO) test ./...
 
 .PHONY: build
-build: test node runtime bench
+build: test node runtime
 
 .PHONY: node
 node:
 	mkdir -p $(DIST_DIR)
 	GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-node-linux-amd64 ./cmd/jetsonfabric-node
 	GOOS=linux GOARCH=arm64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-node-linux-arm64 ./cmd/jetsonfabric-node
-
-.PHONY: bench
-bench:
-	mkdir -p $(DIST_DIR)
-	GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-bench-linux-amd64 ./cmd/jetsonfabric-bench
-	GOOS=linux GOARCH=arm64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-bench-linux-arm64 ./cmd/jetsonfabric-bench
 
 .PHONY: runtime
 runtime:
@@ -117,6 +117,14 @@ runtime-run: runtime
 		--stage-count $(STAGE_COUNT) \
 		--layer-start $(LAYER_START) \
 		--layer-end $(LAYER_END)
+
+.PHONY: bench
+bench:
+	$(GO) run ./tools/bench \
+		--url $(BENCH_URL) \
+		--request $(BENCH_REQUEST) \
+		--count $(BENCH_COUNT) \
+		--concurrency $(BENCH_CONCURRENCY)
 
 .PHONY: docker-runtime
 docker-runtime:
