@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/benchmarks"
-	"github.com/SamJSui/jetsonfabric/internal/control"
+	"github.com/SamJSui/jetsonfabric/internal/coordinator"
 	"github.com/SamJSui/jetsonfabric/internal/discovery"
 	"github.com/SamJSui/jetsonfabric/internal/facade"
 	"github.com/SamJSui/jetsonfabric/internal/membership"
@@ -42,10 +42,10 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load model registry: %w", err)
 	}
-	coordinator := control.NewServer(
+	coordinatorServer := coordinator.NewServer(
 		cfg.JoinToken,
 		registry,
-		control.WithBenchmarkRecorder(benchmarks.NewJSONLRecorder(cfg.BenchmarksPath)),
+		coordinator.WithBenchmarkRecorder(benchmarks.NewJSONLRecorder(cfg.BenchmarksPath)),
 	)
 
 	store := membership.NewStore()
@@ -66,7 +66,7 @@ func New(cfg Config) (*App, error) {
 			SelfID:      nodeID,
 			Store:       store,
 			StaleAfter:  cfg.StaleAfter,
-			Coordinator: coordinator.Router(),
+			Coordinator: coordinatorServer.Router(),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
