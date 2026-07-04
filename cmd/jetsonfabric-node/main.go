@@ -8,7 +8,6 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/cluster"
 	"github.com/SamJSui/jetsonfabric/internal/node"
@@ -63,7 +62,8 @@ func parseConfig(args []string) (node.Config, error) {
 
 	cfg.Engine = cluster.Engine(strings.TrimSpace(engine))
 	cfg.Seeds = splitCSV(seeds)
-	return node.NormalizeConfig(cfg), node.ValidateConfig(node.NormalizeConfig(cfg))
+	cfg = node.NormalizeConfig(cfg)
+	return cfg, node.ValidateConfig(cfg)
 }
 
 func splitCSV(value string) []string {
@@ -80,5 +80,3 @@ func splitCSV(value string) []string {
 	}
 	return out
 }
-
-var _ = time.Second
