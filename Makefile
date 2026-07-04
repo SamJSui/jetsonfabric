@@ -161,9 +161,9 @@ node-run:
 		--runtime-url $(NODE_RUNTIME_URL) \
 		--engine $(ENGINE) \
 		--model $(MODEL) \
-		--control-eligible $(NODE_CONTROL_ELIGIBLE) \
+		--control-eligible=$(NODE_CONTROL_ELIGIBLE) \
 		--control-priority $(NODE_CONTROL_PRIORITY) \
-		--seeds $(NODE_SEEDS) \
+		--seeds "$(NODE_SEEDS)" \
 		--join-token $(JOIN_TOKEN) \
 		--benchmarks $(BENCHMARKS_PATH) \
 		--models $(MODELS_PATH)
