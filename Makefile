@@ -1,5 +1,8 @@
 SHELL := /bin/sh
 
+LOCAL_ENV ?= .env.local
+-include $(LOCAL_ENV)
+
 GO ?= go
 CMAKE ?= cmake
 DOCKER ?= docker
@@ -132,6 +135,11 @@ runtime-run: runtime
 		--listen $(RUNTIME_LISTEN) \
 		--model $(MODEL) \
 		--mode $(RUNTIME_MODE)
+		--stage-index $(STAGE_INDEX) \
+		--stage-count $(STAGE_COUNT) \
+		--stage-role $(STAGE_ROLE) \
+		--layer-start $(LAYER_START) \
+		--layer-end $(LAYER_END)
 
 .PHONY: docker-control
 docker-control:

@@ -11,7 +11,12 @@ add_executable(jetsonfabric-runtime-worker
   worker/config.cpp
   api/http_response.cpp
   api/http_server.cpp
-  engine/stub_engine.cpp
+  protocol/execution_mode.cpp
+  protocol/activation.cpp
+  pipeline_parallel/stage_assignment.cpp
+  pipeline_parallel/stage_worker.cpp
+  pipeline_parallel/layer_executor.cpp
+  engine/runtime_engine.cpp
 )
 
 target_include_directories(jetsonfabric-runtime-worker PRIVATE

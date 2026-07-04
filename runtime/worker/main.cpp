@@ -1,10 +1,9 @@
 #include "api/http_server.hpp"
-#include "engine/stub_engine.hpp"
+#include "engine/runtime_engine.hpp"
 #include "worker/config.hpp"
 
 #include <atomic>
 #include <csignal>
-#include <iostream>
 
 namespace {
 
@@ -21,7 +20,7 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, handle_signal);
 
     jetsonfabric::runtime::Config config = jetsonfabric::runtime::parse_args(argc, argv);
-    jetsonfabric::runtime::StubEngine engine(config.model, config.mode);
+    jetsonfabric::runtime::RuntimeEngine engine(config);
     jetsonfabric::runtime::HttpServer server(config, engine, g_running);
 
     return server.run();

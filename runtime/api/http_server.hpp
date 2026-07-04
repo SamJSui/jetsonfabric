@@ -18,6 +18,8 @@ private:
     const Engine& engine_;
     std::atomic_bool& running_;
 
+    int open_listening_socket() const;
+    bool wait_for_client(int server_fd) const;
     void handle_client(int client_fd) const;
 };
 
