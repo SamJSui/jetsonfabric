@@ -28,11 +28,12 @@ type Config struct {
 }
 
 type Router struct {
-	selfID      string
-	store       *membership.Store
-	staleAfter  time.Duration
-	coordinator http.Handler
-	stageRunner http.Handler
+	selfID          string
+	store           *membership.Store
+	staleAfter      time.Duration
+	coordinator     http.Handler
+	stageRunner     http.Handler
+	electionTracker *election.Tracker
 }
 
 type ClusterView struct {
@@ -41,13 +42,7 @@ type ClusterView struct {
 }
 
 func NewRouter(cfg Config) http.Handler {
-	r := &Router{
-		selfID:      cfg.SelfID,
-		store:       cfg.Store,
-		staleAfter:  cfg.StaleAfter,
-		coordinator: cfg.Coordinator,
-		stageRunner: cfg.StageRunner,
-	}
+	r := newRouter(cfg)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", r.handleHealth)
 	mux.HandleFunc("GET "+PathClusterMembers, r.handleMembers)
@@ -57,6 +52,17 @@ func NewRouter(cfg Config) http.Handler {
 	mux.HandleFunc(api.RouteLayerSplitStage, r.handleStageRun)
 	mux.HandleFunc("/", r.handleCoordinator)
 	return mux
+}
+
+func newRouter(cfg Config) *Router {
+	return &Router{
+		selfID:          cfg.SelfID,
+		store:           cfg.Store,
+		staleAfter:      cfg.StaleAfter,
+		coordinator:     cfg.Coordinator,
+		stageRunner:     cfg.StageRunner,
+		electionTracker: election.NewTracker(election.DefaultLease(cfg.StaleAfter)),
+	}
 }
 
 func (r *Router) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -185,7 +191,7 @@ func (r *Router) leader() (membership.Member, bool) {
 }
 
 func (r *Router) electionResult(now time.Time) election.Result {
-	return election.Explain(now, r.store.List(), r.staleAfter)
+	return r.electionTracker.Explain(now, r.store.List(), r.staleAfter)
 }
 
 func (r *Router) visibleMembers(now time.Time) []membership.Member {
