@@ -68,7 +68,7 @@ func TestElectLeaderSkipsStaleMembers(t *testing.T) {
 	assertLeader(t, leader, ok, "fresh")
 }
 
-func TestExplainIncludesIneligibleReasons(t *testing.T) {
+func TestExplainReportsCandidateReasons(t *testing.T) {
 	now := testNow()
 	result := Explain(now, []membership.Member{
 		testMember("worker", membership.NodeRoleWorker, 0, now, now),
@@ -83,6 +83,50 @@ func TestExplainIncludesIneligibleReasons(t *testing.T) {
 	assertReason(t, result, "stale", ReasonStaleMember)
 }
 
+func TestTrackerKeepsIncumbentDuringLease(t *testing.T) {
+	now := testNow()
+	tracker := NewTracker(10 * time.Second)
+	members := []membership.Member{
+		testMember("incumbent", membership.NodeRoleJetson, 0, now, now),
+	}
+	result := tracker.Explain(now, members, time.Minute)
+	assertResultLeader(t, result, "incumbent")
+
+	members = append(members, testMember("older", membership.NodeRoleJetson, 0, now, now.Add(-time.Hour)))
+	result = tracker.Explain(now.Add(time.Second), members, time.Minute)
+	assertResultLeader(t, result, "incumbent")
+	if result.Epoch != 1 {
+		t.Fatalf("expected epoch 1, got %d", result.Epoch)
+	}
+}
+
+func TestTrackerAllowsHigherRankPreemption(t *testing.T) {
+	now := testNow()
+	tracker := NewTracker(10 * time.Second)
+	first := []membership.Member{testMember("jetson", membership.NodeRoleJetson, 0, now, now)}
+	assertResultLeader(t, tracker.Explain(now, first, time.Minute), "jetson")
+
+	second := append(first, testMember("coord", membership.NodeRoleCoordinator, 0, now, now))
+	result := tracker.Explain(now.Add(time.Second), second, time.Minute)
+	assertResultLeader(t, result, "coord")
+	if result.Epoch != 2 {
+		t.Fatalf("expected epoch 2 after preemption, got %d", result.Epoch)
+	}
+}
+
+func TestTrackerFailsOverWhenIncumbentIsStale(t *testing.T) {
+	now := testNow()
+	tracker := NewTracker(10 * time.Second)
+	first := []membership.Member{testMember("old", membership.NodeRoleJetson, 0, now, now)}
+	assertResultLeader(t, tracker.Explain(now, first, time.Minute), "old")
+
+	second := []membership.Member{
+		testMember("old", membership.NodeRoleJetson, 0, now.Add(-2*time.Minute), now),
+		testMember("fresh", membership.NodeRoleJetson, 0, now, now),
+	}
+	assertResultLeader(t, tracker.Explain(now.Add(time.Second), second, time.Minute), "fresh")
+}
+
 func assertLeader(t *testing.T, leader membership.Member, ok bool, nodeID string) {
 	t.Helper()
 	if !ok {
@@ -90,6 +134,16 @@ func assertLeader(t *testing.T, leader membership.Member, ok bool, nodeID string
 	}
 	if leader.NodeID != nodeID {
 		t.Fatalf("expected %s, got %s", nodeID, leader.NodeID)
+	}
+}
+
+func assertResultLeader(t *testing.T, result Result, nodeID string) {
+	t.Helper()
+	if result.Leader == nil {
+		t.Fatal("expected leader")
+	}
+	if result.Leader.NodeID != nodeID {
+		t.Fatalf("expected %s, got %s", nodeID, result.Leader.NodeID)
 	}
 }
 
