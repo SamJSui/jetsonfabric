@@ -18,12 +18,13 @@ import (
 )
 
 type App struct {
-	cfg       Config
-	nodeID    string
-	startedAt time.Time
-	store     *membership.Store
-	discovery discovery.Source
-	server    *http.Server
+	cfg            Config
+	nodeID         string
+	startedAt      time.Time
+	store          *membership.Store
+	discovery      discovery.Source
+	mdnsAdvertiser *discovery.MDNSAdvertiser
+	server         *http.Server
 }
 
 func New(cfg Config) (*App, error) {
@@ -57,9 +58,19 @@ func New(cfg Config) (*App, error) {
 	}
 	store.Upsert(app.selfMember(time.Now().UTC()))
 
-	app.discovery = discovery.NewStaticSource(cfg.Seeds, func() membership.Member {
+	self := func() membership.Member {
 		return app.selfMember(time.Now().UTC())
-	})
+	}
+	app.discovery = app.discoverySource(self)
+	if cfg.DiscoveryEnabled(discovery.ModeMDNS) {
+		app.mdnsAdvertiser = discovery.NewMDNSAdvertiser(discovery.MDNSConfig{
+			ClusterID: cfg.ClusterID,
+			Service:   cfg.MDNSService,
+			Domain:    cfg.MDNSDomain,
+			Port:      cfg.AdvertisePort(),
+			Self:      self,
+		})
+	}
 	app.server = &http.Server{
 		Addr: cfg.Listen,
 		Handler: facade.NewRouter(facade.Config{
@@ -75,11 +86,19 @@ func New(cfg Config) (*App, error) {
 }
 
 func (a *App) Run(ctx context.Context) error {
+	if a.mdnsAdvertiser != nil {
+		if err := a.mdnsAdvertiser.Start(ctx); err != nil {
+			log.Printf("mDNS advertising disabled: %v", err)
+		} else {
+			defer a.mdnsAdvertiser.Shutdown()
+			log.Printf("JetsonFabric node advertising with mDNS service=%s domain=%s", a.cfg.MDNSService, a.cfg.MDNSDomain)
+		}
+	}
 	go a.discoveryLoop(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("JetsonFabric node listening on http://%s cluster=%s node_id=%s", a.cfg.Listen, a.cfg.ClusterID, a.nodeID)
+		log.Printf("JetsonFabric node listening on http://%s advertised=%s cluster=%s node_id=%s discovery=%v", a.cfg.Listen, a.cfg.APIURL, a.cfg.ClusterID, a.nodeID, a.cfg.DiscoveryModes)
 		errCh <- a.server.ListenAndServe()
 	}()
 
@@ -102,6 +121,22 @@ func (a *App) Run(ctx context.Context) error {
 	}
 }
 
+func (a *App) discoverySource(self discovery.SelfFunc) discovery.Source {
+	sources := make([]discovery.Source, 0, 2)
+	if a.cfg.DiscoveryEnabled(discovery.ModeStatic) {
+		sources = append(sources, discovery.NewStaticSource(a.cfg.Seeds, self))
+	}
+	if a.cfg.DiscoveryEnabled(discovery.ModeMDNS) {
+		sources = append(sources, discovery.NewMDNSSource(discovery.MDNSConfig{
+			ClusterID:     a.cfg.ClusterID,
+			Service:       a.cfg.MDNSService,
+			Domain:        a.cfg.MDNSDomain,
+			BrowseTimeout: a.cfg.MDNSBrowseTimeout,
+		}))
+	}
+	return discovery.NewMultiSource(sources...)
+}
+
 func (a *App) discoveryLoop(ctx context.Context) {
 	ticker := time.NewTicker(a.cfg.DiscoveryInterval)
 	defer ticker.Stop()
@@ -122,6 +157,9 @@ func (a *App) refreshMembership(ctx context.Context) {
 	a.store.Upsert(a.selfMember(now))
 	a.store.Prune(now, a.cfg.StaleAfter, a.nodeID)
 
+	if a.discovery == nil {
+		return
+	}
 	members, err := a.discovery.Discover(ctx)
 	if err != nil {
 		log.Printf("discovery failed: %v", err)
