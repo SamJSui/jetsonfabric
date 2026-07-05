@@ -38,8 +38,10 @@ Main pieces:
 - `cmd/jetsonfabric-node`: the product process run on each machine.
 - `internal/discovery`: static seed discovery, mDNS discovery, and hydration via
   HTTP announce.
-- `internal/membership`: in-memory member table with stale-member pruning.
-- `internal/election`: deterministic leader election over fresh eligible members.
+- `internal/membership`: in-memory member table with stale-member pruning,
+  semantic node roles, and runtime/capability metadata.
+- `internal/election`: deterministic role-gated leader selection over fresh
+  members.
 - `internal/facade`: public node API, follower proxying, local stage routing.
 - `internal/coordinator`: leader-only planning/control role embedded in a node.
 - `internal/runtimegateway`: node-to-local-runtime stage proxy.
@@ -61,22 +63,32 @@ Each node:
 - advertises itself over mDNS as `_jetsonfabric._tcp.local`;
 - periodically discovers peers;
 - exchanges full member records through `/v1/cluster/announce`;
-- participates in deterministic leader election if control-eligible;
+- derives a semantic role such as `jetson`, `worker`, `coordinator`, or `test`;
 - exposes public cluster/API routes on port `52415`;
 - forwards `/v1/layer-split/stage` to its local runtime.
 
 mDNS is used only to bootstrap peer addresses. After a peer is discovered, the
 node performs an HTTP announce/handshake to hydrate the full membership record
-with capabilities, metrics, engine metadata, and fresh timestamps.
+with capabilities, metrics, engine metadata, role, and fresh timestamps.
 
-## Leader election
+## Leader selection
 
-Current election is deterministic, not Raft consensus:
+Current selection is deterministic, not Raft consensus. It is now role-gated so
+normal nodes do not need numeric priority values:
 
 1. remove stale members;
-2. keep only `control_eligible` nodes;
-3. sort by highest `control_priority`;
-4. break ties by stable `node_id`.
+2. keep only roles that may lead: `coordinator` and `jetson`;
+3. rank by semantic role: `coordinator` before `jetson`;
+4. apply optional advanced `leader_preference` only within the same role;
+5. prefer the oldest running peer within the same rank;
+6. break ties by stable `node_id`.
+
+Role defaults reduce config:
+
+- WSL/dev environments become `test` and do not lead.
+- Jetson devices become `jetson` and can lead.
+- Generic Linux PCs become `worker` and do not lead unless explicitly started
+  with `NODE_ROLE=coordinator`.
 
 This is intentionally simple for the current homelab/edge prototype. Before real
 deployment writes and long-running layer execution, the coordinator should also
@@ -113,9 +125,7 @@ make node-run \
   NODE_CLUSTER_ID=home-lab \
   NODE_NAME=dopey \
   NODE_DISCOVERY=mdns \
-  NODE_DATA_DIR=.cache/jetsonfabric-dopey \
-  NODE_CONTROL_ELIGIBLE=true \
-  NODE_CONTROL_PRIORITY=20
+  NODE_DATA_DIR=.cache/jetsonfabric-dopey
 ```
 
 On `beehive`:
@@ -128,9 +138,7 @@ make node-run \
   NODE_CLUSTER_ID=home-lab \
   NODE_NAME=beehive \
   NODE_DISCOVERY=mdns \
-  NODE_DATA_DIR=.cache/jetsonfabric-beehive \
-  NODE_CONTROL_ELIGIBLE=false \
-  NODE_CONTROL_PRIORITY=0
+  NODE_DATA_DIR=.cache/jetsonfabric-beehive
 ```
 
 From Windows CMD, PowerShell, WSL, or another client:
@@ -166,9 +174,7 @@ make node-run \
   NODE_CLUSTER_ID=home-lab \
   NODE_NAME=dopey \
   NODE_DISCOVERY=mdns \
-  NODE_DATA_DIR=.cache/jetsonfabric-dopey \
-  NODE_CONTROL_ELIGIBLE=true \
-  NODE_CONTROL_PRIORITY=20
+  NODE_DATA_DIR=.cache/jetsonfabric-dopey
 ```
 
 Then test the node-to-runtime stage route:
@@ -197,38 +203,3 @@ curl -sS -X POST http://127.0.0.1:52415/v1/layer-split/stage \
 Until real transformer layer execution is wired, the runtime should return an
 honest `layer_executor_not_implemented` style error. That still proves the node
 API reaches the local runtime.
-
-## Build and test
-
-```sh
-go test ./...
-make build
-```
-
-`make build` builds the node binary and C++ runtime. The benchmark client is a
-developer tool and is intentionally not part of the production build path.
-
-```sh
-make bench BENCH_URL=http://127.0.0.1:52415/v1/chat/completions
-```
-
-## Documentation
-
-- [AGENTS.md](AGENTS.md) captures coding-agent instructions and project
-  boundaries.
-- [docs/architecture/node-discovery-control-plane.md](docs/architecture/node-discovery-control-plane.md)
-  captures the node fabric architecture.
-- [docs/architecture/mdns-discovery.md](docs/architecture/mdns-discovery.md)
-  captures the mDNS discovery design.
-- [docs/p0-layer-split-mvp.md](docs/p0-layer-split-mvp.md) captures the MVP for
-  real layer-split inference.
-- [docs/engineering-standards.md](docs/engineering-standards.md) captures the
-  implementation quality bar.
-
-## Non-goals for the current version
-
-- Do not claim an edge cluster beats frontier cloud models.
-- Do not treat mDNS membership as scheduling-grade health.
-- Do not use WSL as a production cluster node.
-- Do not start with full Raft consensus.
-- Do not keep HTTP/JSON activation transfer as the final data plane.
