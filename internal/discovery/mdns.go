@@ -91,26 +91,31 @@ func (s *MDNSSource) Discover(ctx context.Context) ([]membership.Member, error) 
 			}
 			return nil, fmt.Errorf("read mdns response: %w", err)
 		}
-		for _, txt := range parseTXTAnswers(buf[:n]) {
-			member, ok := memberFromMDNSTXT(txt, remote.IP.String())
-			if !ok {
-				continue
-			}
-			if cfg.ClusterID != "" && member.ClusterID != cfg.ClusterID {
-				continue
-			}
-			if member.NodeID == "" {
-				continue
-			}
-			membersByID[member.NodeID] = member
-		}
+		mergeMDNSResponse(membersByID, cfg, buf[:n], remote.IP.String())
 	}
 
+	return mdnsMembers(membersByID), nil
+}
+
+func mergeMDNSResponse(membersByID map[string]membership.Member, cfg MDNSConfig, packet []byte, sourceIP string) {
+	for _, txt := range parseTXTAnswers(packet) {
+		member, ok := memberFromMDNSTXT(txt, sourceIP)
+		if !ok || member.NodeID == "" {
+			continue
+		}
+		if cfg.ClusterID != "" && member.ClusterID != cfg.ClusterID {
+			continue
+		}
+		membersByID[member.NodeID] = member
+	}
+}
+
+func mdnsMembers(membersByID map[string]membership.Member) []membership.Member {
 	members := make([]membership.Member, 0, len(membersByID))
 	for _, member := range membersByID {
 		members = append(members, member)
 	}
-	return members, nil
+	return members
 }
 
 func (a *MDNSAdvertiser) Start(ctx context.Context) error {
@@ -368,34 +373,59 @@ func parseTXTAnswers(packet []byte) [][]string {
 	answerCount := int(binary.BigEndian.Uint16(packet[6:8])) +
 		int(binary.BigEndian.Uint16(packet[8:10])) +
 		int(binary.BigEndian.Uint16(packet[10:12]))
+	offset := skipDNSQuestions(packet, questionCount)
+	if offset == 0 {
+		return nil
+	}
+	return collectTXTRecords(packet, offset, answerCount)
+}
+
+func skipDNSQuestions(packet []byte, questionCount int) int {
 	offset := 12
 	for i := 0; i < questionCount; i++ {
 		_, next, ok := readName(packet, offset)
 		if !ok || next+4 > len(packet) {
-			return nil
+			return 0
 		}
 		offset = next + 4
 	}
+	return offset
+}
 
+func collectTXTRecords(packet []byte, offset int, answerCount int) [][]string {
 	var records [][]string
 	for i := 0; i < answerCount; i++ {
-		_, next, ok := readName(packet, offset)
-		if !ok || next+10 > len(packet) {
+		parsed, ok := readDNSRecord(packet, offset)
+		if !ok {
 			return records
 		}
-		recordType := int(binary.BigEndian.Uint16(packet[next : next+2]))
-		dataLength := int(binary.BigEndian.Uint16(packet[next+8 : next+10]))
-		dataStart := next + 10
-		dataEnd := dataStart + dataLength
-		if dataEnd > len(packet) {
-			return records
+		if parsed.recordType == dnsTypeTXT {
+			records = append(records, decodeTXT(parsed.data))
 		}
-		if recordType == dnsTypeTXT {
-			records = append(records, decodeTXT(packet[dataStart:dataEnd]))
-		}
-		offset = dataEnd
+		offset = parsed.next
 	}
 	return records
+}
+
+type dnsRecord struct {
+	recordType int
+	data       []byte
+	next       int
+}
+
+func readDNSRecord(packet []byte, offset int) (dnsRecord, bool) {
+	_, next, ok := readName(packet, offset)
+	if !ok || next+10 > len(packet) {
+		return dnsRecord{}, false
+	}
+	recordType := int(binary.BigEndian.Uint16(packet[next : next+2]))
+	dataLength := int(binary.BigEndian.Uint16(packet[next+8 : next+10]))
+	dataStart := next + 10
+	dataEnd := dataStart + dataLength
+	if dataEnd > len(packet) {
+		return dnsRecord{}, false
+	}
+	return dnsRecord{recordType: recordType, data: packet[dataStart:dataEnd], next: dataEnd}, true
 }
 
 func readName(packet []byte, offset int) (string, int, bool) {
@@ -475,10 +505,10 @@ func memberTXT(member membership.Member, port int) []string {
 		"node_id=" + member.NodeID,
 		"node_name=" + member.NodeName,
 		"hostname=" + member.Hostname,
+		"role=" + string(member.EffectiveRole()),
 		"api_url=" + member.APIURL,
 		"runtime_url=" + member.RuntimeURL,
-		"control_eligible=" + strconv.FormatBool(member.ControlEligible),
-		"control_priority=" + strconv.Itoa(member.ControlPriority),
+		"leader_preference=" + strconv.Itoa(member.EffectiveLeaderPreference()),
 		"arch=" + member.Arch,
 		"os=" + string(member.OS),
 		"started_at=" + member.StartedAt.Format(time.RFC3339Nano),
@@ -496,23 +526,22 @@ func memberFromMDNSTXT(records []string, sourceIP string) (membership.Member, bo
 	if sourceIP != "" && port > 0 {
 		apiURL = fmt.Sprintf("http://%s:%d", sourceIP, port)
 	}
-	controlEligible, _ := strconv.ParseBool(values["control_eligible"])
-	controlPriority, _ := strconv.Atoi(values["control_priority"])
+	leaderPreference, _ := strconv.Atoi(values["leader_preference"])
 	startedAt, _ := time.Parse(time.RFC3339Nano, values["started_at"])
 
 	member := membership.Member{
-		ClusterID:       values["cluster_id"],
-		NodeID:          values["node_id"],
-		NodeName:        values["node_name"],
-		Hostname:        values["hostname"],
-		APIURL:          apiURL,
-		RuntimeURL:      values["runtime_url"],
-		ControlEligible: controlEligible,
-		ControlPriority: controlPriority,
-		Arch:            values["arch"],
-		OS:              cluster.OperatingSystem(values["os"]),
-		StartedAt:       startedAt,
-		LastSeen:        time.Now().UTC(),
+		ClusterID:        values["cluster_id"],
+		NodeID:           values["node_id"],
+		NodeName:         values["node_name"],
+		Hostname:         values["hostname"],
+		Role:             membership.NodeRole(values["role"]),
+		APIURL:           apiURL,
+		RuntimeURL:       values["runtime_url"],
+		LeaderPreference: leaderPreference,
+		Arch:             values["arch"],
+		OS:               cluster.OperatingSystem(values["os"]),
+		StartedAt:        startedAt,
+		LastSeen:         time.Now().UTC(),
 	}
 	member = membership.Normalize(member)
 	return member, member.Valid()
