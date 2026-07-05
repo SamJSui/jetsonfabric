@@ -140,8 +140,9 @@ func (r *Router) handleCoordinator(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) clusterView() ClusterView {
-	leader, ok := r.leader()
-	view := ClusterView{Members: r.store.List()}
+	members := r.activeMembers(time.Now().UTC())
+	leader, ok := election.ElectLeader(time.Now().UTC(), members, r.staleAfter)
+	view := ClusterView{Members: members}
 	if ok {
 		view.Leader = &leader
 	}
@@ -150,7 +151,19 @@ func (r *Router) clusterView() ClusterView {
 
 func (r *Router) leader() (membership.Member, bool) {
 	now := time.Now().UTC()
-	return election.ElectLeader(now, r.store.List(), r.staleAfter)
+	return election.ElectLeader(now, r.activeMembers(now), r.staleAfter)
+}
+
+func (r *Router) activeMembers(now time.Time) []membership.Member {
+	members := r.store.List()
+	active := make([]membership.Member, 0, len(members))
+	for _, member := range members {
+		if member.IsStale(now, r.staleAfter) {
+			continue
+		}
+		active = append(active, member)
+	}
+	return active
 }
 
 func proxyToLeader(w http.ResponseWriter, req *http.Request, leaderURL string) {
