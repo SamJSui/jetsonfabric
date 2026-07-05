@@ -42,6 +42,9 @@ func betterPeer(left membership.Member, right membership.Member) bool {
 	if leftRank != rightRank {
 		return leftRank > rightRank
 	}
+	if left.EffectiveLeaderPreference() != right.EffectiveLeaderPreference() {
+		return left.EffectiveLeaderPreference() > right.EffectiveLeaderPreference()
+	}
 	return olderOrStable(left, right)
 }
 
