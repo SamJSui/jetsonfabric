@@ -12,6 +12,7 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/cluster"
 	"github.com/SamJSui/jetsonfabric/internal/config"
 	"github.com/SamJSui/jetsonfabric/internal/discovery"
+	"github.com/SamJSui/jetsonfabric/internal/membership"
 )
 
 const (
@@ -19,7 +20,7 @@ const (
 	DefaultDataDir           = ".cache/jetsonfabric"
 	DefaultDiscoveryInterval = 10 * time.Second
 	DefaultStaleAfter        = 30 * time.Second
-	DefaultControlPriority   = 10
+	DefaultLeaderPreference  = 0
 )
 
 var defaultDiscoveryModes = []string{discovery.ModeStatic, discovery.ModeMDNS}
@@ -35,8 +36,10 @@ type Config struct {
 	Engine     cluster.Engine
 	Model      string
 
-	ControlEligible bool
-	ControlPriority int
+	Role             membership.NodeRole
+	LeaderPreference int
+	ControlEligible  bool
+	ControlPriority  int
 
 	Seeds             []string
 	DiscoveryModes    []string
@@ -60,8 +63,8 @@ func DefaultConfigValue() Config {
 		DataDir:           DefaultDataDir,
 		RuntimeURL:        "http://127.0.0.1:9090",
 		Engine:            cluster.EngineJetsonFabric,
-		ControlEligible:   true,
-		ControlPriority:   DefaultControlPriority,
+		Role:              membership.NodeRoleAuto,
+		LeaderPreference:  DefaultLeaderPreference,
 		Seeds:             nil,
 		DiscoveryModes:    append([]string(nil), defaultDiscoveryModes...),
 		DiscoveryInterval: DefaultDiscoveryInterval,
@@ -76,6 +79,21 @@ func DefaultConfigValue() Config {
 }
 
 func NormalizeConfig(cfg Config) Config {
+	cfg = normalizeStringsInConfig(cfg)
+	cfg.Seeds = normalizeStrings(cfg.Seeds)
+	cfg.DiscoveryModes = normalizeDiscoveryModes(cfg.DiscoveryModes)
+	cfg.Role = resolveNodeRole(cfg.Role)
+	cfg.LeaderPreference = normalizedPreference(cfg)
+	cfg.ControlEligible = membership.RoleLeaderEligible(cfg.Role)
+	cfg.ControlPriority = cfg.LeaderPreference
+	cfg = normalizeMDNSConfig(cfg)
+	if cfg.APIURL == "" {
+		cfg.APIURL = defaultAdvertiseURL(cfg.NodeName, cfg.Listen)
+	}
+	return cfg
+}
+
+func normalizeStringsInConfig(cfg Config) Config {
 	cfg.ClusterID = strings.TrimSpace(cfg.ClusterID)
 	cfg.NodeName = strings.TrimSpace(cfg.NodeName)
 	cfg.Listen = strings.TrimSpace(cfg.Listen)
@@ -86,8 +104,17 @@ func NormalizeConfig(cfg Config) Config {
 	cfg.JoinToken = strings.TrimSpace(cfg.JoinToken)
 	cfg.ModelsPath = strings.TrimSpace(cfg.ModelsPath)
 	cfg.BenchmarksPath = strings.TrimSpace(cfg.BenchmarksPath)
-	cfg.Seeds = normalizeStrings(cfg.Seeds)
-	cfg.DiscoveryModes = normalizeDiscoveryModes(cfg.DiscoveryModes)
+	return cfg
+}
+
+func normalizedPreference(cfg Config) int {
+	if cfg.LeaderPreference != 0 {
+		return cfg.LeaderPreference
+	}
+	return cfg.ControlPriority
+}
+
+func normalizeMDNSConfig(cfg Config) Config {
 	cfg.MDNSService = strings.TrimSpace(cfg.MDNSService)
 	cfg.MDNSDomain = strings.TrimSpace(cfg.MDNSDomain)
 	if cfg.MDNSService == "" {
@@ -98,9 +125,6 @@ func NormalizeConfig(cfg Config) Config {
 	}
 	if cfg.MDNSBrowseTimeout <= 0 {
 		cfg.MDNSBrowseTimeout = discovery.DefaultMDNSBrowseTimeout
-	}
-	if cfg.APIURL == "" {
-		cfg.APIURL = defaultAdvertiseURL(cfg.NodeName, cfg.Listen)
 	}
 	return cfg
 }
@@ -115,6 +139,10 @@ func ValidateConfig(cfg Config) error {
 	if cfg.APIURL == "" {
 		return fmt.Errorf("--advertise-url could not be derived; set it explicitly")
 	}
+	return validateRemainingConfig(cfg)
+}
+
+func validateRemainingConfig(cfg Config) error {
 	if cfg.DataDir == "" {
 		return fmt.Errorf("--data-dir is required")
 	}
@@ -127,6 +155,10 @@ func ValidateConfig(cfg Config) error {
 	if cfg.StaleAfter <= 0 {
 		return fmt.Errorf("--stale-after must be greater than zero")
 	}
+	return validatePathsAndMDNS(cfg)
+}
+
+func validatePathsAndMDNS(cfg Config) error {
 	if cfg.MDNSBrowseTimeout <= 0 {
 		return fmt.Errorf("--mdns-browse-timeout must be greater than zero")
 	}
