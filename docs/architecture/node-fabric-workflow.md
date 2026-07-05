@@ -10,7 +10,7 @@ client
        facade.Router
        membership.Store
        discovery sources
-       election selector
+       election selector + local lease tracker
        coordinator.Server when this node is leader
        runtimegateway.StageProxy
   -> jetsonfabric-runtime-worker :9090
@@ -64,18 +64,27 @@ mDNS only bootstraps peer addresses. HTTP announce hydrates the full member reco
 ```text
 facade.Router.leader
   -> membership.Store.List
-  -> election.Explain / election.ElectLeader
-       drop invalid/stale peers
-       keep roles that may lead: coordinator, jetson
-       rank coordinator before jetson
-       apply optional leader preference within same role
-       prefer older started_at
-       tie-break by stable node_id
+  -> election.Tracker.Explain
+       election.Explain ranks all candidates
+       local lease keeps fresh equivalent incumbent stable
+       higher role or higher preference can preempt
+       stale incumbent fails over immediately
 ```
 
-`GET /v1/cluster/election` exposes the same selection explanation used by the facade: leader, candidates, effective role, role rank, leader preference, eligibility, and reason. This keeps election behavior debuggable without adding a separate consensus protocol.
+Candidate ranking is:
 
-Election is deterministic selection, not Raft consensus. It is good enough while deployment state is still early and mostly in-memory. Before real deployment writes, the coordinator should actively probe node and runtime readiness.
+```text
+valid and fresh only
+roles that may lead: coordinator, jetson
+coordinator before jetson
+optional leader_preference inside the same role
+older started_at inside the same rank
+stable node_id tie-break
+```
+
+`GET /v1/cluster/election` exposes the same selection explanation used by the facade: leader, candidates, effective role, role rank, leader preference, eligibility, reason, epoch, and lease expiry.
+
+Election is deterministic selection with a local lease/epoch, not Raft consensus. It is hardened for one or two nodes where quorum would not help. Once the cluster has three coordinator-capable voters, Raft can own leader election and durable deployment state.
 
 ## Request routing sequence
 
@@ -141,10 +150,10 @@ internal/discovery/*
   discovers peer addresses through static seeds or mDNS and hydrates peers via announce
 
 internal/election/*
-  chooses one coordinator from fresh role-eligible members and explains decisions
+  explains candidates, ranks leader-capable members, and tracks local lease/epoch
 
 internal/facade/router.go
-  exposes public node API, cluster views, leader proxying, election explanation, and local stage route
+  exposes public node API, cluster views, leader proxying, and local stage route
 
 internal/coordinator/*
   handles leader-only planning/routing APIs embedded inside the selected node
