@@ -14,6 +14,13 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/node"
 )
 
+type flagValues struct {
+	seeds          string
+	discoveryModes string
+	engine         string
+	role           string
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		log.Fatal(err)
@@ -37,42 +44,65 @@ func run(args []string) error {
 
 func parseConfig(args []string) (node.Config, error) {
 	cfg := node.DefaultConfigValue()
-	var seeds string
-	var discoveryModes string
-	var engine string
-	var role string
-
+	values := defaultFlagValues(cfg)
 	fs := flag.NewFlagSet("jetsonfabric-node", flag.ContinueOnError)
+	bindFlags(fs, &cfg, &values)
+	if err := fs.Parse(args); err != nil {
+		return node.Config{}, err
+	}
+	return normalizeParsedConfig(cfg, values)
+}
+
+func defaultFlagValues(cfg node.Config) flagValues {
+	return flagValues{
+		discoveryModes: strings.Join(cfg.DiscoveryModes, ","),
+		engine:         string(cfg.Engine),
+		role:           string(cfg.Role),
+	}
+}
+
+func bindFlags(fs *flag.FlagSet, cfg *node.Config, values *flagValues) {
+	bindCoreFlags(fs, cfg, values)
+	bindRoleFlags(fs, cfg, values)
+	bindDiscoveryFlags(fs, cfg, values)
+	fs.StringVar(&cfg.JoinToken, "join-token", cfg.JoinToken, "internal join token used by embedded coordinator")
+	fs.StringVar(&cfg.ModelsPath, "models", cfg.ModelsPath, "model registry JSON path")
+	fs.StringVar(&cfg.BenchmarksPath, "benchmarks", cfg.BenchmarksPath, "benchmark JSONL output path")
+}
+
+func bindCoreFlags(fs *flag.FlagSet, cfg *node.Config, values *flagValues) {
 	fs.StringVar(&cfg.ClusterID, "cluster-id", cfg.ClusterID, "cluster id used to isolate discovered peers")
 	fs.StringVar(&cfg.NodeName, "node-name", cfg.NodeName, "stable node name; defaults to OS hostname")
 	fs.StringVar(&cfg.Listen, "listen", cfg.Listen, "node facade listen address")
 	fs.StringVar(&cfg.APIURL, "advertise-url", cfg.APIURL, "URL this node advertises to peers")
-	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "directory for stable node identity and state")
+	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "directory for stable node identity")
 	fs.StringVar(&cfg.RuntimeURL, "runtime-url", cfg.RuntimeURL, "local C++ runtime URL")
-	fs.StringVar(&engine, "engine", string(cfg.Engine), "local runtime engine kind")
-	fs.StringVar(&cfg.Model, "model", cfg.Model, "model id served by the local runtime, when available")
-	fs.StringVar(&role, "role", string(cfg.Role), "node role: auto, jetson, coordinator, worker, or test")
+	fs.StringVar(&values.engine, "engine", values.engine, "local runtime engine kind")
+	fs.StringVar(&cfg.Model, "model", cfg.Model, "model id served by the local runtime")
+}
+
+func bindRoleFlags(fs *flag.FlagSet, cfg *node.Config, values *flagValues) {
+	fs.StringVar(&values.role, "role", values.role, "node role: auto, jetson, coordinator, worker, or test")
 	fs.IntVar(&cfg.LeaderPreference, "leader-preference", cfg.LeaderPreference, "advanced tie-break weight within the same role")
-	fs.BoolVar(&cfg.ControlEligible, "control-eligible", cfg.ControlEligible, "deprecated; role now derives this")
-	fs.IntVar(&cfg.ControlPriority, "control-priority", cfg.ControlPriority, "deprecated alias for leader-preference")
-	fs.StringVar(&seeds, "seeds", "", "comma-separated peer node API URLs for static discovery")
-	fs.StringVar(&discoveryModes, "discovery", strings.Join(cfg.DiscoveryModes, ","), "comma-separated discovery modes: static,mdns,none")
+	fs.BoolVar(&cfg.ControlEligible, "control-eligible", cfg.ControlEligible, "deprecated; use --role")
+	fs.IntVar(&cfg.ControlPriority, "control-priority", cfg.ControlPriority, "deprecated alias for --leader-preference")
+}
+
+func bindDiscoveryFlags(fs *flag.FlagSet, cfg *node.Config, values *flagValues) {
+	fs.StringVar(&values.seeds, "seeds", "", "comma-separated peer node API URLs for static discovery")
+	fs.StringVar(&values.discoveryModes, "discovery", values.discoveryModes, "comma-separated discovery modes: static,mdns,none")
 	fs.DurationVar(&cfg.DiscoveryInterval, "discovery-interval", cfg.DiscoveryInterval, "peer discovery interval")
 	fs.DurationVar(&cfg.StaleAfter, "stale-after", cfg.StaleAfter, "member staleness timeout")
 	fs.StringVar(&cfg.MDNSService, "mdns-service", cfg.MDNSService, "mDNS service name")
 	fs.StringVar(&cfg.MDNSDomain, "mdns-domain", cfg.MDNSDomain, "mDNS domain")
-	fs.DurationVar(&cfg.MDNSBrowseTimeout, "mdns-browse-timeout", cfg.MDNSBrowseTimeout, "mDNS browse timeout per discovery tick")
-	fs.StringVar(&cfg.JoinToken, "join-token", cfg.JoinToken, "internal join token used by embedded coordinator")
-	fs.StringVar(&cfg.ModelsPath, "models", cfg.ModelsPath, "model registry JSON path")
-	fs.StringVar(&cfg.BenchmarksPath, "benchmarks", cfg.BenchmarksPath, "benchmark JSONL output path")
-	if err := fs.Parse(args); err != nil {
-		return node.Config{}, err
-	}
+	fs.DurationVar(&cfg.MDNSBrowseTimeout, "mdns-browse-timeout", cfg.MDNSBrowseTimeout, "mDNS browse timeout")
+}
 
-	cfg.Engine = cluster.Engine(strings.TrimSpace(engine))
-	cfg.Role = membership.NodeRole(strings.TrimSpace(role))
-	cfg.Seeds = splitCSV(seeds)
-	cfg.DiscoveryModes = splitCSV(discoveryModes)
+func normalizeParsedConfig(cfg node.Config, values flagValues) (node.Config, error) {
+	cfg.Engine = cluster.Engine(strings.TrimSpace(values.engine))
+	cfg.Role = membership.NodeRole(strings.TrimSpace(values.role))
+	cfg.Seeds = splitCSV(values.seeds)
+	cfg.DiscoveryModes = splitCSV(values.discoveryModes)
 	cfg = node.NormalizeConfig(cfg)
 	return cfg, node.ValidateConfig(cfg)
 }
