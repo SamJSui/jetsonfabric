@@ -45,9 +45,6 @@ func mergeIdentityFields(existing Member, incoming Member) Member {
 	if incoming.LeaderPreference == 0 && existing.LeaderPreference != 0 {
 		incoming.LeaderPreference = existing.LeaderPreference
 	}
-	if incoming.ControlPriority == 0 && existing.ControlPriority != 0 {
-		incoming.ControlPriority = existing.ControlPriority
-	}
 	return incoming
 }
 
