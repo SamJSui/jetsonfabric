@@ -73,7 +73,6 @@ func (a *App) coordinatorRouter() (http.Handler, error) {
 		return nil, fmt.Errorf("load model registry: %w", err)
 	}
 	server := coordinator.NewServer(
-		a.cfg.JoinToken,
 		registry,
 		coordinator.WithBenchmarkRecorder(benchmarks.NewJSONLRecorder(a.cfg.BenchmarksPath)),
 	)
