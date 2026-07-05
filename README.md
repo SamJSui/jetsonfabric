@@ -41,7 +41,7 @@ Main pieces:
 - `internal/membership`: in-memory member table with stale-member pruning,
   semantic node roles, and runtime/capability metadata.
 - `internal/election`: deterministic role-gated leader selection over fresh
-  members.
+  members, with a local lease/epoch tracker to reduce 1-2 node flapping.
 - `internal/facade`: public node API, follower proxying, local stage routing.
 - `internal/coordinator`: leader-only planning/control role embedded in a node.
 - `internal/runtimegateway`: node-to-local-runtime stage proxy.
@@ -86,6 +86,11 @@ normal nodes do not need numeric priority values:
 5. prefer the oldest running peer within the same rank;
 6. break ties by stable `node_id`.
 
+The facade wraps that deterministic result with a local leader lease and epoch.
+If the incumbent remains fresh and eligible, equivalent challengers do not steal
+leadership during the lease. Higher-rank or higher-preference challengers may
+preempt, and stale incumbents fail over immediately.
+
 Role defaults reduce config:
 
 - WSL/dev environments become `test` and do not lead.
@@ -94,12 +99,13 @@ Role defaults reduce config:
   with `NODE_ROLE=coordinator`.
 
 Use `GET /v1/cluster/election` to inspect the election decision, candidate roles,
-eligibility, ranking fields, and exclusion reasons.
+eligibility, ranking fields, exclusion reasons, epoch, and lease expiry.
 
-This is intentionally simple for the current homelab/edge prototype. Before real
-deployment writes and long-running layer execution, the coordinator should also
-actively probe node health and runtime readiness. Membership means "may exist";
-readiness means "can receive work now."
+This is intentionally simple for the current homelab/edge prototype. Raft is the
+right future path once there are three coordinator-capable voters for quorum.
+Before real deployment writes and long-running layer execution, the coordinator
+should also actively probe node health and runtime readiness. Membership means
+"may exist"; readiness means "can receive work now."
 
 ## Pipeline parallelism direction
 
