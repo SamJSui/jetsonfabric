@@ -138,11 +138,12 @@ func (a *App) startMDNS(ctx context.Context) {
 
 func (a *App) listen(errCh chan<- error) {
 	log.Printf(
-		"JetsonFabric node listening on http://%s advertised=%s cluster=%s node_id=%s discovery=%v",
+		"JetsonFabric node listening on http://%s advertised=%s cluster=%s node_id=%s role=%s discovery=%v",
 		a.cfg.Listen,
 		a.cfg.APIURL,
 		a.cfg.ClusterID,
 		a.nodeID,
+		a.cfg.Role,
 		a.cfg.DiscoveryModes,
 	)
 	errCh <- a.server.ListenAndServe()
@@ -240,19 +241,21 @@ func (a *App) selfMember(now time.Time) membership.Member {
 	}
 
 	return membership.Member{
-		ClusterID:       a.cfg.ClusterID,
-		NodeID:          a.nodeID,
-		NodeName:        nodeName,
-		Hostname:        snapshot.Hostname,
-		APIURL:          a.cfg.APIURL,
-		RuntimeURL:      a.cfg.RuntimeURL,
-		ControlEligible: a.cfg.ControlEligible,
-		ControlPriority: a.cfg.ControlPriority,
-		Arch:            snapshot.Arch,
-		OS:              snapshot.OS,
-		Capabilities:    snapshot.Capabilities,
-		Metrics:         snapshot.Metrics,
-		StartedAt:       a.startedAt,
-		LastSeen:        now,
+		ClusterID:        a.cfg.ClusterID,
+		NodeID:           a.nodeID,
+		NodeName:         nodeName,
+		Hostname:         snapshot.Hostname,
+		Role:             a.cfg.Role,
+		APIURL:           a.cfg.APIURL,
+		RuntimeURL:       a.cfg.RuntimeURL,
+		LeaderPreference: a.cfg.LeaderPreference,
+		ControlEligible:  a.cfg.ControlEligible,
+		ControlPriority:  a.cfg.ControlPriority,
+		Arch:             snapshot.Arch,
+		OS:               snapshot.OS,
+		Capabilities:     snapshot.Capabilities,
+		Metrics:          snapshot.Metrics,
+		StartedAt:        a.startedAt,
+		LastSeen:         now,
 	}
 }
