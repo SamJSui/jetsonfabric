@@ -26,17 +26,15 @@ const (
 type Member struct {
 	ClusterID string `json:"cluster_id"`
 
-	NodeID   string `json:"node_id"`
-	NodeName string `json:"node_name"`
-	Hostname string `json:"hostname"`
+	NodeID   string   `json:"node_id"`
+	NodeName string   `json:"node_name"`
+	Hostname string   `json:"hostname"`
 	Role     NodeRole `json:"role,omitempty"`
 
 	APIURL     string `json:"api_url"`
 	RuntimeURL string `json:"runtime_url,omitempty"`
 
-	LeaderPreference int  `json:"leader_preference,omitempty"`
-	ControlEligible  bool `json:"control_eligible"`
-	ControlPriority  int  `json:"control_priority"`
+	LeaderPreference int `json:"leader_preference,omitempty"`
 
 	Arch         string                  `json:"arch"`
 	OS           cluster.OperatingSystem `json:"os"`
@@ -73,8 +71,6 @@ func Normalize(m Member) Member {
 	m.APIURL = strings.TrimSpace(m.APIURL)
 	m.RuntimeURL = strings.TrimSpace(m.RuntimeURL)
 	m.Arch = strings.TrimSpace(m.Arch)
-	m.LeaderPreference = normalizeLeaderPreference(m)
-	m.ControlPriority = m.LeaderPreference
 	return m
 }
 
@@ -118,21 +114,11 @@ func (m Member) EffectiveRole() NodeRole {
 	if memberDeviceClass(m) == cluster.DeviceClassJetson {
 		return NodeRoleJetson
 	}
-	if m.ControlEligible {
-		return NodeRoleJetson
-	}
 	return NodeRoleWorker
 }
 
 func (m Member) EffectiveLeaderPreference() int {
-	return normalizeLeaderPreference(m)
-}
-
-func normalizeLeaderPreference(m Member) int {
-	if m.LeaderPreference != 0 {
-		return m.LeaderPreference
-	}
-	return m.ControlPriority
+	return m.LeaderPreference
 }
 
 func memberDeviceClass(m Member) cluster.DeviceClass {
