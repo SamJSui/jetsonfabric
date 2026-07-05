@@ -249,8 +249,6 @@ func (a *App) selfMember(now time.Time) membership.Member {
 		APIURL:           a.cfg.APIURL,
 		RuntimeURL:       a.cfg.RuntimeURL,
 		LeaderPreference: a.cfg.LeaderPreference,
-		ControlEligible:  a.cfg.ControlEligible,
-		ControlPriority:  a.cfg.ControlPriority,
 		Arch:             snapshot.Arch,
 		OS:               snapshot.OS,
 		Capabilities:     snapshot.Capabilities,
