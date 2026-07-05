@@ -2,6 +2,7 @@ package election
 
 import (
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/membership"
@@ -14,9 +15,16 @@ const (
 	ReasonRoleNotEligible = "role_not_leader_eligible"
 )
 
+const (
+	DefaultLeaseDuration = 10 * time.Second
+	MaxLeaseDuration     = 15 * time.Second
+)
+
 type Result struct {
-	Leader     *membership.Member `json:"leader,omitempty"`
-	Candidates []Candidate        `json:"candidates"`
+	Leader         *membership.Member `json:"leader,omitempty"`
+	Candidates     []Candidate        `json:"candidates"`
+	Epoch          uint64             `json:"epoch"`
+	LeaseExpiresAt *time.Time         `json:"lease_expires_at,omitempty"`
 }
 
 type Candidate struct {
@@ -28,6 +36,39 @@ type Candidate struct {
 	LeaderPreference int                 `json:"leader_preference"`
 }
 
+type Tracker struct {
+	mu            sync.Mutex
+	state         State
+	leaseDuration time.Duration
+}
+
+type State struct {
+	LeaderID       string
+	Epoch          uint64
+	LeaseExpiresAt time.Time
+}
+
+func NewTracker(leaseDuration time.Duration) *Tracker {
+	if leaseDuration <= 0 {
+		leaseDuration = DefaultLeaseDuration
+	}
+	return &Tracker{leaseDuration: leaseDuration}
+}
+
+func DefaultLease(staleAfter time.Duration) time.Duration {
+	if staleAfter <= 0 {
+		return DefaultLeaseDuration
+	}
+	lease := staleAfter / 2
+	if lease <= 0 {
+		return DefaultLeaseDuration
+	}
+	if lease > MaxLeaseDuration {
+		return MaxLeaseDuration
+	}
+	return lease
+}
+
 func ElectLeader(now time.Time, members []membership.Member, staleAfter time.Duration) (membership.Member, bool) {
 	result := Explain(now, members, staleAfter)
 	if result.Leader == nil {
@@ -37,11 +78,62 @@ func ElectLeader(now time.Time, members []membership.Member, staleAfter time.Dur
 }
 
 func Explain(now time.Time, members []membership.Member, staleAfter time.Duration) Result {
-	candidates := makeCandidates(now, members, staleAfter)
-	sort.SliceStable(candidates, func(i, j int) bool {
-		return betterCandidate(candidates[i], candidates[j])
-	})
+	candidates := rankedCandidates(makeCandidates(now, members, staleAfter))
 	return Result{Leader: firstEligible(candidates), Candidates: candidates}
+}
+
+func (t *Tracker) Explain(now time.Time, members []membership.Member, staleAfter time.Duration) Result {
+	if t == nil {
+		return Explain(now, members, staleAfter)
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	result := Explain(now, members, staleAfter)
+	leader := t.selectLeader(now, result.Candidates)
+	t.applyLeader(now, leader, &result)
+	return result
+}
+
+func (t *Tracker) selectLeader(now time.Time, candidates []Candidate) *membership.Member {
+	best := firstEligible(candidates)
+	incumbent := eligibleCandidate(candidates, t.state.LeaderID)
+	if best == nil || incumbent == nil {
+		return best
+	}
+	if now.After(t.state.LeaseExpiresAt) {
+		return best
+	}
+	if canPreempt(*best, incumbent.Member) {
+		return best
+	}
+	leader := incumbent.Member
+	return &leader
+}
+
+func (t *Tracker) applyLeader(now time.Time, leader *membership.Member, result *Result) {
+	if leader == nil {
+		t.clearLeader(result)
+		return
+	}
+	if t.state.LeaderID != leader.NodeID {
+		t.state.Epoch++
+	}
+	expiresAt := now.Add(t.leaseDuration)
+	t.state.LeaderID = leader.NodeID
+	t.state.LeaseExpiresAt = expiresAt
+	result.Leader = leader
+	result.Epoch = t.state.Epoch
+	result.LeaseExpiresAt = &expiresAt
+}
+
+func (t *Tracker) clearLeader(result *Result) {
+	t.state.LeaderID = ""
+	t.state.LeaseExpiresAt = time.Time{}
+	result.Leader = nil
+	result.Epoch = t.state.Epoch
+	result.LeaseExpiresAt = nil
 }
 
 func makeCandidates(now time.Time, members []membership.Member, staleAfter time.Duration) []Candidate {
@@ -49,6 +141,13 @@ func makeCandidates(now time.Time, members []membership.Member, staleAfter time.
 	for _, member := range members {
 		candidates = append(candidates, explainMember(now, member, staleAfter))
 	}
+	return candidates
+}
+
+func rankedCandidates(candidates []Candidate) []Candidate {
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return betterCandidate(candidates[i], candidates[j])
+	})
 	return candidates
 }
 
@@ -92,6 +191,16 @@ func firstEligible(candidates []Candidate) *membership.Member {
 	return nil
 }
 
+func eligibleCandidate(candidates []Candidate, nodeID string) *Candidate {
+	for index := range candidates {
+		candidate := &candidates[index]
+		if candidate.Eligible && candidate.Member.NodeID == nodeID {
+			return candidate
+		}
+	}
+	return nil
+}
+
 func betterCandidate(left Candidate, right Candidate) bool {
 	if left.Eligible != right.Eligible {
 		return left.Eligible
@@ -100,6 +209,15 @@ func betterCandidate(left Candidate, right Candidate) bool {
 		return betterPeer(left.Member, right.Member)
 	}
 	return left.Member.NodeID < right.Member.NodeID
+}
+
+func canPreempt(challenger membership.Member, incumbent membership.Member) bool {
+	challengerRank := membership.RoleRank(challenger.EffectiveRole())
+	incumbentRank := membership.RoleRank(incumbent.EffectiveRole())
+	if challengerRank != incumbentRank {
+		return challengerRank > incumbentRank
+	}
+	return challenger.EffectiveLeaderPreference() > incumbent.EffectiveLeaderPreference()
 }
 
 func betterPeer(left membership.Member, right membership.Member) bool {
