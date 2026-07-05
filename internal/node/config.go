@@ -48,7 +48,6 @@ type Config struct {
 	MDNSDomain        string
 	MDNSBrowseTimeout time.Duration
 
-	JoinToken      string
 	ModelsPath     string
 	BenchmarksPath string
 }
@@ -56,7 +55,7 @@ type Config struct {
 func DefaultConfigValue() Config {
 	return Config{
 		ClusterID:         DefaultClusterID,
-		Listen:            config.DefaultControlListen(),
+		Listen:            config.DefaultNodeListen(),
 		APIURL:            "",
 		DataDir:           DefaultDataDir,
 		RuntimeURL:        "http://127.0.0.1:9090",
@@ -70,7 +69,6 @@ func DefaultConfigValue() Config {
 		MDNSService:       discovery.DefaultMDNSService,
 		MDNSDomain:        discovery.DefaultMDNSDomain,
 		MDNSBrowseTimeout: discovery.DefaultMDNSBrowseTimeout,
-		JoinToken:         config.DefaultJoinToken,
 		ModelsPath:        config.DefaultModelRegistryPath(),
 		BenchmarksPath:    config.DefaultBenchmarksPath(),
 	}
@@ -96,7 +94,6 @@ func normalizeStringsInConfig(cfg Config) Config {
 	cfg.DataDir = strings.TrimSpace(cfg.DataDir)
 	cfg.RuntimeURL = strings.TrimSpace(cfg.RuntimeURL)
 	cfg.Model = strings.TrimSpace(cfg.Model)
-	cfg.JoinToken = strings.TrimSpace(cfg.JoinToken)
 	cfg.ModelsPath = strings.TrimSpace(cfg.ModelsPath)
 	cfg.BenchmarksPath = strings.TrimSpace(cfg.BenchmarksPath)
 	return cfg
