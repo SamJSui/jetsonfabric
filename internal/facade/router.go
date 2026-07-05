@@ -77,7 +77,7 @@ func (r *Router) handleLeader(w http.ResponseWriter, _ *http.Request) {
 	if !ok {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error":   "leader_unavailable",
-			"message": "no healthy control-eligible node is currently known",
+			"message": "no healthy leader-eligible node is currently known",
 		})
 		return
 	}
@@ -139,7 +139,7 @@ func (r *Router) handleCoordinator(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error":   "leader_unavailable",
-			"message": "no healthy control-eligible node is currently known",
+			"message": "no healthy leader-eligible node is currently known",
 		})
 		return
 	}
