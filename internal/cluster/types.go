@@ -91,16 +91,6 @@ type NodeRecord struct {
 	LastSeen     time.Time        `json:"last_seen"`
 }
 
-type HeartbeatRequest struct {
-	NodeName     string           `json:"node_name"`
-	Hostname     string           `json:"hostname"`
-	Arch         string           `json:"arch"`
-	OS           OperatingSystem  `json:"os"`
-	Capabilities map[string]any   `json:"capabilities"`
-	Metrics      map[string]any   `json:"metrics"`
-	Engines      []EngineEndpoint `json:"engines,omitempty"`
-}
-
 type ModelProfile struct {
 	ID               string          `json:"id"`
 	Family           string          `json:"family"`
