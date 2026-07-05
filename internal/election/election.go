@@ -2,42 +2,62 @@ package election
 
 import (
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/membership"
 )
 
-// ElectLeader chooses the active coordinator from a local membership view.
-//
-// This is deterministic election, not consensus: every node that has converged
-// on the same membership table will choose the same leader.
 func ElectLeader(now time.Time, members []membership.Member, staleAfter time.Duration) (membership.Member, bool) {
-	candidates := make([]membership.Member, 0, len(members))
-	for _, member := range members {
-		member = membership.Normalize(member)
-		if !member.ControlEligible {
-			continue
-		}
-		if !member.Valid() {
-			continue
-		}
-		if member.IsStale(now, staleAfter) {
-			continue
-		}
-		candidates = append(candidates, member)
-	}
-
-	if len(candidates) == 0 {
+	peers := activePeers(now, members, staleAfter)
+	if len(peers) == 0 {
 		return membership.Member{}, false
 	}
-
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].ControlPriority != candidates[j].ControlPriority {
-			return candidates[i].ControlPriority > candidates[j].ControlPriority
-		}
-		return strings.Compare(candidates[i].NodeID, candidates[j].NodeID) < 0
+	sort.SliceStable(peers, func(i, j int) bool {
+		return betterPeer(peers[i], peers[j])
 	})
+	return peers[0], true
+}
 
-	return candidates[0], true
+func activePeers(now time.Time, members []membership.Member, staleAfter time.Duration) []membership.Member {
+	peers := make([]membership.Member, 0, len(members))
+	for _, member := range members {
+		member = membership.Normalize(member)
+		if allowedPeer(now, member, staleAfter) {
+			peers = append(peers, member)
+		}
+	}
+	return peers
+}
+
+func allowedPeer(now time.Time, member membership.Member, staleAfter time.Duration) bool {
+	if !member.Valid() || member.IsStale(now, staleAfter) {
+		return false
+	}
+	return membership.RoleRank(member.EffectiveRole()) > 0
+}
+
+func betterPeer(left membership.Member, right membership.Member) bool {
+	leftRank := membership.RoleRank(left.EffectiveRole())
+	rightRank := membership.RoleRank(right.EffectiveRole())
+	if leftRank != rightRank {
+		return leftRank > rightRank
+	}
+	return olderOrStable(left, right)
+}
+
+func olderOrStable(left membership.Member, right membership.Member) bool {
+	if !left.StartedAt.Equal(right.StartedAt) {
+		return startedEarlier(left.StartedAt, right.StartedAt)
+	}
+	return left.NodeID < right.NodeID
+}
+
+func startedEarlier(left time.Time, right time.Time) bool {
+	if left.IsZero() {
+		return false
+	}
+	if right.IsZero() {
+		return true
+	}
+	return left.Before(right)
 }
