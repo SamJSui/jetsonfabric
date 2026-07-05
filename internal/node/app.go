@@ -166,6 +166,13 @@ func (a *App) refreshMembership(ctx context.Context) {
 		return
 	}
 	for _, member := range members {
+		member = membership.Normalize(member)
+		if member.NodeID == a.nodeID {
+			// Ignore self-discovery. mDNS responses may arrive from a different interface
+			// address than the configured advertise URL and should not overwrite the
+			// authoritative self record with partial TXT metadata.
+			continue
+		}
 		if member.ClusterID != a.cfg.ClusterID {
 			continue
 		}
