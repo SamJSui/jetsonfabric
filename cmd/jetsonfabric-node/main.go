@@ -84,8 +84,6 @@ func bindCoreFlags(fs *flag.FlagSet, cfg *node.Config, values *flagValues) {
 func bindRoleFlags(fs *flag.FlagSet, cfg *node.Config, values *flagValues) {
 	fs.StringVar(&values.role, "role", values.role, "node role: auto, jetson, coordinator, worker, or test")
 	fs.IntVar(&cfg.LeaderPreference, "leader-preference", cfg.LeaderPreference, "advanced tie-break weight within the same role")
-	fs.BoolVar(&cfg.ControlEligible, "control-eligible", cfg.ControlEligible, "deprecated; use --role")
-	fs.IntVar(&cfg.ControlPriority, "control-priority", cfg.ControlPriority, "deprecated alias for --leader-preference")
 }
 
 func bindDiscoveryFlags(fs *flag.FlagSet, cfg *node.Config, values *flagValues) {
