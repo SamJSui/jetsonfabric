@@ -1,175 +1,89 @@
-# Node Discovery, Leader Election, and Control Plane Architecture
+# Node Discovery, Leader Election, and Coordinator Architecture
 
-This document sketches the refactor from explicit `control` + `agent` processes toward an Exo-like `jetsonfabric-node` UX.
+JetsonFabric now uses a peer-discovered node fabric rather than separate user-facing coordinator and worker binaries.
 
 The product goal is:
 
 ```text
 Run the same node command on every machine.
 Send prompts to any node.
-JetsonFabric discovers peers, elects one active coordinator, and routes work through an ordered deployment plan.
+JetsonFabric discovers peers, selects one active coordinator, and routes work through deployment plans.
 ```
 
-The key point is that `node` becomes the product primitive. `control` and `agent` stop being user-facing roles and become internal responsibilities.
+`jetsonfabric-node` is the product primitive. The coordinator is an internal role held by the elected leader. Runtime execution remains behind each node through the local C++ runtime worker.
 
----
-
-## Current architecture
-
-Current JetsonFabric has explicit processes:
+## Runtime shape
 
 ```text
-jetsonfabric-control
-  - loads model registry
-  - owns routing/planning API
-  - listens on :52415
-
-jetsonfabric-agent
-  - requires a fixed control URL
-  - optionally proxies to a local runtime engine
-  - heartbeats to the configured control plane
-
-jetsonfabric-runtime-worker
-  - C++ runtime process
-  - local compute/stage execution boundary
+client / curl / OpenAI-compatible caller
+  -> any jetsonfabric-node :52415
+  -> follower proxies coordinator routes to selected leader
+  -> coordinator plans routing and deployments
+  -> target node forwards stage work to local runtime
+  -> jetsonfabric-runtime-worker executes local work
 ```
 
-This is easy to reason about, but the UX requires remembering which machine is the control plane and how every node reaches it.
-
----
-
-## Target architecture
-
-Each machine runs:
+Each node owns:
 
 ```text
-jetsonfabric-node
+discovery
+membership store
+role-gated leader selection
+public facade API
+coordinator role when selected leader
+local runtime gateway
 ```
 
-A node process contains:
-
-```text
-jetsonfabric-node
-  discovery
-  membership store
-  leader election
-  public facade API
-  coordinator role if elected leader
-  local runtime gateway
-  optional runtime supervisor
-```
-
-Usually, each compute node also has its own local C++ runtime process:
+Usually, a compute node also runs:
 
 ```text
 jetsonfabric-node              public API on :52415
 jetsonfabric-runtime-worker    local runtime on 127.0.0.1:9090
 ```
 
-Every node is coordinator-capable, but only one node is the active coordinator/leader at a time.
-
-```text
-leader node:
-  active coordinator
-  planner
-  deployment owner
-  public OpenAI-compatible API
-
-follower node:
-  discovery and membership
-  local runtime access
-  public API facade
-  proxies coordinator requests to the leader
-```
-
----
-
-## Proposed Go package layout
+## Package layout
 
 ```text
 cmd/
-  jetsonfabric-node/
-    main.go
-
-  jetsonfabric-control/       legacy/manual wrapper for now
-  jetsonfabric-agent/         legacy/manual wrapper for now
+  jetsonfabric-node/          product process
 
 internal/
-  node/
-    app.go                    lifecycle composition
-    config.go                 node config
-    identity.go               stable node id
-    lifecycle.go              start/stop orchestration
+  node/                       lifecycle composition and config
+  membership/                 member records and in-memory membership table
+  discovery/                  static seed discovery, mDNS, HTTP hydration
+  election/                   deterministic role-gated leader selection
+  facade/                     public API on every node
+  coordinator/                leader-only planning and routing role
+  runtimegateway/             node-to-local-runtime proxy
+  system/                     local system and device capability detection
 
-  membership/
-    member.go                 Member type
-    store.go                  in-memory member table
-    health.go                 stale member pruning
-
-  discovery/
-    discovery.go              Source interface
-    static.go                 seed-based discovery first
-    mdns.go                   later
-
-  election/
-    election.go               deterministic election now, consensus later if needed
-
-  facade/
-    router.go                 public API on every node
-    proxy.go                  follower-to-leader reverse proxy
-
-  coordinator/
-    server.go                 evolved control server role
-    deployments.go            deployment lifecycle
-    planner.go                route and stage planning
-    routing.go                chat/deployment routing
-
-  deployment/
-    plan.go                   DeploymentPlan
-    stage.go                  StageAssignment
-    store.go                  deployment state
-
-  runtimegateway/
-    client.go                 local runtime client
-    stage.go                  node internal stage route
-    health.go                 runtime health
-
-  runtimeprocess/
-    supervisor.go             optional local runtime process manager later
+runtime/                      C++ runtime worker and pipeline-stage shell
+tools/bench/                  developer benchmark client
 ```
 
-Naming guidance:
-
-```text
-node          product process
-coordinator   leader-only control role inside a node
-facade        public API exposed by every node
-membership    shared cluster view
-runtime       local C++ compute process
-```
-
----
+There should not be separate `control` or `agent` product folders. Historical logic belongs under `coordinator`, `facade`, `membership`, `discovery`, or `runtimegateway` based on responsibility.
 
 ## Member record
 
-Each node advertises a member record:
+Each node advertises one member record:
 
 ```go
 type Member struct {
     ClusterID string
-
-    NodeID   string
-    NodeName string
+    NodeID    string
+    NodeName  string
+    Hostname  string
+    Role      NodeRole
 
     APIURL     string
     RuntimeURL string
 
-    ControlEligible bool
-    ControlPriority int
+    LeaderPreference int
 
     OS           cluster.OperatingSystem
     Arch         string
     Capabilities map[string]any
+    Metrics      map[string]any
     Engines      []cluster.EngineEndpoint
 
     StartedAt time.Time
@@ -177,65 +91,43 @@ type Member struct {
 }
 ```
 
-`NodeID` should be generated once and stored on disk, for example:
+`NodeID` is generated once and stored on disk. Hostnames are labels, not identity.
 
-```text
-/var/lib/jetsonfabric/node-id
-```
+## Discovery
 
-Do not use hostname as identity. Hostnames are labels, not stable IDs.
-
----
-
-## Discovery and networking
-
-Discovery only answers:
+Discovery answers:
 
 ```text
 who exists?
 how can I reach them?
 what cluster do they claim to belong to?
-what capabilities do they advertise?
+what role and capabilities do they advertise?
 ```
 
 Discovery does not decide pipeline order and does not create deployments.
 
-### Phase 1: static seed discovery
+### Static discovery
 
-Start with static seed URLs. This is deterministic, debuggable, and works over Tailscale or LAN.
+Static discovery announces this node to configured seed URLs:
 
 ```bash
-jetsonfabric-node \
-  --cluster-id home-lab \
-  --node-name grumpy \
-  --advertise-url http://100.x.x.x:52415 \
-  --seeds http://100.116.162.40:52415
+make node-run \
+  NODE_CLUSTER_ID=home-lab \
+  NODE_NAME=grumpy \
+  NODE_SEEDS=http://dopey.local:52415
 ```
 
-Node-to-node endpoints:
+Node-to-node endpoint:
 
 ```text
 POST /v1/cluster/announce
-GET  /v1/cluster/members
-GET  /v1/cluster/leader
 ```
 
-Startup flow:
+The response returns the seed node's current cluster view. The caller merges the returned members into its local membership table.
 
-```text
-grumpy starts
-  -> loads stable node_id
-  -> detects local capabilities
-  -> registers itself locally
-  -> announces to seed dopey
-  -> receives dopey's known member table
-  -> merges members
-  -> runs election
-```
+### mDNS discovery
 
-### Phase 2: mDNS discovery
-
-mDNS is LAN-local service discovery. Nodes advertise a service record, and peers subscribe to those records.
+mDNS is LAN-local service discovery.
 
 Service:
 
@@ -243,206 +135,53 @@ Service:
 _jetsonfabric._tcp.local
 ```
 
-TXT fields:
+TXT fields are lightweight bootstrap metadata:
 
 ```text
 cluster_id=home-lab
 node_id=<stable id>
 node_name=dopey
-api_url=http://dopey.local:52415
-control_eligible=true
-control_priority=10
+role=jetson
+api_port=52415
+leader_preference=0
 ```
 
-mDNS differs from static seeds because there is no configured peer list. A node asks the LAN, "who advertises `_jetsonfabric._tcp.local`?" and then filters discovered peers by `cluster_id`.
+After discovering a peer over mDNS, the node calls `/v1/cluster/announce` to hydrate the full member record with capabilities, metrics, engines, and fresh timestamps.
 
-mDNS is useful for:
+## Role-gated leader selection
+
+Leader selection is deterministic, not Raft consensus. Every node runs the same pure function over its local membership table.
+
+Current ranking:
 
 ```text
-zero-config LAN clusters
-Mac mini / Jetson homelab discovery
-finding nodes after IP changes
+1. remove stale or invalid members
+2. keep only leader-eligible roles: coordinator and jetson
+3. prefer coordinator over jetson
+4. use leader_preference only within the same role
+5. prefer older started_at for stability
+6. break ties by stable node_id
 ```
 
-mDNS is not enough for:
+Roles:
 
 ```text
-cross-subnet discovery
-Tailscale-only networks without multicast forwarding
-WAN discovery
-strong membership agreement
+auto         derive from local system facts
+jetson       can coordinate and compute
+coordinator  dedicated coordinator node
+worker       member/compute node, not leader-eligible
+test         development/test node, not leader-eligible
 ```
 
-So the discovery manager should support multiple sources:
-
-```go
-type Source interface {
-    Discover(ctx context.Context) ([]membership.Member, error)
-}
-```
-
-Implementations:
+Auto role detection:
 
 ```text
-StaticSource   now
-MDNSSource     later
+WSL/dev environment -> test
+Jetson device class -> jetson
+generic Linux PC -> worker
 ```
 
----
-
-## Leader election options
-
-JetsonFabric should start with deterministic leader election, not Raft.
-
-### Deterministic election
-
-Every node runs the same pure function over its membership table:
-
-```text
-healthy control-eligible members
-  sorted by:
-    highest control priority
-    stable node_id tie-breaker
-```
-
-Pseudo-code:
-
-```go
-func ElectLeader(now time.Time, members []membership.Member, staleAfter time.Duration) (membership.Member, bool) {
-    candidates := make([]membership.Member, 0, len(members))
-
-    for _, m := range members {
-        if !m.ControlEligible {
-            continue
-        }
-        if now.Sub(m.LastSeen) > staleAfter {
-            continue
-        }
-        candidates = append(candidates, m)
-    }
-
-    if len(candidates) == 0 {
-        return membership.Member{}, false
-    }
-
-    slices.SortFunc(candidates, func(a, b membership.Member) int {
-        if a.ControlPriority != b.ControlPriority {
-            return cmp.Compare(b.ControlPriority, a.ControlPriority)
-        }
-        return strings.Compare(a.NodeID, b.NodeID)
-    })
-
-    return candidates[0], true
-}
-```
-
-Properties:
-
-```text
-simple
-cheap
-debuggable
-no extra protocol
-works well for early homelab clusters
-```
-
-Limitations:
-
-```text
-not true consensus
-can split-brain during network partitions
-no durable committed log
-no strong deployment-state safety
-```
-
-This is acceptable while deployment state is in-memory and the system is early.
-
-### Voting
-
-Voting means nodes explicitly exchange votes and elect a leader by majority or quorum.
-
-Typical flow:
-
-```text
-node detects no leader
-  -> increments term/epoch
-  -> asks peers for votes
-  -> peers grant or reject vote
-  -> candidate becomes leader if it wins enough votes
-```
-
-Voting is stronger than deterministic election because nodes record who they voted for in a term. It can reduce accidental dual leadership, but by itself it still needs careful handling of terms, timeouts, and partitions.
-
-Voting adds:
-
-```text
-vote request/response RPCs
-term/epoch tracking
-candidate state
-leader heartbeats
-quorum rules
-```
-
-### Consensus
-
-Consensus means the cluster agrees not just on a leader, but also on an ordered sequence of state changes.
-
-For JetsonFabric, that would mean agreeing on events like:
-
-```text
-create deployment dep-001
-assign dopey stage 0
-assign grumpy stage 1
-mark deployment ready
-remove failed node
-```
-
-Consensus is about committed cluster state, not merely discovery.
-
-### Raft
-
-Raft is a consensus algorithm that combines leader election and replicated logs.
-
-A Raft-based JetsonFabric control plane would look like:
-
-```text
-Raft nodes elect a leader
-leader accepts deployment writes
-leader appends writes to a replicated log
-followers replicate the log
-entry is committed after quorum replication
-all nodes apply committed entries in the same order
-```
-
-Properties:
-
-```text
-stronger correctness
-clear leader terms
-safer failover
-consistent deployment state
-```
-
-Costs:
-
-```text
-more code
-more state management
-persistent log/snapshots
-quorum requirement
-more operational complexity
-more difficult debugging on weak edge devices
-```
-
-Recommended path:
-
-```text
-P1: deterministic election
-P2: leader lease / epoch to reduce split-brain risk
-P3: Raft only if deployment state needs production-grade consistency
-```
-
----
+This removes normal reliance on numeric coordinator priority. `leader_preference` remains as an explicit advanced tie-break within the same semantic role.
 
 ## Facade API
 
@@ -457,34 +196,26 @@ serve coordinator routes directly
 If local node is follower:
 
 ```text
-serve local health/cluster status
-proxy public coordinator routes to leader
+serve local health and cluster status
+proxy public coordinator routes to the selected leader
 ```
 
 Examples:
 
 ```text
 GET  /healthz                         local
-GET  /v1/cluster/members              local or leader-backed
+GET  /v1/cluster/members              local
 GET  /v1/cluster/leader               local
+POST /v1/cluster/announce             local
+POST /v1/layer-split/stage            local runtime gateway
 POST /v1/chat/completions             leader or proxy to leader
-POST /v1/deployments                  leader or proxy to leader
-GET  /v1/deployments                  leader or proxy to leader
 ```
-
-User experience:
-
-```bash
-curl http://any-node:52415/v1/chat/completions
-```
-
----
 
 ## Pipeline parallelism and deployment plans
 
-Discovery does not determine pipeline order. The active coordinator creates a deployment plan.
+Discovery does not determine pipeline order. The active coordinator creates deployment plans.
 
-A deployment plan is the source of truth for layer order:
+A deployment plan is the source of truth for ordered layer stages:
 
 ```json
 {
@@ -498,12 +229,12 @@ A deployment plan is the source of truth for layer order:
       "node_name": "dopey",
       "layer_start": 0,
       "layer_end": 14,
-      "next_node_name": "grumpy"
+      "next_node_name": "beehive"
     },
     {
       "stage_index": 1,
       "role": "last",
-      "node_name": "grumpy",
+      "node_name": "beehive",
       "layer_start": 14,
       "layer_end": 28,
       "prev_node_name": "dopey"
@@ -512,95 +243,18 @@ A deployment plan is the source of truth for layer order:
 }
 ```
 
-Pipeline parallelism requires ordered stages:
+The near-term runtime milestone is intentionally conservative: prove one-node `pipeline_parallel` on dopey with `stage_count=1`, then expand to multi-node stages after runtime execution is real.
+
+## Future hardening
+
+Before long-running deployments, the leader should actively probe candidates:
 
 ```text
-stage 0 runs before stage 1
-stage 1 runs before stage 2
-KV cache lives with each stage's layers
-final stage produces logits or sampled token
+membership freshness
+node /healthz
+runtime health
+stage prepare ack
+stage commit ack
 ```
 
-So the leader must distribute assignments:
-
-```text
-dopey:
-  deployment_id=dep-qwen-001
-  stage_index=0
-  layers=0:14
-  next=grumpy
-
-grumpy:
-  deployment_id=dep-qwen-001
-  stage_index=1
-  layers=14:28
-  prev=dopey
-```
-
----
-
-## Control plane vs data plane
-
-Control plane:
-
-```text
-HTTP/JSON
-discovery
-membership
-election
-deployment planning
-health
-dashboard
-```
-
-Data plane:
-
-```text
-runtime-to-runtime activation transfer
-persistent binary transport eventually
-hidden-state tensors
-KV-cache-bearing decode loop
-```
-
-Do not keep JSON activation payloads in the hot path forever. The runtime server is fine as a process boundary, but pipeline activations should eventually move over an optimized binary data plane.
-
----
-
-## Recommended implementation order
-
-1. Add `cmd/jetsonfabric-node` with single-node self-leader mode.
-2. Add `membership.Store` and stable node identity.
-3. Add deterministic `election.ElectLeader`.
-4. Add `facade.Router` that serves directly when leader and proxies when follower.
-5. Add static seed discovery through `/v1/cluster/announce` and `/v1/cluster/members`.
-6. Add deployment plan data model and deployment APIs.
-7. Add node-to-local-runtime configuration path.
-8. Add mDNS discovery.
-9. Add leader lease or Raft only if consistency requirements demand it.
-10. Add optimized runtime-to-runtime binary data plane for pipeline activations.
-
----
-
-## UX target
-
-Old:
-
-```bash
-make control-run
-make runtime-run
-make agent-run CONTROL_URL=http://control:52415 ...
-```
-
-New:
-
-```bash
-jetsonfabric-node
-```
-
-Then:
-
-```bash
-curl http://any-node:52415/v1/chat/completions
-```
-
-The node that receives the request either handles it as leader or proxies it to the leader.
+After deployment state becomes durable or safety-critical, add a leader lease/epoch. Move to Raft only if JetsonFabric needs strongly consistent committed deployment state across coordinator failover.
