@@ -96,7 +96,6 @@ func (s *Server) ensureLayerTransport() {
 func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(api.RouteHealth, s.handleHealth)
-	mux.HandleFunc(api.RouteNodes, s.handleNodes)
 	mux.HandleFunc(api.RouteModels, s.handleModels)
 	mux.HandleFunc(api.RoutePreview, s.handleRoutePreview)
 	mux.HandleFunc(api.RouteLayerSplitPlan, s.handleLayerSplitPlan)
