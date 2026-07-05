@@ -48,6 +48,9 @@ Main pieces:
 - `runtime/`: C++ runtime worker and pipeline-parallel stage execution shell.
 - `tools/bench`: developer benchmark client, not part of the production fabric.
 
+For the step-by-step startup, discovery, election, routing, and runtime sequence,
+see [`docs/architecture/node-fabric-workflow.md`](docs/architecture/node-fabric-workflow.md).
+
 ## Node fabric model
 
 Every real machine runs the same command:
