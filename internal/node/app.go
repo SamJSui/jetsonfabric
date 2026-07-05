@@ -14,6 +14,7 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/facade"
 	"github.com/SamJSui/jetsonfabric/internal/membership"
 	"github.com/SamJSui/jetsonfabric/internal/modelregistry"
+	"github.com/SamJSui/jetsonfabric/internal/runtimegateway"
 	"github.com/SamJSui/jetsonfabric/internal/system"
 )
 
@@ -37,82 +38,85 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	startedAt := time.Now().UTC()
+	app := newApp(cfg, nodeID)
 
-	registry, err := modelregistry.Load(cfg.ModelsPath)
+	coordinatorRouter, err := app.coordinatorRouter()
 	if err != nil {
-		return nil, fmt.Errorf("load model registry: %w", err)
+		return nil, err
 	}
-	coordinatorServer := coordinator.NewServer(
-		cfg.JoinToken,
-		registry,
-		coordinator.WithBenchmarkRecorder(benchmarks.NewJSONLRecorder(cfg.BenchmarksPath)),
-	)
+	stageRunner, err := runtimegateway.NewStageProxy(cfg.RuntimeURL)
+	if err != nil {
+		return nil, fmt.Errorf("create runtime stage gateway: %w", err)
+	}
 
-	store := membership.NewStore()
-	app := &App{
-		cfg:       cfg,
-		nodeID:    nodeID,
-		startedAt: startedAt,
-		store:     store,
-	}
-	store.Upsert(app.selfMember(time.Now().UTC()))
-
-	self := func() membership.Member {
-		return app.selfMember(time.Now().UTC())
-	}
+	self := func() membership.Member { return app.selfMember(time.Now().UTC()) }
 	app.discovery = app.discoverySource(self)
-	if cfg.DiscoveryEnabled(discovery.ModeMDNS) {
-		app.mdnsAdvertiser = discovery.NewMDNSAdvertiser(discovery.MDNSConfig{
-			ClusterID: cfg.ClusterID,
-			Service:   cfg.MDNSService,
-			Domain:    cfg.MDNSDomain,
-			Port:      cfg.AdvertisePort(),
-			Self:      self,
-		})
-	}
-	app.server = &http.Server{
-		Addr: cfg.Listen,
-		Handler: facade.NewRouter(facade.Config{
-			SelfID:      nodeID,
-			Store:       store,
-			StaleAfter:  cfg.StaleAfter,
-			Coordinator: coordinatorServer.Router(),
-		}),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
+	app.mdnsAdvertiser = app.newMDNSAdvertiser(self)
+	app.server = app.httpServer(coordinatorRouter, stageRunner)
 	return app, nil
 }
 
-func (a *App) Run(ctx context.Context) error {
-	if a.mdnsAdvertiser != nil {
-		if err := a.mdnsAdvertiser.Start(ctx); err != nil {
-			log.Printf("mDNS advertising disabled: %v", err)
-		} else {
-			defer a.mdnsAdvertiser.Shutdown()
-			log.Printf("JetsonFabric node advertising with mDNS service=%s domain=%s", a.cfg.MDNSService, a.cfg.MDNSDomain)
-		}
+func newApp(cfg Config, nodeID string) *App {
+	app := &App{
+		cfg:       cfg,
+		nodeID:    nodeID,
+		startedAt: time.Now().UTC(),
+		store:     membership.NewStore(),
 	}
+	app.store.Upsert(app.selfMember(time.Now().UTC()))
+	return app
+}
+
+func (a *App) coordinatorRouter() (http.Handler, error) {
+	registry, err := modelregistry.Load(a.cfg.ModelsPath)
+	if err != nil {
+		return nil, fmt.Errorf("load model registry: %w", err)
+	}
+	server := coordinator.NewServer(
+		a.cfg.JoinToken,
+		registry,
+		coordinator.WithBenchmarkRecorder(benchmarks.NewJSONLRecorder(a.cfg.BenchmarksPath)),
+	)
+	return server.Router(), nil
+}
+
+func (a *App) newMDNSAdvertiser(self discovery.SelfFunc) *discovery.MDNSAdvertiser {
+	if !a.cfg.DiscoveryEnabled(discovery.ModeMDNS) {
+		return nil
+	}
+	return discovery.NewMDNSAdvertiser(discovery.MDNSConfig{
+		ClusterID: a.cfg.ClusterID,
+		Service:   a.cfg.MDNSService,
+		Domain:    a.cfg.MDNSDomain,
+		Port:      a.cfg.AdvertisePort(),
+		Self:      self,
+	})
+}
+
+func (a *App) httpServer(coordinatorRouter http.Handler, stageRunner http.Handler) *http.Server {
+	return &http.Server{
+		Addr: a.cfg.Listen,
+		Handler: facade.NewRouter(facade.Config{
+			SelfID:      a.nodeID,
+			Store:       a.store,
+			StaleAfter:  a.cfg.StaleAfter,
+			Coordinator: coordinatorRouter,
+			StageRunner: stageRunner,
+		}),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+}
+
+func (a *App) Run(ctx context.Context) error {
+	a.startMDNS(ctx)
 	go a.discoveryLoop(ctx)
 
 	errCh := make(chan error, 1)
-	go func() {
-		log.Printf("JetsonFabric node listening on http://%s advertised=%s cluster=%s node_id=%s discovery=%v", a.cfg.Listen, a.cfg.APIURL, a.cfg.ClusterID, a.nodeID, a.cfg.DiscoveryModes)
-		errCh <- a.server.ListenAndServe()
-	}()
+	go a.listen(errCh)
 
 	select {
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := a.server.Shutdown(shutdownCtx); err != nil {
-			return err
-		}
-		if err := <-errCh; err != nil && err != http.ErrServerClosed {
-			return err
-		}
-		return nil
+		return a.shutdown(errCh)
 	case err := <-errCh:
 		if err == http.ErrServerClosed {
 			return nil
@@ -121,20 +125,64 @@ func (a *App) Run(ctx context.Context) error {
 	}
 }
 
+func (a *App) startMDNS(ctx context.Context) {
+	if a.mdnsAdvertiser == nil {
+		return
+	}
+	if err := a.mdnsAdvertiser.Start(ctx); err != nil {
+		log.Printf("mDNS advertising disabled: %v", err)
+		return
+	}
+	log.Printf("JetsonFabric node advertising with mDNS service=%s domain=%s", a.cfg.MDNSService, a.cfg.MDNSDomain)
+}
+
+func (a *App) listen(errCh chan<- error) {
+	log.Printf(
+		"JetsonFabric node listening on http://%s advertised=%s cluster=%s node_id=%s discovery=%v",
+		a.cfg.Listen,
+		a.cfg.APIURL,
+		a.cfg.ClusterID,
+		a.nodeID,
+		a.cfg.DiscoveryModes,
+	)
+	errCh <- a.server.ListenAndServe()
+}
+
+func (a *App) shutdown(errCh <-chan error) error {
+	if a.mdnsAdvertiser != nil {
+		a.mdnsAdvertiser.Shutdown()
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := a.server.Shutdown(shutdownCtx); err != nil {
+		return err
+	}
+	if err := <-errCh; err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	return nil
+}
+
 func (a *App) discoverySource(self discovery.SelfFunc) discovery.Source {
+	announcer := discovery.NewAnnounceClient(self)
 	sources := make([]discovery.Source, 0, 2)
 	if a.cfg.DiscoveryEnabled(discovery.ModeStatic) {
 		sources = append(sources, discovery.NewStaticSource(a.cfg.Seeds, self))
 	}
 	if a.cfg.DiscoveryEnabled(discovery.ModeMDNS) {
-		sources = append(sources, discovery.NewMDNSSource(discovery.MDNSConfig{
-			ClusterID:     a.cfg.ClusterID,
-			Service:       a.cfg.MDNSService,
-			Domain:        a.cfg.MDNSDomain,
-			BrowseTimeout: a.cfg.MDNSBrowseTimeout,
-		}))
+		sources = append(sources, a.hydratingMDNSSource(announcer))
 	}
 	return discovery.NewMultiSource(sources...)
+}
+
+func (a *App) hydratingMDNSSource(announcer *discovery.AnnounceClient) discovery.Source {
+	mdnsSource := discovery.NewMDNSSource(discovery.MDNSConfig{
+		ClusterID:     a.cfg.ClusterID,
+		Service:       a.cfg.MDNSService,
+		Domain:        a.cfg.MDNSDomain,
+		BrowseTimeout: a.cfg.MDNSBrowseTimeout,
+	})
+	return discovery.NewHydratingSource(mdnsSource, announcer)
 }
 
 func (a *App) discoveryLoop(ctx context.Context) {
@@ -156,24 +204,22 @@ func (a *App) refreshMembership(ctx context.Context) {
 	now := time.Now().UTC()
 	a.store.Upsert(a.selfMember(now))
 	a.store.Prune(now, a.cfg.StaleAfter, a.nodeID)
-
 	if a.discovery == nil {
 		return
 	}
+
 	members, err := a.discovery.Discover(ctx)
 	if err != nil {
 		log.Printf("discovery failed: %v", err)
 		return
 	}
+	a.mergeDiscoveredMembers(members, now)
+}
+
+func (a *App) mergeDiscoveredMembers(members []membership.Member, now time.Time) {
 	for _, member := range members {
 		member = membership.Normalize(member)
-		if member.NodeID == a.nodeID {
-			// Ignore self-discovery. mDNS responses may arrive from a different interface
-			// address than the configured advertise URL and should not overwrite the
-			// authoritative self record with partial TXT metadata.
-			continue
-		}
-		if member.ClusterID != a.cfg.ClusterID {
+		if member.NodeID == a.nodeID || member.ClusterID != a.cfg.ClusterID {
 			continue
 		}
 		if member.LastSeen.IsZero() {
