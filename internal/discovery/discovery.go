@@ -20,3 +20,5 @@ const (
 type Source interface {
 	Discover(ctx context.Context) ([]membership.Member, error)
 }
+
+type SelfFunc func() membership.Member
