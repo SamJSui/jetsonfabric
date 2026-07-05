@@ -38,8 +38,6 @@ type Config struct {
 
 	Role             membership.NodeRole
 	LeaderPreference int
-	ControlEligible  bool
-	ControlPriority  int
 
 	Seeds             []string
 	DiscoveryModes    []string
@@ -83,9 +81,6 @@ func NormalizeConfig(cfg Config) Config {
 	cfg.Seeds = normalizeStrings(cfg.Seeds)
 	cfg.DiscoveryModes = normalizeDiscoveryModes(cfg.DiscoveryModes)
 	cfg.Role = resolveNodeRole(cfg.Role)
-	cfg.LeaderPreference = normalizedPreference(cfg)
-	cfg.ControlEligible = membership.RoleLeaderEligible(cfg.Role)
-	cfg.ControlPriority = cfg.LeaderPreference
 	cfg = normalizeMDNSConfig(cfg)
 	if cfg.APIURL == "" {
 		cfg.APIURL = defaultAdvertiseURL(cfg.NodeName, cfg.Listen)
@@ -105,13 +100,6 @@ func normalizeStringsInConfig(cfg Config) Config {
 	cfg.ModelsPath = strings.TrimSpace(cfg.ModelsPath)
 	cfg.BenchmarksPath = strings.TrimSpace(cfg.BenchmarksPath)
 	return cfg
-}
-
-func normalizedPreference(cfg Config) int {
-	if cfg.LeaderPreference != 0 {
-		return cfg.LeaderPreference
-	}
-	return cfg.ControlPriority
 }
 
 func normalizeMDNSConfig(cfg Config) Config {
