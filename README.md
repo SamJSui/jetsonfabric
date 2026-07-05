@@ -93,6 +93,9 @@ Role defaults reduce config:
 - Generic Linux PCs become `worker` and do not lead unless explicitly started
   with `NODE_ROLE=coordinator`.
 
+Use `GET /v1/cluster/election` to inspect the election decision, candidate roles,
+eligibility, ranking fields, and exclusion reasons.
+
 This is intentionally simple for the current homelab/edge prototype. Before real
 deployment writes and long-running layer execution, the coordinator should also
 actively probe node health and runtime readiness. Membership means "may exist";
@@ -149,6 +152,7 @@ From Windows CMD, PowerShell, WSL, or another client:
 ```sh
 curl http://dopey.local:52415/v1/cluster/members
 curl http://dopey.local:52415/v1/cluster/leader
+curl http://dopey.local:52415/v1/cluster/election
 ```
 
 If `.local` or multicast is unavailable from the client environment, use a LAN or
