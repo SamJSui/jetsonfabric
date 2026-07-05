@@ -3,17 +3,11 @@ package config
 import (
 	"fmt"
 	"path/filepath"
-	"time"
 )
 
 const (
-	DefaultControlHost = "127.0.0.1"
-	DefaultControlPort = 52415
-	DefaultAgentHost   = "127.0.0.1"
-	DefaultAgentPort   = 52416
-	DefaultJoinToken   = "dev-token"
-
-	DefaultHeartbeatInterval = 10 * time.Second
+	DefaultNodeHost = "127.0.0.1"
+	DefaultNodePort = 52415
 )
 
 const (
@@ -22,24 +16,16 @@ const (
 	modelArtifactsFile = "model-artifacts.example.json"
 	dataDir            = "data"
 	benchmarksFile     = "benchmarks.jsonl"
-	controlURLFormat   = "http://%s:%d"
+	urlFormat          = "http://%s:%d"
 	listenFormat       = "%s:%d"
 )
 
-func DefaultControlListen() string {
-	return fmt.Sprintf(listenFormat, DefaultControlHost, DefaultControlPort)
+func DefaultNodeListen() string {
+	return fmt.Sprintf(listenFormat, DefaultNodeHost, DefaultNodePort)
 }
 
-func DefaultAgentListen() string {
-	return fmt.Sprintf(listenFormat, DefaultAgentHost, DefaultAgentPort)
-}
-
-func DefaultControlURL() string {
-	return fmt.Sprintf(controlURLFormat, DefaultControlHost, DefaultControlPort)
-}
-
-func DefaultAgentURL() string {
-	return fmt.Sprintf(controlURLFormat, DefaultAgentHost, DefaultAgentPort)
+func DefaultNodeURL() string {
+	return fmt.Sprintf(urlFormat, DefaultNodeHost, DefaultNodePort)
 }
 
 func DefaultModelRegistryPath() string {
