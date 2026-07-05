@@ -64,8 +64,7 @@ mDNS only bootstraps peer addresses. HTTP announce hydrates the full member reco
 ```text
 facade.Router.leader
   -> membership.Store.List
-  -> visibleMembers filters stale records
-  -> election.ElectLeader
+  -> election.Explain / election.ElectLeader
        drop invalid/stale peers
        keep roles that may lead: coordinator, jetson
        rank coordinator before jetson
@@ -73,6 +72,8 @@ facade.Router.leader
        prefer older started_at
        tie-break by stable node_id
 ```
+
+`GET /v1/cluster/election` exposes the same selection explanation used by the facade: leader, candidates, effective role, role rank, leader preference, eligibility, and reason. This keeps election behavior debuggable without adding a separate consensus protocol.
 
 Election is deterministic selection, not Raft consensus. It is good enough while deployment state is still early and mostly in-memory. Before real deployment writes, the coordinator should actively probe node and runtime readiness.
 
@@ -84,6 +85,7 @@ Cluster-local routes are handled on every node:
 GET  /healthz
 GET  /v1/cluster/members
 GET  /v1/cluster/leader
+GET  /v1/cluster/election
 POST /v1/cluster/announce
 POST /v1/layer-split/stage
 ```
@@ -139,10 +141,10 @@ internal/discovery/*
   discovers peer addresses through static seeds or mDNS and hydrates peers via announce
 
 internal/election/*
-  chooses one coordinator from fresh role-eligible members
+  chooses one coordinator from fresh role-eligible members and explains decisions
 
 internal/facade/router.go
-  exposes public node API, cluster views, leader proxying, and local stage route
+  exposes public node API, cluster views, leader proxying, election explanation, and local stage route
 
 internal/coordinator/*
   handles leader-only planning/routing APIs embedded inside the selected node
