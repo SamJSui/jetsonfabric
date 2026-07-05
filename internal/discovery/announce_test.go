@@ -83,13 +83,13 @@ func testMember(id string, name string, apiURL string) membership.Member {
 		apiURL = "http://" + name + ".local:52415"
 	}
 	return membership.Member{
-		ClusterID:       "home-lab",
-		NodeID:          id,
-		NodeName:        name,
-		Hostname:        name,
-		APIURL:          apiURL,
-		ControlEligible: true,
-		StartedAt:       time.Unix(1, 0).UTC(),
-		LastSeen:        time.Unix(2, 0).UTC(),
+		ClusterID:  "home-lab",
+		NodeID:     id,
+		NodeName:   name,
+		Hostname:   name,
+		Role:       membership.NodeRoleJetson,
+		APIURL:     apiURL,
+		StartedAt:  time.Unix(1, 0).UTC(),
+		LastSeen:   time.Unix(2, 0).UTC(),
 	}
 }
