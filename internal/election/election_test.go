@@ -68,6 +68,21 @@ func TestElectLeaderSkipsStaleMembers(t *testing.T) {
 	assertLeader(t, leader, ok, "fresh")
 }
 
+func TestExplainIncludesIneligibleReasons(t *testing.T) {
+	now := testNow()
+	result := Explain(now, []membership.Member{
+		testMember("worker", membership.NodeRoleWorker, 0, now, now),
+		testMember("stale", membership.NodeRoleCoordinator, 0, now.Add(-2*time.Minute), now),
+		testMember("leader", membership.NodeRoleJetson, 0, now, now),
+	}, time.Minute)
+
+	if result.Leader == nil || result.Leader.NodeID != "leader" {
+		t.Fatalf("unexpected leader: %+v", result.Leader)
+	}
+	assertReason(t, result, "worker", ReasonRoleNotEligible)
+	assertReason(t, result, "stale", ReasonStaleMember)
+}
+
 func assertLeader(t *testing.T, leader membership.Member, ok bool, nodeID string) {
 	t.Helper()
 	if !ok {
@@ -76,6 +91,16 @@ func assertLeader(t *testing.T, leader membership.Member, ok bool, nodeID string
 	if leader.NodeID != nodeID {
 		t.Fatalf("expected %s, got %s", nodeID, leader.NodeID)
 	}
+}
+
+func assertReason(t *testing.T, result Result, nodeID string, reason string) {
+	t.Helper()
+	for _, candidate := range result.Candidates {
+		if candidate.Member.NodeID == nodeID && candidate.Reason == reason {
+			return
+		}
+	}
+	t.Fatalf("expected %s reason %s in %+v", nodeID, reason, result.Candidates)
 }
 
 func testMember(id string, role membership.NodeRole, preference int, lastSeen time.Time, startedAt time.Time) membership.Member {
