@@ -25,8 +25,7 @@ NODE_DISCOVERY ?= static,mdns
 NODE_MDNS_SERVICE ?= _jetsonfabric._tcp
 NODE_MDNS_DOMAIN ?= local.
 NODE_DATA_DIR ?= .cache/jetsonfabric
-NODE_CONTROL_ELIGIBLE ?= true
-NODE_CONTROL_PRIORITY ?= 10
+NODE_ROLE ?= auto
 NODE_RUNTIME_URL ?= http://127.0.0.1:9090
 
 ENGINE ?= jetsonfabric-runtime
@@ -62,7 +61,7 @@ help:
 	@printf '  make node-run             Run Exo-like all-in-one node locally\n'
 	@printf '  make runtime-run          Run runtime locally\n\n'
 	@printf 'Discovery defaults:\n'
-	@printf '  NODE_DISCOVERY=static,mdns; NODE_ADVERTISE_URL may be omitted for mDNS/hostname defaults\n\n'
+	@printf '  NODE_DISCOVERY=static,mdns; NODE_ROLE=auto; NODE_ADVERTISE_URL may be omitted\n\n'
 	@printf 'Developer tools:\n'
 	@printf '  make bench                Run developer benchmark client against a node API\n\n'
 	@printf 'Docker images:\n'
@@ -104,8 +103,7 @@ node-run:
 		--runtime-url $(NODE_RUNTIME_URL) \
 		--engine $(ENGINE) \
 		--model $(MODEL) \
-		--control-eligible=$(NODE_CONTROL_ELIGIBLE) \
-		--control-priority $(NODE_CONTROL_PRIORITY) \
+		--role $(NODE_ROLE) \
 		--seeds "$(NODE_SEEDS)" \
 		--discovery "$(NODE_DISCOVERY)" \
 		--mdns-service "$(NODE_MDNS_SERVICE)" \
