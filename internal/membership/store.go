@@ -26,14 +26,32 @@ func (s *Store) Upsert(member Member) {
 	defer s.mu.Unlock()
 
 	if existing, ok := s.members[member.NodeID]; ok {
-		if member.StartedAt.IsZero() {
-			member.StartedAt = existing.StartedAt
-		}
-		if member.LastSeen.IsZero() {
-			member.LastSeen = existing.LastSeen
-		}
+		member = mergeMember(existing, member)
 	}
 	s.members[member.NodeID] = member
+}
+
+func mergeMember(existing Member, incoming Member) Member {
+	if incoming.StartedAt.IsZero() {
+		incoming.StartedAt = existing.StartedAt
+	}
+	if incoming.LastSeen.IsZero() {
+		incoming.LastSeen = existing.LastSeen
+	}
+	mergeRichFields(&incoming, existing)
+	return incoming
+}
+
+func mergeRichFields(incoming *Member, existing Member) {
+	if len(incoming.Capabilities) == 0 {
+		incoming.Capabilities = existing.Capabilities
+	}
+	if len(incoming.Metrics) == 0 {
+		incoming.Metrics = existing.Metrics
+	}
+	if len(incoming.Engines) == 0 {
+		incoming.Engines = existing.Engines
+	}
 }
 
 func (s *Store) Get(nodeID string) (Member, bool) {
