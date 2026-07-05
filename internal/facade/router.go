@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/SamJSui/jetsonfabric/internal/api"
 	"github.com/SamJSui/jetsonfabric/internal/election"
 	"github.com/SamJSui/jetsonfabric/internal/membership"
 )
@@ -22,6 +23,7 @@ type Config struct {
 	Store       *membership.Store
 	StaleAfter  time.Duration
 	Coordinator http.Handler
+	StageRunner http.Handler
 }
 
 type Router struct {
@@ -29,6 +31,7 @@ type Router struct {
 	store       *membership.Store
 	staleAfter  time.Duration
 	coordinator http.Handler
+	stageRunner http.Handler
 }
 
 type ClusterView struct {
@@ -42,12 +45,14 @@ func NewRouter(cfg Config) http.Handler {
 		store:       cfg.Store,
 		staleAfter:  cfg.StaleAfter,
 		coordinator: cfg.Coordinator,
+		stageRunner: cfg.StageRunner,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", r.handleHealth)
 	mux.HandleFunc("GET "+PathClusterMembers, r.handleMembers)
 	mux.HandleFunc("GET "+PathClusterLeader, r.handleLeader)
 	mux.HandleFunc("POST "+PathClusterAnnounce, r.handleAnnounce)
+	mux.HandleFunc(api.RouteLayerSplitStage, r.handleStageRun)
 	mux.HandleFunc("/", r.handleCoordinator)
 	return mux
 }
@@ -64,8 +69,7 @@ func (r *Router) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (r *Router) handleMembers(w http.ResponseWriter, _ *http.Request) {
-	view := r.clusterView()
-	writeJSON(w, http.StatusOK, view)
+	writeJSON(w, http.StatusOK, r.clusterView())
 }
 
 func (r *Router) handleLeader(w http.ResponseWriter, _ *http.Request) {
@@ -83,25 +87,11 @@ func (r *Router) handleLeader(w http.ResponseWriter, _ *http.Request) {
 func (r *Router) handleAnnounce(w http.ResponseWriter, req *http.Request) {
 	defer req.Body.Close()
 
-	var member membership.Member
-	if err := json.NewDecoder(req.Body).Decode(&member); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error":   "invalid_member",
-			"message": "request body must be a valid member record",
-		})
+	member, ok := r.decodeAnnouncedMember(w, req)
+	if !ok {
 		return
 	}
-	member = membership.Normalize(member)
-	if !member.Valid() {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error":   "invalid_member",
-			"message": "cluster_id, node_id, and api_url are required",
-		})
-		return
-	}
-
-	self, ok := r.store.Get(r.selfID)
-	if ok && self.ClusterID != "" && member.ClusterID != self.ClusterID {
+	if !r.sameCluster(member) {
 		writeJSON(w, http.StatusForbidden, map[string]string{
 			"error":   "cluster_mismatch",
 			"message": "announced member belongs to a different cluster",
@@ -114,6 +104,36 @@ func (r *Router) handleAnnounce(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, r.clusterView())
 }
 
+func (r *Router) decodeAnnouncedMember(w http.ResponseWriter, req *http.Request) (membership.Member, bool) {
+	var member membership.Member
+	if err := json.NewDecoder(req.Body).Decode(&member); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_member", "message": "request body must be a valid member record"})
+		return membership.Member{}, false
+	}
+	member = membership.Normalize(member)
+	if !member.Valid() {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_member", "message": "cluster_id, node_id, and api_url are required"})
+		return membership.Member{}, false
+	}
+	return member, true
+}
+
+func (r *Router) sameCluster(member membership.Member) bool {
+	self, ok := r.store.Get(r.selfID)
+	return !ok || self.ClusterID == "" || member.ClusterID == self.ClusterID
+}
+
+func (r *Router) handleStageRun(w http.ResponseWriter, req *http.Request) {
+	if r.stageRunner == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error":   "runtime_stage_gateway_unavailable",
+			"message": "this node has no runtime stage gateway configured",
+		})
+		return
+	}
+	r.stageRunner.ServeHTTP(w, req)
+}
+
 func (r *Router) handleCoordinator(w http.ResponseWriter, req *http.Request) {
 	leader, ok := r.leader()
 	if !ok {
@@ -123,26 +143,27 @@ func (r *Router) handleCoordinator(w http.ResponseWriter, req *http.Request) {
 		})
 		return
 	}
-
 	if leader.NodeID == r.selfID {
-		if r.coordinator == nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-				"error":   "coordinator_unavailable",
-				"message": "this node is leader but has no coordinator router configured",
-			})
-			return
-		}
-		r.coordinator.ServeHTTP(w, req)
+		r.serveLocalCoordinator(w, req)
 		return
 	}
-
 	proxyToLeader(w, req, leader.APIURL)
 }
 
+func (r *Router) serveLocalCoordinator(w http.ResponseWriter, req *http.Request) {
+	if r.coordinator == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error":   "coordinator_unavailable",
+			"message": "this node is leader but has no coordinator router configured",
+		})
+		return
+	}
+	r.coordinator.ServeHTTP(w, req)
+}
+
 func (r *Router) clusterView() ClusterView {
-	members := r.activeMembers(time.Now().UTC())
-	leader, ok := election.ElectLeader(time.Now().UTC(), members, r.staleAfter)
-	view := ClusterView{Members: members}
+	leader, ok := r.leader()
+	view := ClusterView{Members: r.visibleMembers(time.Now().UTC())}
 	if ok {
 		view.Leader = &leader
 	}
@@ -151,19 +172,18 @@ func (r *Router) clusterView() ClusterView {
 
 func (r *Router) leader() (membership.Member, bool) {
 	now := time.Now().UTC()
-	return election.ElectLeader(now, r.activeMembers(now), r.staleAfter)
+	return election.ElectLeader(now, r.visibleMembers(now), r.staleAfter)
 }
 
-func (r *Router) activeMembers(now time.Time) []membership.Member {
+func (r *Router) visibleMembers(now time.Time) []membership.Member {
 	members := r.store.List()
-	active := make([]membership.Member, 0, len(members))
+	visible := make([]membership.Member, 0, len(members))
 	for _, member := range members {
-		if member.IsStale(now, r.staleAfter) {
-			continue
+		if !member.IsStale(now, r.staleAfter) {
+			visible = append(visible, member)
 		}
-		active = append(active, member)
 	}
-	return active
+	return visible
 }
 
 func proxyToLeader(w http.ResponseWriter, req *http.Request, leaderURL string) {
@@ -177,10 +197,7 @@ func proxyToLeader(w http.ResponseWriter, req *http.Request, leaderURL string) {
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
-		writeJSON(w, http.StatusBadGateway, map[string]string{
-			"error":   "leader_proxy_failed",
-			"message": err.Error(),
-		})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "leader_proxy_failed", "message": err.Error()})
 	}
 	proxy.ServeHTTP(w, req)
 }
