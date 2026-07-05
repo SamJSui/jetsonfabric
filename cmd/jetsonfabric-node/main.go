@@ -65,7 +65,6 @@ func bindFlags(fs *flag.FlagSet, cfg *node.Config, values *flagValues) {
 	bindCoreFlags(fs, cfg, values)
 	bindRoleFlags(fs, cfg, values)
 	bindDiscoveryFlags(fs, cfg, values)
-	fs.StringVar(&cfg.JoinToken, "join-token", cfg.JoinToken, "internal join token used by embedded coordinator")
 	fs.StringVar(&cfg.ModelsPath, "models", cfg.ModelsPath, "model registry JSON path")
 	fs.StringVar(&cfg.BenchmarksPath, "benchmarks", cfg.BenchmarksPath, "benchmark JSONL output path")
 }
