@@ -14,8 +14,8 @@ import (
 func TestClusterMembersHideStaleMembers(t *testing.T) {
 	store := membership.NewStore()
 	now := time.Now().UTC()
-	store.Upsert(testFacadeMember("self", "dopey", true, now))
-	store.Upsert(testFacadeMember("stale", "wsl", false, now.Add(-time.Minute)))
+	store.Upsert(testFacadeMember("self", "dopey", membership.NodeRoleJetson, now))
+	store.Upsert(testFacadeMember("stale", "wsl", membership.NodeRoleTest, now.Add(-time.Minute)))
 
 	router := NewRouter(Config{SelfID: "self", Store: store, StaleAfter: 30 * time.Second})
 	response := httptest.NewRecorder()
@@ -29,7 +29,7 @@ func TestClusterMembersHideStaleMembers(t *testing.T) {
 
 func TestLayerSplitStageRoutesToLocalStageRunner(t *testing.T) {
 	store := membership.NewStore()
-	store.Upsert(testFacadeMember("self", "dopey", true, time.Now().UTC()))
+	store.Upsert(testFacadeMember("self", "dopey", membership.NodeRoleJetson, time.Now().UTC()))
 
 	stageCalled := false
 	coordinatorCalled := false
@@ -67,14 +67,14 @@ func decodeClusterView(t *testing.T, response *httptest.ResponseRecorder) Cluste
 	return view
 }
 
-func testFacadeMember(id string, name string, eligible bool, lastSeen time.Time) membership.Member {
+func testFacadeMember(id string, name string, role membership.NodeRole, lastSeen time.Time) membership.Member {
 	return membership.Member{
-		ClusterID:       "home-lab",
-		NodeID:          id,
-		NodeName:        name,
-		APIURL:          "http://" + name + ".local:52415",
-		ControlEligible: eligible,
-		StartedAt:       lastSeen.Add(-time.Minute),
-		LastSeen:        lastSeen,
+		ClusterID: "home-lab",
+		NodeID:    id,
+		NodeName:  name,
+		Role:      role,
+		APIURL:    "http://" + name + ".local:52415",
+		StartedAt: lastSeen.Add(-time.Minute),
+		LastSeen:  lastSeen,
 	}
 }
