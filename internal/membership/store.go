@@ -32,13 +32,32 @@ func (s *Store) Upsert(member Member) {
 }
 
 func mergeMember(existing Member, incoming Member) Member {
+	incoming = mergeIdentityFields(existing, incoming)
+	incoming = mergeTimeFields(existing, incoming)
+	mergeRichFields(&incoming, existing)
+	return Normalize(incoming)
+}
+
+func mergeIdentityFields(existing Member, incoming Member) Member {
+	if incoming.Role == NodeRoleAuto && existing.Role != NodeRoleAuto {
+		incoming.Role = existing.Role
+	}
+	if incoming.LeaderPreference == 0 && existing.LeaderPreference != 0 {
+		incoming.LeaderPreference = existing.LeaderPreference
+	}
+	if incoming.ControlPriority == 0 && existing.ControlPriority != 0 {
+		incoming.ControlPriority = existing.ControlPriority
+	}
+	return incoming
+}
+
+func mergeTimeFields(existing Member, incoming Member) Member {
 	if incoming.StartedAt.IsZero() {
 		incoming.StartedAt = existing.StartedAt
 	}
 	if incoming.LastSeen.IsZero() {
 		incoming.LastSeen = existing.LastSeen
 	}
-	mergeRichFields(&incoming, existing)
 	return incoming
 }
 
