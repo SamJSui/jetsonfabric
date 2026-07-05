@@ -86,7 +86,6 @@ func testMember(id string, role membership.NodeRole, preference int, lastSeen ti
 		Role:             role,
 		APIURL:           "http://" + id + ":52415",
 		LeaderPreference: preference,
-		ControlEligible:  membership.RoleLeaderEligible(role),
 		StartedAt:        startedAt,
 		LastSeen:         lastSeen,
 	}
