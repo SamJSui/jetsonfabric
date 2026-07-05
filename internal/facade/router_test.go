@@ -42,9 +42,10 @@ func TestClusterElectionExplainsCandidates(t *testing.T) {
 	if result.Leader == nil || result.Leader.NodeID != "self" {
 		t.Fatalf("unexpected leader: %+v", result.Leader)
 	}
-	if len(result.Candidates) != 2 {
-		t.Fatalf("expected two candidates, got %+v", result.Candidates)
+	if result.Epoch == 0 || result.LeaseExpiresAt == nil {
+		t.Fatalf("expected lease-backed result, got %+v", result)
 	}
+	assertCandidateReason(t, result, "worker", election.ReasonRoleNotEligible)
 }
 
 func TestLayerSplitStageRoutesToLocalStageRunner(t *testing.T) {
@@ -100,6 +101,16 @@ func assertOK(t *testing.T, response *httptest.ResponseRecorder) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("unexpected status: %d", response.Code)
 	}
+}
+
+func assertCandidateReason(t *testing.T, result election.Result, nodeID string, reason string) {
+	t.Helper()
+	for _, candidate := range result.Candidates {
+		if candidate.Member.NodeID == nodeID && candidate.Reason == reason {
+			return
+		}
+	}
+	t.Fatalf("expected %s reason %s in %+v", nodeID, reason, result.Candidates)
 }
 
 func testFacadeMember(id string, name string, role membership.NodeRole, lastSeen time.Time) membership.Member {
