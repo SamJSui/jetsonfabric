@@ -37,13 +37,14 @@ func run(args []string) error {
 func parseConfig(args []string) (node.Config, error) {
 	cfg := node.DefaultConfigValue()
 	var seeds string
+	var discoveryModes string
 	var engine string
 
 	fs := flag.NewFlagSet("jetsonfabric-node", flag.ContinueOnError)
 	fs.StringVar(&cfg.ClusterID, "cluster-id", cfg.ClusterID, "cluster id used to isolate discovered peers")
 	fs.StringVar(&cfg.NodeName, "node-name", cfg.NodeName, "stable node name; defaults to OS hostname")
 	fs.StringVar(&cfg.Listen, "listen", cfg.Listen, "node facade listen address")
-	fs.StringVar(&cfg.APIURL, "advertise-url", cfg.APIURL, "URL this node advertises to peers")
+	fs.StringVar(&cfg.APIURL, "advertise-url", cfg.APIURL, "URL this node advertises to peers; defaults to http://<hostname>.local:<listen-port>")
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "directory for stable node identity and node-local state")
 	fs.StringVar(&cfg.RuntimeURL, "runtime-url", cfg.RuntimeURL, "local C++ runtime URL")
 	fs.StringVar(&engine, "engine", string(cfg.Engine), "local runtime engine kind")
@@ -51,8 +52,12 @@ func parseConfig(args []string) (node.Config, error) {
 	fs.BoolVar(&cfg.ControlEligible, "control-eligible", cfg.ControlEligible, "whether this node may become coordinator leader")
 	fs.IntVar(&cfg.ControlPriority, "control-priority", cfg.ControlPriority, "leader election priority; higher wins")
 	fs.StringVar(&seeds, "seeds", "", "comma-separated peer node API URLs for static discovery")
+	fs.StringVar(&discoveryModes, "discovery", strings.Join(cfg.DiscoveryModes, ","), "comma-separated discovery modes: static,mdns,none")
 	fs.DurationVar(&cfg.DiscoveryInterval, "discovery-interval", cfg.DiscoveryInterval, "peer discovery interval")
 	fs.DurationVar(&cfg.StaleAfter, "stale-after", cfg.StaleAfter, "member staleness timeout")
+	fs.StringVar(&cfg.MDNSService, "mdns-service", cfg.MDNSService, "mDNS service name")
+	fs.StringVar(&cfg.MDNSDomain, "mdns-domain", cfg.MDNSDomain, "mDNS domain")
+	fs.DurationVar(&cfg.MDNSBrowseTimeout, "mdns-browse-timeout", cfg.MDNSBrowseTimeout, "mDNS browse timeout per discovery tick")
 	fs.StringVar(&cfg.JoinToken, "join-token", cfg.JoinToken, "internal join token used by embedded coordinator")
 	fs.StringVar(&cfg.ModelsPath, "models", cfg.ModelsPath, "model registry JSON path")
 	fs.StringVar(&cfg.BenchmarksPath, "benchmarks", cfg.BenchmarksPath, "benchmark JSONL output path")
@@ -62,6 +67,7 @@ func parseConfig(args []string) (node.Config, error) {
 
 	cfg.Engine = cluster.Engine(strings.TrimSpace(engine))
 	cfg.Seeds = splitCSV(seeds)
+	cfg.DiscoveryModes = splitCSV(discoveryModes)
 	cfg = node.NormalizeConfig(cfg)
 	return cfg, node.ValidateConfig(cfg)
 }
