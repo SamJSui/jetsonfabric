@@ -19,6 +19,7 @@ type Snapshot struct {
 	Hostname     string                  `json:"hostname"`
 	Arch         string                  `json:"arch"`
 	OS           cluster.OperatingSystem `json:"os"`
+	WSL          bool                    `json:"wsl"`
 	Capabilities map[string]any          `json:"capabilities"`
 	Metrics      map[string]any          `json:"metrics"`
 }
@@ -31,6 +32,7 @@ func Detect() Snapshot {
 		Hostname:     hostname,
 		Arch:         runtime.GOARCH,
 		OS:           operatingSystem,
+		WSL:          detectWSL(),
 		Capabilities: detectCapabilities(operatingSystem),
 		Metrics:      detectMetrics(operatingSystem),
 	}
