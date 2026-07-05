@@ -14,7 +14,6 @@ import (
 )
 
 type Server struct {
-	joinToken          string
 	registry           modelregistry.Registry
 	engineFactory      EngineFactory
 	benchmarkRecorder  benchmarks.Recorder
@@ -54,9 +53,8 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
-func NewServer(joinToken string, registry modelregistry.Registry, opts ...Option) *Server {
+func NewServer(registry modelregistry.Registry, opts ...Option) *Server {
 	server := &Server{
-		joinToken:          joinToken,
 		registry:           registry,
 		engineFactory:      defaultEngineFactory,
 		benchmarkRecorder:  benchmarks.NoopRecorder{},
@@ -67,23 +65,32 @@ func NewServer(joinToken string, registry modelregistry.Registry, opts ...Option
 	for _, opt := range opts {
 		opt(server)
 	}
-	if server.engineFactory == nil {
-		server.engineFactory = defaultEngineFactory
-	}
-	if server.benchmarkRecorder == nil {
-		server.benchmarkRecorder = benchmarks.NoopRecorder{}
-	}
-	if server.layerTransport == nil {
-		transport, err := layersplit.NewTransport(server.layerTransportKind)
-		if err != nil {
-			panic(err)
-		}
-		server.layerTransport = transport
-	}
-	if server.now == nil {
-		server.now = func() time.Time { return time.Now().UTC() }
-	}
+	server.applyDefaults()
 	return server
+}
+
+func (s *Server) applyDefaults() {
+	if s.engineFactory == nil {
+		s.engineFactory = defaultEngineFactory
+	}
+	if s.benchmarkRecorder == nil {
+		s.benchmarkRecorder = benchmarks.NoopRecorder{}
+	}
+	if s.now == nil {
+		s.now = func() time.Time { return time.Now().UTC() }
+	}
+	s.ensureLayerTransport()
+}
+
+func (s *Server) ensureLayerTransport() {
+	if s.layerTransport != nil {
+		return
+	}
+	transport, err := layersplit.NewTransport(s.layerTransportKind)
+	if err != nil {
+		panic(err)
+	}
+	s.layerTransport = transport
 }
 
 func (s *Server) Router() http.Handler {
@@ -94,7 +101,6 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc(api.RoutePreview, s.handleRoutePreview)
 	mux.HandleFunc(api.RouteLayerSplitPlan, s.handleLayerSplitPlan)
 	mux.HandleFunc(api.RouteLayerSplitChat, s.handleLayerSplitCompletions)
-	mux.HandleFunc(api.RouteAgentHeartbeat, s.handleHeartbeat)
 	mux.HandleFunc(api.RouteChatCompletions, s.handleChatCompletions)
 	return mux
 }
