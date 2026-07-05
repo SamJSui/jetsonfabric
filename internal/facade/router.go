@@ -15,6 +15,7 @@ import (
 const (
 	PathClusterMembers  = "/v1/cluster/members"
 	PathClusterLeader   = "/v1/cluster/leader"
+	PathClusterElection = "/v1/cluster/election"
 	PathClusterAnnounce = "/v1/cluster/announce"
 )
 
@@ -51,6 +52,7 @@ func NewRouter(cfg Config) http.Handler {
 	mux.HandleFunc("GET /healthz", r.handleHealth)
 	mux.HandleFunc("GET "+PathClusterMembers, r.handleMembers)
 	mux.HandleFunc("GET "+PathClusterLeader, r.handleLeader)
+	mux.HandleFunc("GET "+PathClusterElection, r.handleElection)
 	mux.HandleFunc("POST "+PathClusterAnnounce, r.handleAnnounce)
 	mux.HandleFunc(api.RouteLayerSplitStage, r.handleStageRun)
 	mux.HandleFunc("/", r.handleCoordinator)
@@ -70,6 +72,10 @@ func (r *Router) handleHealth(w http.ResponseWriter, _ *http.Request) {
 
 func (r *Router) handleMembers(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, r.clusterView())
+}
+
+func (r *Router) handleElection(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, r.electionResult(time.Now().UTC()))
 }
 
 func (r *Router) handleLeader(w http.ResponseWriter, _ *http.Request) {
@@ -171,8 +177,15 @@ func (r *Router) clusterView() ClusterView {
 }
 
 func (r *Router) leader() (membership.Member, bool) {
-	now := time.Now().UTC()
-	return election.ElectLeader(now, r.visibleMembers(now), r.staleAfter)
+	result := r.electionResult(time.Now().UTC())
+	if result.Leader == nil {
+		return membership.Member{}, false
+	}
+	return *result.Leader, true
+}
+
+func (r *Router) electionResult(now time.Time) election.Result {
+	return election.Explain(now, r.store.List(), r.staleAfter)
 }
 
 func (r *Router) visibleMembers(now time.Time) []membership.Member {
