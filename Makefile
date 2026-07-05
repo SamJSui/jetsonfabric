@@ -19,8 +19,11 @@ MODEL ?= qwen2.5-coder-1.5b-q4
 
 NODE_CLUSTER_ID ?= default
 NODE_LISTEN ?= 0.0.0.0:52415
-NODE_ADVERTISE_URL ?= http://127.0.0.1:52415
+NODE_ADVERTISE_URL ?=
 NODE_SEEDS ?=
+NODE_DISCOVERY ?= static,mdns
+NODE_MDNS_SERVICE ?= _jetsonfabric._tcp
+NODE_MDNS_DOMAIN ?= local.
 NODE_DATA_DIR ?= .cache/jetsonfabric
 NODE_CONTROL_ELIGIBLE ?= true
 NODE_CONTROL_PRIORITY ?= 10
@@ -58,6 +61,8 @@ help:
 	@printf 'Local run:\n'
 	@printf '  make node-run             Run Exo-like all-in-one node locally\n'
 	@printf '  make runtime-run          Run runtime locally\n\n'
+	@printf 'Discovery defaults:\n'
+	@printf '  NODE_DISCOVERY=static,mdns; NODE_ADVERTISE_URL may be omitted for mDNS/hostname defaults\n\n'
 	@printf 'Developer tools:\n'
 	@printf '  make bench                Run developer benchmark client against a node API\n\n'
 	@printf 'Docker images:\n'
@@ -94,7 +99,7 @@ node-run:
 		--cluster-id $(NODE_CLUSTER_ID) \
 		--node-name $(NODE_NAME) \
 		--listen $(NODE_LISTEN) \
-		--advertise-url $(NODE_ADVERTISE_URL) \
+		--advertise-url "$(NODE_ADVERTISE_URL)" \
 		--data-dir $(NODE_DATA_DIR) \
 		--runtime-url $(NODE_RUNTIME_URL) \
 		--engine $(ENGINE) \
@@ -102,6 +107,9 @@ node-run:
 		--control-eligible=$(NODE_CONTROL_ELIGIBLE) \
 		--control-priority $(NODE_CONTROL_PRIORITY) \
 		--seeds "$(NODE_SEEDS)" \
+		--discovery "$(NODE_DISCOVERY)" \
+		--mdns-service "$(NODE_MDNS_SERVICE)" \
+		--mdns-domain "$(NODE_MDNS_DOMAIN)" \
 		--join-token $(JOIN_TOKEN) \
 		--benchmarks $(BENCHMARKS_PATH) \
 		--models $(MODELS_PATH)
