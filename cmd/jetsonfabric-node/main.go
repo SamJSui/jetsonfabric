@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/SamJSui/jetsonfabric/internal/cluster"
+	"github.com/SamJSui/jetsonfabric/internal/membership"
 	"github.com/SamJSui/jetsonfabric/internal/node"
 )
 
@@ -39,18 +40,21 @@ func parseConfig(args []string) (node.Config, error) {
 	var seeds string
 	var discoveryModes string
 	var engine string
+	var role string
 
 	fs := flag.NewFlagSet("jetsonfabric-node", flag.ContinueOnError)
 	fs.StringVar(&cfg.ClusterID, "cluster-id", cfg.ClusterID, "cluster id used to isolate discovered peers")
 	fs.StringVar(&cfg.NodeName, "node-name", cfg.NodeName, "stable node name; defaults to OS hostname")
 	fs.StringVar(&cfg.Listen, "listen", cfg.Listen, "node facade listen address")
-	fs.StringVar(&cfg.APIURL, "advertise-url", cfg.APIURL, "URL this node advertises to peers; defaults to http://<hostname>.local:<listen-port>")
-	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "directory for stable node identity and node-local state")
+	fs.StringVar(&cfg.APIURL, "advertise-url", cfg.APIURL, "URL this node advertises to peers")
+	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "directory for stable node identity and state")
 	fs.StringVar(&cfg.RuntimeURL, "runtime-url", cfg.RuntimeURL, "local C++ runtime URL")
 	fs.StringVar(&engine, "engine", string(cfg.Engine), "local runtime engine kind")
 	fs.StringVar(&cfg.Model, "model", cfg.Model, "model id served by the local runtime, when available")
-	fs.BoolVar(&cfg.ControlEligible, "control-eligible", cfg.ControlEligible, "whether this node may become coordinator leader")
-	fs.IntVar(&cfg.ControlPriority, "control-priority", cfg.ControlPriority, "leader election priority; higher wins")
+	fs.StringVar(&role, "role", string(cfg.Role), "node role: auto, jetson, coordinator, worker, or test")
+	fs.IntVar(&cfg.LeaderPreference, "leader-preference", cfg.LeaderPreference, "advanced tie-break weight within the same role")
+	fs.BoolVar(&cfg.ControlEligible, "control-eligible", cfg.ControlEligible, "deprecated; role now derives this")
+	fs.IntVar(&cfg.ControlPriority, "control-priority", cfg.ControlPriority, "deprecated alias for leader-preference")
 	fs.StringVar(&seeds, "seeds", "", "comma-separated peer node API URLs for static discovery")
 	fs.StringVar(&discoveryModes, "discovery", strings.Join(cfg.DiscoveryModes, ","), "comma-separated discovery modes: static,mdns,none")
 	fs.DurationVar(&cfg.DiscoveryInterval, "discovery-interval", cfg.DiscoveryInterval, "peer discovery interval")
@@ -66,6 +70,7 @@ func parseConfig(args []string) (node.Config, error) {
 	}
 
 	cfg.Engine = cluster.Engine(strings.TrimSpace(engine))
+	cfg.Role = membership.NodeRole(strings.TrimSpace(role))
 	cfg.Seeds = splitCSV(seeds)
 	cfg.DiscoveryModes = splitCSV(discoveryModes)
 	cfg = node.NormalizeConfig(cfg)
