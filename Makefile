@@ -10,7 +10,6 @@ DOCKER ?= docker
 DIST_DIR ?= dist
 RUNTIME_BUILD_DIR ?= runtime/build
 
-JOIN_TOKEN ?= dev-token
 BENCHMARKS_PATH ?= data/benchmarks.jsonl
 MODELS_PATH ?= configs/models.example.json
 
@@ -108,7 +107,6 @@ node-run:
 		--discovery "$(NODE_DISCOVERY)" \
 		--mdns-service "$(NODE_MDNS_SERVICE)" \
 		--mdns-domain "$(NODE_MDNS_DOMAIN)" \
-		--join-token $(JOIN_TOKEN) \
 		--benchmarks $(BENCHMARKS_PATH) \
 		--models $(MODELS_PATH)
 
