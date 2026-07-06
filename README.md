@@ -51,6 +51,9 @@ Main pieces:
 For the step-by-step startup, discovery, election, routing, and runtime sequence,
 see [`docs/architecture/node-fabric-workflow.md`](docs/architecture/node-fabric-workflow.md).
 
+For public-ready build, dependency, runtime, and documentation expectations, see
+[`docs/deployment-standards.md`](docs/deployment-standards.md).
+
 ## Node fabric model
 
 Every real machine runs the same command:
