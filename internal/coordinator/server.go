@@ -10,12 +10,10 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/cluster"
 	"github.com/SamJSui/jetsonfabric/internal/layersplit"
 	"github.com/SamJSui/jetsonfabric/internal/modelregistry"
-	"github.com/SamJSui/jetsonfabric/internal/runtimeclient"
 )
 
 type Server struct {
 	registry           modelregistry.Registry
-	engineFactory      EngineFactory
 	benchmarkRecorder  benchmarks.Recorder
 	layerTransport     layersplit.ActivationTransport
 	layerTransportKind layersplit.TransportKind
@@ -24,15 +22,7 @@ type Server struct {
 	nodes              map[string]cluster.NodeRecord
 }
 
-type EngineFactory func(cluster.EngineEndpoint) (runtimeclient.ChatBackend, error)
-
 type Option func(*Server)
-
-func WithEngineFactory(factory EngineFactory) Option {
-	return func(s *Server) {
-		s.engineFactory = factory
-	}
-}
 
 func WithBenchmarkRecorder(recorder benchmarks.Recorder) Option {
 	return func(s *Server) {
@@ -56,7 +46,6 @@ func WithClock(now func() time.Time) Option {
 func NewServer(registry modelregistry.Registry, opts ...Option) *Server {
 	server := &Server{
 		registry:           registry,
-		engineFactory:      defaultEngineFactory,
 		benchmarkRecorder:  benchmarks.NoopRecorder{},
 		layerTransportKind: layersplit.TransportHTTP,
 		now:                func() time.Time { return time.Now().UTC() },
@@ -70,9 +59,6 @@ func NewServer(registry modelregistry.Registry, opts ...Option) *Server {
 }
 
 func (s *Server) applyDefaults() {
-	if s.engineFactory == nil {
-		s.engineFactory = defaultEngineFactory
-	}
 	if s.benchmarkRecorder == nil {
 		s.benchmarkRecorder = benchmarks.NoopRecorder{}
 	}
