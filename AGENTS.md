@@ -22,16 +22,24 @@ Do not turn this repo into a generic homelab dashboard, repo-ingestion chatbot, 
 - Do not overstate distributed inference performance; benchmark claims before presenting them as wins.
 - Prefer small functions. Aim for 20-40 lines unless the function is simple table setup or unavoidable glue.
 
+## Deployment Standard
+
+Build as if this repository may become public. A new developer should be able to clone the repo, follow source-facing docs, build the project, and run a useful single-node or small-cluster setup without private context from `jetsonfabric-kb` or prior chat history.
+
+Keep local hostnames, Tailscale IPs, model paths, and Jetson names as examples only. Do not hard-code private environment assumptions. Optional dependencies must be explicit, gitignored when locally checked out, and accompanied by actionable failure messages.
+
+Follow `docs/deployment-standards.md` for public-ready build, dependency, runtime, and documentation expectations.
+
 ## No Stub Milestones
 
 Do not spend project capacity building fake workflows as product milestones. Stubs, fakes, and synthetic executors are allowed only as narrow tests, temporary compile seams, or explicit scaffolding that is immediately replaced by the real runtime path.
 
-When choosing between a convincing demo and a real project step, choose the real project step. For runtime work, prioritize integrating a real model backend and CUDA-capable execution path over synthetic payload transformations. The target architecture is:
+When choosing between a convincing demo and a real project step, choose the real project step. For runtime work, prioritize integrating a real model engine and CUDA-capable execution path over synthetic payload transformations. The target architecture is:
 
 ```text
 jetsonfabric-node
   -> jetsonfabric-runtime-worker
-      -> real backend integration, initially llama.cpp/ggml/CUDA where practical
+      -> real engine integration, initially llama.cpp/ggml/CUDA where practical
       -> JetsonFabric-owned planning, layer-stage boundaries, activation transport, telemetry, and benchmarking
 ```
 
@@ -44,7 +52,7 @@ Keep the node fabric coherent while moving toward real larger-than-one-node mode
 3. Role-gated deterministic election with a local lease/epoch selects the coordinator until there are three coordinator-capable voters for Raft.
 4. The coordinator creates deployment or routing decisions.
 5. Runtime execution goes through the node facade into the node-local runtime gateway.
-6. Build dopey runtime correctness with a real model backend before spending effort on fake pipeline demos.
+6. Build dopey runtime correctness with a real model engine before spending effort on fake pipeline demos.
 7. Use one-node `pipeline_parallel` only when it proves the same real runtime contract that later becomes multi-node layer-sharded execution.
 
 ## Required Checks
@@ -67,6 +75,7 @@ git diff --check
 
 - Current architecture summary: `README.md`.
 - Source-facing workflow and file interaction map: `docs/architecture/node-fabric-workflow.md`.
+- Public-ready deployment/build expectations: `docs/deployment-standards.md`.
 - Long-term memory and planning: `SamJSui/jetsonfabric-kb`.
 
 Preserve user changes. Do not reset or revert unrelated work. Keep commits small and explain what changed.
