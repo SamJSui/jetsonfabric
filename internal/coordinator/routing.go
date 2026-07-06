@@ -3,70 +3,21 @@ package coordinator
 import (
 	"cmp"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/cluster"
 	"github.com/SamJSui/jetsonfabric/internal/layersplit"
 	"github.com/SamJSui/jetsonfabric/internal/routing"
-	"github.com/SamJSui/jetsonfabric/internal/runtimeclient"
 )
 
-func defaultEngineFactory(engine cluster.EngineEndpoint) (runtimeclient.ChatBackend, error) {
-	return runtimeclient.NewOpenAIClient(engine.BaseURL, 60*time.Second)
-}
-
-func (s *Server) selectDataParallelEngine(model cluster.ModelProfile) (cluster.NodeRecord, cluster.EngineEndpoint, error) {
-	s.mu.RLock()
-	nodes := make([]cluster.NodeRecord, 0, len(s.nodes))
-	for _, node := range s.nodes {
-		nodes = append(nodes, node)
-	}
-	s.mu.RUnlock()
-	sortNodesByName(nodes)
-
-	preview := routing.Preview(model, nodes)
-	placementByNode := make(map[string]routing.PlacementPreview, len(preview.Placements))
-	for _, placement := range preview.Placements {
-		placementByNode[placement.NodeName] = placement
-	}
-	for _, node := range nodes {
-		placement := placementByNode[node.NodeName]
-		if !placement.Valid {
-			continue
-		}
-		for _, engine := range node.Engines {
-			if engineCompatible(model, engine) {
-				return node, engine, nil
-			}
-		}
-	}
-	if len(nodes) == 0 {
-		return cluster.NodeRecord{}, cluster.EngineEndpoint{}, fmt.Errorf("no online nodes")
-	}
-	return cluster.NodeRecord{}, cluster.EngineEndpoint{}, fmt.Errorf("no compatible backend for model %q", model.ID)
-}
-
 func (s *Server) layerSplitCandidates(model cluster.ModelProfile) []layersplit.NodeCandidate {
-	s.mu.RLock()
-	nodes := make([]cluster.NodeRecord, 0, len(s.nodes))
-	for _, node := range s.nodes {
-		nodes = append(nodes, node)
-	}
-	s.mu.RUnlock()
-	sortNodesByName(nodes)
-
-	preview := routing.Preview(model, nodes)
-	placementByNode := make(map[string]routing.PlacementPreview, len(preview.Placements))
-	for _, placement := range preview.Placements {
-		placementByNode[placement.NodeName] = placement
-	}
+	nodes := s.sortedNodes()
+	placements := placementByNode(model, nodes)
 
 	candidates := make([]layersplit.NodeCandidate, 0, len(nodes))
 	for _, node := range nodes {
-		placement := placementByNode[node.NodeName]
+		placement := placements[node.NodeName]
 		if !placement.Valid {
 			continue
 		}
@@ -74,15 +25,39 @@ func (s *Server) layerSplitCandidates(model cluster.ModelProfile) []layersplit.N
 		if !ok {
 			continue
 		}
-		candidates = append(candidates, layersplit.NodeCandidate{
-			NodeName:         node.NodeName,
-			EngineInstanceID: engine.InstanceID,
-			Engine:           engine.Engine,
-			BaseURL:          engine.BaseURL,
-			Weight:           pipelineWeight(node.Capabilities),
-		})
+		candidates = append(candidates, layerSplitCandidate(node, engine))
 	}
 	return candidates
+}
+
+func (s *Server) sortedNodes() []cluster.NodeRecord {
+	s.mu.RLock()
+	nodes := make([]cluster.NodeRecord, 0, len(s.nodes))
+	for _, node := range s.nodes {
+		nodes = append(nodes, node)
+	}
+	s.mu.RUnlock()
+	sortNodesByName(nodes)
+	return nodes
+}
+
+func placementByNode(model cluster.ModelProfile, nodes []cluster.NodeRecord) map[string]routing.PlacementPreview {
+	preview := routing.Preview(model, nodes)
+	placements := make(map[string]routing.PlacementPreview, len(preview.Placements))
+	for _, placement := range preview.Placements {
+		placements[placement.NodeName] = placement
+	}
+	return placements
+}
+
+func layerSplitCandidate(node cluster.NodeRecord, engine cluster.EngineEndpoint) layersplit.NodeCandidate {
+	return layersplit.NodeCandidate{
+		NodeName:         node.NodeName,
+		EngineInstanceID: engine.InstanceID,
+		Engine:           engine.Engine,
+		BaseURL:          engine.BaseURL,
+		Weight:           pipelineWeight(node.Capabilities),
+	}
 }
 
 func firstCompatibleEngine(model cluster.ModelProfile, engines []cluster.EngineEndpoint) (cluster.EngineEndpoint, bool) {
@@ -102,18 +77,26 @@ func engineCompatible(model cluster.ModelProfile, engine cluster.EngineEndpoint)
 		return false
 	}
 	if len(engine.Models) > 0 {
-		for _, modelID := range engine.Models {
-			if modelID == model.ID {
-				return true
-			}
-		}
-		return false
+		return engineServesModel(engine, model.ID)
 	}
+	return modelSupportsEngine(model, engine.Engine)
+}
+
+func engineServesModel(engine cluster.EngineEndpoint, modelID string) bool {
+	for _, servedModel := range engine.Models {
+		if servedModel == modelID {
+			return true
+		}
+	}
+	return false
+}
+
+func modelSupportsEngine(model cluster.ModelProfile, engine cluster.Engine) bool {
 	if len(model.SupportedEngines) == 0 {
 		return true
 	}
 	for _, supported := range model.SupportedEngines {
-		if supported == engine.Engine {
+		if supported == engine {
 			return true
 		}
 	}
@@ -125,26 +108,29 @@ func optionalFloat(values map[string]any, key string) *float64 {
 	if !ok {
 		return nil
 	}
-	var output float64
-	switch typed := value.(type) {
-	case float64:
-		output = typed
-	case float32:
-		output = float64(typed)
-	case int:
-		output = float64(typed)
-	case int64:
-		output = float64(typed)
-	case json.Number:
-		parsed, err := typed.Float64()
-		if err != nil {
-			return nil
-		}
-		output = parsed
-	default:
+	output, ok := numericFloat(value)
+	if !ok {
 		return nil
 	}
 	return &output
+}
+
+func numericFloat(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func pipelineWeight(capabilities map[string]any) float64 {
