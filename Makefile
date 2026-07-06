@@ -6,11 +6,17 @@ LOCAL_ENV ?= .env.local
 GO ?= go
 CMAKE ?= cmake
 DOCKER ?= docker
+GIT ?= git
 
 DIST_DIR ?= dist
 RUNTIME_BUILD_DIR ?= runtime/build
 RUNTIME_CMAKE_FLAGS ?=
 RUNTIME_BUILD_JOBS ?= 1
+RUNTIME_CUDA_ARCH ?= 87
+CUDA_NVCC ?= /usr/local/cuda/bin/nvcc
+
+LLAMA_CPP_REPO ?= https://github.com/ggml-org/llama.cpp
+LLAMA_CPP_DIR ?= runtime/third_party/llama.cpp
 
 BENCHMARKS_PATH ?= data/benchmarks.jsonl
 MODELS_PATH ?= configs/models.example.json
@@ -58,7 +64,12 @@ help:
 	@printf '  make build                Build node binaries and runtime\n'
 	@printf '  make node                 Build node binaries\n'
 	@printf '  make runtime              Build C++ runtime worker\n'
-	@printf '                             knobs: RUNTIME_BUILD_JOBS=1 RUNTIME_CMAKE_FLAGS="..."\n\n'
+	@printf '                             knobs: RUNTIME_BUILD_JOBS=1 RUNTIME_CMAKE_FLAGS="..."\n'
+	@printf '  make runtime-llama-cpu    Build runtime with local llama.cpp engine\n'
+	@printf '  make runtime-llama-cuda   Build runtime with local llama.cpp + CUDA\n'
+	@printf '  make runtime-clean        Remove runtime build directory\n\n'
+	@printf 'Setup:\n'
+	@printf '  make setup-llama-cpp      Clone llama.cpp into runtime/third_party if missing\n\n'
 	@printf 'Local run:\n'
 	@printf '  make node-run             Run Exo-like all-in-one node locally\n'
 	@printf '  make runtime-run          Run runtime locally\n\n'
@@ -93,6 +104,37 @@ runtime:
 	$(CMAKE) --build $(RUNTIME_BUILD_DIR) --parallel $(RUNTIME_BUILD_JOBS)
 	mkdir -p $(DIST_DIR)
 	cp $(RUNTIME_BUILD_DIR)/jetsonfabric-runtime-worker $(DIST_DIR)/jetsonfabric-runtime-worker
+
+.PHONY: setup-llama-cpp
+setup-llama-cpp:
+	@if [ -f "$(LLAMA_CPP_DIR)/CMakeLists.txt" ]; then \
+		printf 'llama.cpp already present at %s\n' "$(LLAMA_CPP_DIR)"; \
+	else \
+		mkdir -p runtime/third_party; \
+		printf 'cloning llama.cpp into %s\n' "$(LLAMA_CPP_DIR)"; \
+		$(GIT) clone $(LLAMA_CPP_REPO) $(LLAMA_CPP_DIR); \
+	fi
+
+.PHONY: runtime-llama-cpu
+runtime-llama-cpu: setup-llama-cpp
+	$(MAKE) runtime \
+		RUNTIME_BUILD_JOBS=$(RUNTIME_BUILD_JOBS) \
+		RUNTIME_CMAKE_FLAGS='-DJF_ENABLE_LLAMA_CPP=ON -DJF_LLAMA_CPP_SOURCE_DIR=$(abspath $(LLAMA_CPP_DIR))'
+
+.PHONY: runtime-llama-cuda
+runtime-llama-cuda: setup-llama-cpp
+	@if [ ! -x "$(CUDA_NVCC)" ]; then \
+		printf 'CUDA compiler not found at %s\n' "$(CUDA_NVCC)" >&2; \
+		printf 'Set CUDA_NVCC=/path/to/nvcc or build CPU with make runtime-llama-cpu\n' >&2; \
+		exit 2; \
+	fi
+	$(MAKE) runtime \
+		RUNTIME_BUILD_JOBS=$(RUNTIME_BUILD_JOBS) \
+		RUNTIME_CMAKE_FLAGS='-DJF_ENABLE_LLAMA_CPP=ON -DJF_LLAMA_CPP_SOURCE_DIR=$(abspath $(LLAMA_CPP_DIR)) -DGGML_CUDA=ON -DCMAKE_CUDA_COMPILER=$(CUDA_NVCC) -DCMAKE_CUDA_ARCHITECTURES=$(RUNTIME_CUDA_ARCH)'
+
+.PHONY: runtime-clean
+runtime-clean:
+	rm -rf $(RUNTIME_BUILD_DIR)
 
 .PHONY: node-run
 node-run:
