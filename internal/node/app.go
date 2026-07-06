@@ -30,47 +30,27 @@ type App struct {
 }
 
 func New(cfg Config) (*App, error) {
+	app, err := buildApp(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := app.configureHTTPServer(); err != nil {
+		return nil, err
+	}
+	app.configureDiscovery()
+	return app, nil
+}
+
+func buildApp(cfg Config) (*App, error) {
 	cfg = NormalizeConfig(cfg)
 	if err := ValidateConfig(cfg); err != nil {
 		return nil, err
 	}
-
 	nodeID, err := LoadOrCreateNodeID(cfg.DataDir)
 	if err != nil {
 		return nil, err
 	}
-	app := newApp(cfg, nodeID)
-
-	coordinatorRouter, err := app.coordinatorRouter()
-	if err != nil {
-		return nil, err
-	}
-	
-	stageRunner, err := runtimegateway.NewStageProxy(cfg.RuntimeURL)
-	if err != nil {
-		return nil, err
-	}
-
-	chatProxy, err := runtimegateway.NewChatProxy(runtimegateway.ChatProxyConfig{
-		RuntimeURL:  cfg.RuntimeURL,
-		NodeName:    cfg.NodeName,
-		Model:       cfg.Model,
-		LayerStart: 0,
-		LayerEnd:   28,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	publicRouter := http.NewServeMux()
-	publicRouter.Handle(api.PathChatCompletions, chatProxy)
-	publicRouter.Handle("/", coordinatorRouter)
-
-	self := func() membership.Member { return app.selfMember(time.Now().UTC()) }
-	app.discovery = app.discoverySource(self)
-	app.mdnsAdvertiser = app.newMDNSAdvertiser(self)
-	app.server = app.httpServer(publicRouter, stageRunner)
-	return app, nil
+	return newApp(cfg, nodeID), nil
 }
 
 func newApp(cfg Config, nodeID string) *App {
@@ -84,6 +64,23 @@ func newApp(cfg Config, nodeID string) *App {
 	return app
 }
 
+func (a *App) configureHTTPServer() error {
+	coordinatorRouter, err := a.coordinatorRouter()
+	if err != nil {
+		return err
+	}
+	stageRunner, err := a.stageRunner()
+	if err != nil {
+		return err
+	}
+	publicRouter, err := a.publicRouter(coordinatorRouter)
+	if err != nil {
+		return err
+	}
+	a.server = a.httpServer(publicRouter, stageRunner)
+	return nil
+}
+
 func (a *App) coordinatorRouter() (http.Handler, error) {
 	registry, err := modelregistry.Load(a.cfg.ModelsPath)
 	if err != nil {
@@ -94,6 +91,37 @@ func (a *App) coordinatorRouter() (http.Handler, error) {
 		coordinator.WithBenchmarkRecorder(benchmarks.NewJSONLRecorder(a.cfg.BenchmarksPath)),
 	)
 	return server.Router(), nil
+}
+
+func (a *App) stageRunner() (http.Handler, error) {
+	return runtimegateway.NewStageProxy(a.cfg.RuntimeURL)
+}
+
+func (a *App) publicRouter(coordinatorRouter http.Handler) (http.Handler, error) {
+	chatProxy, err := a.chatProxy()
+	if err != nil {
+		return nil, err
+	}
+	mux := http.NewServeMux()
+	mux.Handle(api.PathChatCompletions, chatProxy)
+	mux.Handle("/", coordinatorRouter)
+	return mux, nil
+}
+
+func (a *App) chatProxy() (http.Handler, error) {
+	return runtimegateway.NewChatProxy(runtimegateway.ChatProxyConfig{
+		RuntimeURL:  a.cfg.RuntimeURL,
+		NodeName:    a.cfg.NodeName,
+		Model:       a.cfg.Model,
+		LayerStart: 0,
+		LayerEnd:   28,
+	})
+}
+
+func (a *App) configureDiscovery() {
+	self := func() membership.Member { return a.selfMember(time.Now().UTC()) }
+	a.discovery = a.discoverySource(self)
+	a.mdnsAdvertiser = a.newMDNSAdvertiser(self)
 }
 
 func (a *App) newMDNSAdvertiser(self discovery.SelfFunc) *discovery.MDNSAdvertiser {
