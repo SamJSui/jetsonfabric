@@ -109,6 +109,16 @@ void validate_config(const Config& cfg) {
     if (!stage_error.empty()) {
         fail("invalid stage assignment: " + stage_error);
     }
+
+    if (cfg.engine != "llama.cpp") {
+        fail("--engine currently supports only llama.cpp");
+    }
+    if (cfg.model_path.empty()) {
+        fail("--model-path is required when --engine llama.cpp");
+    }
+    if (cfg.compute_backend != "cpu" && cfg.compute_backend != "cuda") {
+        fail("--compute-backend must be cpu or cuda");
+    }
 }
 
 } // namespace
@@ -127,7 +137,13 @@ void print_help() {
         << "  --stage-count n          total number of pipeline stages\n"
         << "  --stage-role role        optional explicit role: single, first, middle, last\n"
         << "  --layer-start n          first transformer layer owned by this stage, inclusive\n"
-        << "  --layer-end n            layer end owned by this stage, exclusive\n";
+        << "  --layer-end n            layer end owned by this stage, exclusive\n"
+        << "  --engine engine          inference engine: llama.cpp\n"
+        << "  --compute-backend name   compute backend: cpu or cuda\n"
+        << "  --model-path path        GGUF model path for llama.cpp\n"
+        << "  --ctx-size n             context size, default 4096\n"
+        << "  --n-gpu-layers n         llama.cpp GPU layers, default 999\n"
+        << "  --threads n              CPU threads, default 0\n";
 }
 
 Config parse_args(int argc, char** argv) {
@@ -166,6 +182,18 @@ Config parse_args(int argc, char** argv) {
             cfg.stage_assignment.layer_start = parse_int(require_value(i, argc, argv, arg), arg);
         } else if (arg == "--layer-end") {
             cfg.stage_assignment.layer_end = parse_int(require_value(i, argc, argv, arg), arg);
+        } else if (arg == "--engine") {
+            cfg.engine = require_value(i, argc, argv, arg);
+        } else if (arg == "--compute-backend") {
+            cfg.compute_backend = require_value(i, argc, argv, arg);
+        } else if (arg == "--model-path") {
+            cfg.model_path = require_value(i, argc, argv, arg);
+        } else if (arg == "--ctx-size") {
+            cfg.ctx_size = parse_int(require_value(i, argc, argv, arg), arg);
+        } else if (arg == "--n-gpu-layers") {
+            cfg.n_gpu_layers = parse_int(require_value(i, argc, argv, arg), arg);
+        } else if (arg == "--threads") {
+            cfg.threads = parse_int(require_value(i, argc, argv, arg), arg);
         } else if (arg == "--help" || arg == "-h") {
             print_help();
             std::exit(0);
@@ -176,6 +204,18 @@ Config parse_args(int argc, char** argv) {
 
     if (!stage_role_set) {
         cfg.stage_assignment.role = derive_stage_role(cfg.stage_assignment);
+    }
+
+    if (cfg.ctx_size <= 0) {
+        fail("--ctx-size must be greater than zero");
+    }
+
+    if (cfg.n_gpu_layers < 0) {
+        fail("--n-gpu-layers must be zero or greater");
+    }
+
+    if (cfg.threads < 0) {
+        fail("--threads must be zero or greater");
     }
 
     validate_config(cfg);

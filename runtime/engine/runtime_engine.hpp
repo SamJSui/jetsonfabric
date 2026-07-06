@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/engine.hpp"
-#include "pipeline_parallel/layer_executor.hpp"
+#include "engine/runtime_engine_factory.hpp"
 #include "pipeline_parallel/stage_worker.hpp"
 #include "worker/config.hpp"
 
@@ -20,7 +20,7 @@ public:
 
 private:
     Config config_;
-    pipeline_parallel::UnavailableLayerExecutor layer_executor_;
+    RuntimeEngineParts parts_;
     pipeline_parallel::StageWorker stage_worker_;
 };
 

@@ -1,5 +1,6 @@
 #include "engine/runtime_engine.hpp"
 
+#include "engine/runtime_engine_factory.hpp"
 #include "protocol/activation.hpp"
 
 #include <exception>
@@ -22,8 +23,8 @@ EngineResponse json_error(const std::string& status, const std::string& code, co
 
 RuntimeEngine::RuntimeEngine(Config config)
     : config_(std::move(config)),
-      layer_executor_(),
-      stage_worker_(config_.node_name, config_.stage_assignment, layer_executor_) {}
+      parts_(build_runtime_engine_parts(config_)),
+      stage_worker_(config_.node_name, config_.stage_assignment, *parts_.layer_executor) {}
 
 std::string RuntimeEngine::runtime_name() const {
     return "jetsonfabric-runtime";

@@ -1,6 +1,7 @@
 package runtimegateway
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -69,11 +70,29 @@ func (p *StageProxy) newRuntimeRequest(req *http.Request) (*http.Request, error)
 	target.Path = joinPath(target.Path, api.PathLayerSplitStage)
 	target.RawQuery = req.URL.RawQuery
 
-	outbound, err := http.NewRequestWithContext(req.Context(), req.Method, target.String(), req.Body)
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read stage request body: %w", err)
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		return nil, fmt.Errorf("stage request body is required")
+	}
+
+	outbound, err := http.NewRequestWithContext(
+		req.Context(),
+		req.Method,
+		target.String(),
+		bytes.NewReader(body),
+	)
 	if err != nil {
 		return nil, err
 	}
+
 	copyHeaders(outbound.Header, req.Header)
+	outbound.Header.Del("Transfer-Encoding")
+	outbound.Header.Set("Content-Type", "application/json")
+	outbound.ContentLength = int64(len(body))
+
 	return outbound, nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/SamJSui/jetsonfabric/internal/api"
 	"github.com/SamJSui/jetsonfabric/internal/benchmarks"
 	"github.com/SamJSui/jetsonfabric/internal/coordinator"
 	"github.com/SamJSui/jetsonfabric/internal/discovery"
@@ -44,15 +45,31 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	
 	stageRunner, err := runtimegateway.NewStageProxy(cfg.RuntimeURL)
 	if err != nil {
-		return nil, fmt.Errorf("create runtime stage gateway: %w", err)
+		return nil, err
 	}
+
+	chatProxy, err := runtimegateway.NewChatProxy(runtimegateway.ChatProxyConfig{
+		RuntimeURL:  cfg.RuntimeURL,
+		NodeName:    cfg.NodeName,
+		Model:       cfg.Model,
+		LayerStart: 0,
+		LayerEnd:   28,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	publicRouter := http.NewServeMux()
+	publicRouter.Handle(api.PathChatCompletions, chatProxy)
+	publicRouter.Handle("/", coordinatorRouter)
 
 	self := func() membership.Member { return app.selfMember(time.Now().UTC()) }
 	app.discovery = app.discoverySource(self)
 	app.mdnsAdvertiser = app.newMDNSAdvertiser(self)
-	app.server = app.httpServer(coordinatorRouter, stageRunner)
+	app.server = app.httpServer(publicRouter, stageRunner)
 	return app, nil
 }
 

@@ -36,10 +36,10 @@ type Member struct {
 
 	LeaderPreference int `json:"leader_preference,omitempty"`
 
-	Arch         string                  `json:"arch"`
-	OS           cluster.OperatingSystem `json:"os"`
-	Capabilities map[string]any          `json:"capabilities,omitempty"`
-	Metrics      map[string]any          `json:"metrics,omitempty"`
+	Arch         string                   `json:"arch"`
+	OS           cluster.OperatingSystem  `json:"os"`
+	Capabilities map[string]any           `json:"capabilities,omitempty"`
+	Metrics      map[string]any           `json:"metrics,omitempty"`
 	Engines      []cluster.EngineEndpoint `json:"engines,omitempty"`
 
 	StartedAt time.Time `json:"started_at"`

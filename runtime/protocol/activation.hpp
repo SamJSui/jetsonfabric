@@ -29,6 +29,8 @@ struct ActivationRequest {
 
     int bytes_in = 0;
     std::string transport = "http";
+
+    int max_tokens = 128;
 };
 
 struct StageTrace {
