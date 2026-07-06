@@ -9,6 +9,8 @@ DOCKER ?= docker
 
 DIST_DIR ?= dist
 RUNTIME_BUILD_DIR ?= runtime/build
+RUNTIME_CMAKE_FLAGS ?=
+RUNTIME_BUILD_JOBS ?= 1
 
 BENCHMARKS_PATH ?= data/benchmarks.jsonl
 MODELS_PATH ?= configs/models.example.json
@@ -55,7 +57,8 @@ help:
 	@printf '  make test                 Run Go tests\n'
 	@printf '  make build                Build node binaries and runtime\n'
 	@printf '  make node                 Build node binaries\n'
-	@printf '  make runtime              Build C++ runtime worker\n\n'
+	@printf '  make runtime              Build C++ runtime worker\n'
+	@printf '                             knobs: RUNTIME_BUILD_JOBS=1 RUNTIME_CMAKE_FLAGS="..."\n\n'
 	@printf 'Local run:\n'
 	@printf '  make node-run             Run Exo-like all-in-one node locally\n'
 	@printf '  make runtime-run          Run runtime locally\n\n'
@@ -86,8 +89,8 @@ node:
 
 .PHONY: runtime
 runtime:
-	$(CMAKE) -S runtime -B $(RUNTIME_BUILD_DIR) -DCMAKE_BUILD_TYPE=Release
-	$(CMAKE) --build $(RUNTIME_BUILD_DIR) --parallel
+	$(CMAKE) -S runtime -B $(RUNTIME_BUILD_DIR) -DCMAKE_BUILD_TYPE=Release $(RUNTIME_CMAKE_FLAGS)
+	$(CMAKE) --build $(RUNTIME_BUILD_DIR) --parallel $(RUNTIME_BUILD_JOBS)
 	mkdir -p $(DIST_DIR)
 	cp $(RUNTIME_BUILD_DIR)/jetsonfabric-runtime-worker $(DIST_DIR)/jetsonfabric-runtime-worker
 
