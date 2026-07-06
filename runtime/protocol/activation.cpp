@@ -196,6 +196,8 @@ std::string encode_activation_response(const ActivationResponse& response) {
 
     body["bytes_in"] = response.bytes_in;
     body["bytes_out"] = response.bytes_out;
+    body["prompt_tokens"] = response.prompt_tokens;
+    body["completion_tokens"] = response.completion_tokens;
 
     body["transport"] = response.transport;
     body["latency_ms"] = response.latency_ms;
