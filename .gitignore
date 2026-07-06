@@ -10,6 +10,7 @@ dist/
 build/
 bin/
 runtime/build/
+runtime/third_party/llama.cpp/
 *.test
 *.out
 *.o
