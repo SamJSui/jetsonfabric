@@ -62,6 +62,8 @@ protocol::ActivationResponse build_response(
     response.payload = generated.text;
     response.bytes_in = request.bytes_in;
     response.bytes_out = static_cast<int>(generated.text.size());
+    response.prompt_tokens = generated.prompt_tokens;
+    response.completion_tokens = generated.completion_tokens;
     response.transport = request.transport;
     response.latency_ms = latency_ms;
     fill_trace(response);
