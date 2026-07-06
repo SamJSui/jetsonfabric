@@ -22,16 +22,21 @@ The top-level `Makefile` is the public entrypoint. It should orchestrate Go chec
 
 `make build` should remain the standard full-project check for source changes that affect product code.
 
-Runtime C++ dependencies belong under `runtime/CMakeLists.txt`. Optional engine integrations such as llama.cpp must be controlled by explicit CMake options, for example:
+The common runtime paths should be short and memorable:
 
 ```sh
-make runtime RUNTIME_CMAKE_FLAGS="-DJF_ENABLE_LLAMA_CPP=ON"
+make runtime             # default C++ runtime build
+make setup-llama-cpp     # clone llama.cpp if missing
+make runtime-llama-cpu   # opt-in llama.cpp engine build without CUDA
+make runtime-llama-cuda  # opt-in llama.cpp engine build with CUDA
 ```
 
-CUDA builds must be explicit, because not every developer machine has CUDA:
+Runtime C++ dependencies belong under `runtime/CMakeLists.txt`. Optional engine integrations such as llama.cpp must be controlled by explicit CMake options, but most developers should not have to type the raw CMake flags directly.
+
+CUDA builds must be explicit, because not every developer machine has CUDA. The public Makefile target should expose simple knobs instead of requiring a long command:
 
 ```sh
-make runtime RUNTIME_BUILD_JOBS=1 RUNTIME_CMAKE_FLAGS="-DJF_ENABLE_LLAMA_CPP=ON -DGGML_CUDA=ON -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc -DCMAKE_CUDA_ARCHITECTURES=87"
+make runtime-llama-cuda RUNTIME_BUILD_JOBS=1 RUNTIME_CUDA_ARCH=87 CUDA_NVCC=/usr/local/cuda/bin/nvcc
 ```
 
 Jetson builds can require constrained parallelism. The build should expose a job-count knob instead of assuming unlimited memory.
