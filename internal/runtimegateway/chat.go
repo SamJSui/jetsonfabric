@@ -103,11 +103,13 @@ type stageRequest struct {
 }
 
 type stageResponse struct {
-	Payload  string `json:"payload"`
-	BytesIn  int    `json:"bytes_in"`
-	BytesOut int    `json:"bytes_out"`
-	Error    string `json:"error,omitempty"`
-	Message  string `json:"message,omitempty"`
+	Payload          string `json:"payload"`
+	BytesIn          int    `json:"bytes_in"`
+	BytesOut         int    `json:"bytes_out"`
+	PromptTokens     int    `json:"prompt_tokens"`
+	CompletionTokens int    `json:"completion_tokens"`
+	Error            string `json:"error,omitempty"`
+	Message          string `json:"message,omitempty"`
 }
 
 type chatCompletionResponse struct {
@@ -116,12 +118,19 @@ type chatCompletionResponse struct {
 	Created int64        `json:"created"`
 	Model   string       `json:"model"`
 	Choices []chatChoice `json:"choices"`
+	Usage   chatUsage    `json:"usage"`
 }
 
 type chatChoice struct {
 	Index        int         `json:"index"`
 	Message      chatMessage `json:"message"`
 	FinishReason string      `json:"finish_reason"`
+}
+
+type chatUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 func (p *ChatProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -245,6 +254,15 @@ func makeChatCompletionResponse(prepared preparedChatRequest, stageResp stageRes
 			},
 			FinishReason: "stop",
 		}},
+		Usage: usageFromStageResponse(stageResp),
+	}
+}
+
+func usageFromStageResponse(stageResp stageResponse) chatUsage {
+	return chatUsage{
+		PromptTokens:     stageResp.PromptTokens,
+		CompletionTokens: stageResp.CompletionTokens,
+		TotalTokens:      stageResp.PromptTokens + stageResp.CompletionTokens,
 	}
 }
 
