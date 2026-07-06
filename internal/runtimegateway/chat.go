@@ -162,15 +162,24 @@ func (p *ChatProxy) prepareChatRequest(w http.ResponseWriter, chatReq chatComple
 		writeJSON(w, http.StatusBadRequest, errorPayload("stream_not_supported", "streaming is not implemented yet"))
 		return preparedChatRequest{}, false
 	}
-	prompt := renderQwenPrompt(chatReq.Messages)
-	if strings.TrimSpace(prompt) == "" {
+	if !hasChatMessages(chatReq.Messages) {
 		writeJSON(w, http.StatusBadRequest, errorPayload("invalid_request", "messages are required"))
 		return preparedChatRequest{}, false
 	}
 	requestID := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
 	model := p.requestModel(chatReq.Model)
+	prompt := renderQwenPrompt(chatReq.Messages)
 	stageReq := p.buildStageRequest(requestID, model, prompt, chatReq.MaxTokens)
 	return preparedChatRequest{RequestID: requestID, Model: model, Stage: stageReq}, true
+}
+
+func hasChatMessages(messages []chatMessage) bool {
+	for _, message := range messages {
+		if strings.TrimSpace(message.Content) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *ChatProxy) requestModel(model string) string {
