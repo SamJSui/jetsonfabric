@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -20,36 +21,38 @@ import (
 )
 
 type App struct {
-	cfg            Config
-	nodeID         string
-	startedAt      time.Time
-	store          *membership.Store
-	discovery      discovery.Source
-	mdnsAdvertiser *discovery.MDNSAdvertiser
-	server         *http.Server
+	cfg               Config
+	nodeID            string
+	startedAt         time.Time
+	store             *membership.Store
+	discovery         discovery.Source
+	mdnsAdvertiser    *discovery.MDNSAdvertiser
+	server            *http.Server
+	runtimeSupervisor *RuntimeSupervisor
 }
 
 func New(cfg Config) (*App, error) {
-	app, err := buildApp(cfg)
-	if err != nil {
-		return nil, err
-	}
-	if err := app.configureHTTPServer(); err != nil {
-		return nil, err
-	}
-	app.configureDiscovery()
-	return app, nil
+	return buildApp(cfg)
 }
 
 func buildApp(cfg Config) (*App, error) {
 	cfg = NormalizeConfig(cfg)
+
+	var err error
+	cfg, err = PrepareInstanceConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := ValidateConfig(cfg); err != nil {
 		return nil, err
 	}
+
 	nodeID, err := LoadOrCreateNodeID(cfg.DataDir)
 	if err != nil {
 		return nil, err
 	}
+
 	return newApp(cfg, nodeID), nil
 }
 
@@ -110,9 +113,9 @@ func (a *App) publicRouter(coordinatorRouter http.Handler) (http.Handler, error)
 
 func (a *App) chatProxy() (http.Handler, error) {
 	return runtimegateway.NewChatProxy(runtimegateway.ChatProxyConfig{
-		RuntimeURL:  a.cfg.RuntimeURL,
-		NodeName:    a.cfg.NodeName,
-		Model:       a.cfg.Model,
+		RuntimeURL: a.cfg.RuntimeURL,
+		NodeName:   a.cfg.NodeName,
+		Model:      a.cfg.Model,
 		LayerStart: 0,
 		LayerEnd:   28,
 	})
@@ -152,11 +155,46 @@ func (a *App) httpServer(coordinatorRouter http.Handler, stageRunner http.Handle
 }
 
 func (a *App) Run(ctx context.Context) error {
+	listener, err := net.Listen("tcp", a.cfg.Listen)
+	if err != nil {
+		return fmt.Errorf("bind node API %s: %w", a.cfg.Listen, err)
+	}
+
+	a.cfg = a.cfg.WithBoundAPIURL(listener)
+
+	runtimeSupervisor, runtimeURL, err := StartRuntimeSupervisor(ctx, a.cfg)
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
+	a.runtimeSupervisor = runtimeSupervisor
+	a.cfg.RuntimeURL = runtimeURL
+
+	if err := a.configureHTTPServer(); err != nil {
+		_ = listener.Close()
+		return err
+	}
+
+	a.store.Upsert(a.selfMember(time.Now().UTC()))
+	a.configureDiscovery()
 	a.startMDNS(ctx)
 	go a.discoveryLoop(ctx)
 
 	errCh := make(chan error, 1)
-	go a.listen(errCh)
+	go func() {
+		log.Printf(
+			"JetsonFabric node listening on %s advertised=%s cluster=%s node_id=%s node_name=%s runtime=%s role=%s discovery=%v",
+			listener.Addr(),
+			a.cfg.APIURL,
+			a.cfg.ClusterID,
+			a.nodeID,
+			a.cfg.NodeName,
+			a.cfg.RuntimeURL,
+			a.cfg.Role,
+			a.cfg.DiscoveryModes,
+		)
+		errCh <- a.server.Serve(listener)
+	}()
 
 	select {
 	case <-ctx.Done():
@@ -197,14 +235,30 @@ func (a *App) shutdown(errCh <-chan error) error {
 	if a.mdnsAdvertiser != nil {
 		a.mdnsAdvertiser.Shutdown()
 	}
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := a.server.Shutdown(shutdownCtx); err != nil {
-		return err
+
+	if a.server != nil {
+		if err := a.server.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
 	}
+
+	if a.runtimeSupervisor != nil {
+		if err := a.runtimeSupervisor.Stop(shutdownCtx); err != nil {
+			log.Printf("runtime supervisor shutdown: %v", err)
+		}
+	}
+
+	if errCh == nil {
+		return nil
+	}
+
 	if err := <-errCh; err != nil && err != http.ErrServerClosed {
 		return err
 	}
+
 	return nil
 }
 

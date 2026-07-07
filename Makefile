@@ -20,23 +20,25 @@ LLAMA_CPP_DIR ?= runtime/third_party/llama.cpp
 BENCHMARKS_PATH ?= data/benchmarks.jsonl
 MODELS_PATH ?= configs/models.example.json
 
-NODE_NAME ?= dopey
 MODEL ?= qwen2.5-coder-1.5b-q4
 MODEL_PATH ?=
 
-NODE_CLUSTER_ID ?= default
-NODE_LISTEN ?= 0.0.0.0:52415
+# Node defaults: multi-instance safe.
+NODE_NAME ?=
+NODE_CLUSTER_ID ?= home-lab
+NODE_LISTEN ?= 0.0.0.0:0
 NODE_ADVERTISE_URL ?=
-NODE_SEEDS ?=
-NODE_DISCOVERY ?= static,mdns
-NODE_MDNS_SERVICE ?= _jetsonfabric._tcp
-NODE_MDNS_DOMAIN ?= local.
-NODE_DATA_DIR ?= .cache/jetsonfabric
+NODE_DATA_DIR ?=
+NODE_RUNTIME_URL ?= auto
+NODE_DISCOVERY ?= mdns
 NODE_ROLE ?= auto
-NODE_RUNTIME_URL ?= http://127.0.0.1:9090
-NODE_ENGINE ?= jetsonfabric-runtime
+NODE_ENGINE ?= llama.cpp
+NODE_SEEDS ?=
+NODE_MDNS_SERVICE ?=
+NODE_MDNS_DOMAIN ?=
 
-RUNTIME_LISTEN ?= 127.0.0.1:9090
+# Runtime defaults used by supervised run-node and run-runtime.
+RUNTIME_LISTEN ?= 127.0.0.1:0
 RUNTIME_ENGINE ?= llama.cpp
 RUNTIME_COMPUTE_BACKEND ?= cuda
 RUNTIME_MODE ?= pipeline_parallel
@@ -130,24 +132,39 @@ runtime-cuda: setup
 	chmod +x $(RUNTIME_BIN).tmp
 	mv -f $(RUNTIME_BIN).tmp $(RUNTIME_BIN)
 
+.PHONY: run
+run: run-node
+
 .PHONY: run-node
 run-node:
 	$(GO) run ./cmd/jetsonfabric-node \
-		--cluster-id $(NODE_CLUSTER_ID) \
-		--node-name $(NODE_NAME) \
-		--listen $(NODE_LISTEN) \
+		--cluster-id "$(NODE_CLUSTER_ID)" \
+		--node-name "$(NODE_NAME)" \
+		--listen "$(NODE_LISTEN)" \
 		--advertise-url "$(NODE_ADVERTISE_URL)" \
-		--data-dir $(NODE_DATA_DIR) \
-		--runtime-url $(NODE_RUNTIME_URL) \
-		--engine $(NODE_ENGINE) \
-		--model $(MODEL) \
-		--role $(NODE_ROLE) \
+		--data-dir "$(NODE_DATA_DIR)" \
+		--runtime-url "$(NODE_RUNTIME_URL)" \
+		--runtime-bin "$(RUNTIME_BIN)" \
+		--runtime-listen "$(RUNTIME_LISTEN)" \
+		--runtime-compute-backend "$(RUNTIME_COMPUTE_BACKEND)" \
+		--runtime-mode "$(RUNTIME_MODE)" \
+		--runtime-ctx-size "$(RUNTIME_CTX_SIZE)" \
+		--runtime-n-gpu-layers "$(RUNTIME_N_GPU_LAYERS)" \
+		--runtime-threads "$(RUNTIME_THREADS)" \
+		--engine "$(NODE_ENGINE)" \
+		--model "$(MODEL)" \
+		--model-path "$(MODEL_PATH)" \
+		--stage-index "$(STAGE_INDEX)" \
+		--stage-count "$(STAGE_COUNT)" \
+		--layer-start "$(LAYER_START)" \
+		--layer-end "$(LAYER_END)" \
+		--role "$(NODE_ROLE)" \
 		--seeds "$(NODE_SEEDS)" \
 		--discovery "$(NODE_DISCOVERY)" \
 		--mdns-service "$(NODE_MDNS_SERVICE)" \
 		--mdns-domain "$(NODE_MDNS_DOMAIN)" \
-		--benchmarks $(BENCHMARKS_PATH) \
-		--models $(MODELS_PATH)
+		--benchmarks "$(BENCHMARKS_PATH)" \
+		--models "$(MODELS_PATH)"
 
 .PHONY: run-runtime
 run-runtime:
@@ -166,20 +183,33 @@ run-runtime:
 		exit 2; \
 	fi
 	$(RUNTIME_BIN) \
-		--listen $(RUNTIME_LISTEN) \
-		--node-name $(NODE_NAME) \
-		--engine $(RUNTIME_ENGINE) \
-		--compute-backend $(RUNTIME_COMPUTE_BACKEND) \
-		--model $(MODEL) \
-		--model-path $(MODEL_PATH) \
-		--ctx-size $(RUNTIME_CTX_SIZE) \
-		--n-gpu-layers $(RUNTIME_N_GPU_LAYERS) \
-		--threads $(RUNTIME_THREADS) \
-		--mode $(RUNTIME_MODE) \
-		--stage-index $(STAGE_INDEX) \
-		--stage-count $(STAGE_COUNT) \
-		--layer-start $(LAYER_START) \
-		--layer-end $(LAYER_END)
+		--listen "$(RUNTIME_LISTEN)" \
+		--node-name "$(NODE_NAME)" \
+		--engine "$(RUNTIME_ENGINE)" \
+		--compute-backend "$(RUNTIME_COMPUTE_BACKEND)" \
+		--model "$(MODEL)" \
+		--model-path "$(MODEL_PATH)" \
+		--ctx-size "$(RUNTIME_CTX_SIZE)" \
+		--n-gpu-layers "$(RUNTIME_N_GPU_LAYERS)" \
+		--threads "$(RUNTIME_THREADS)" \
+		--mode "$(RUNTIME_MODE)" \
+		--stage-index "$(STAGE_INDEX)" \
+		--stage-count "$(STAGE_COUNT)" \
+		--layer-start "$(LAYER_START)" \
+		--layer-end "$(LAYER_END)"
+
+.PHONY: print-node-config
+print-node-config:
+	@printf 'NODE_NAME=%s\n' "$(NODE_NAME)"
+	@printf 'NODE_CLUSTER_ID=%s\n' "$(NODE_CLUSTER_ID)"
+	@printf 'NODE_LISTEN=%s\n' "$(NODE_LISTEN)"
+	@printf 'NODE_DATA_DIR=%s\n' "$(NODE_DATA_DIR)"
+	@printf 'NODE_RUNTIME_URL=%s\n' "$(NODE_RUNTIME_URL)"
+	@printf 'NODE_ENGINE=%s\n' "$(NODE_ENGINE)"
+	@printf 'MODEL=%s\n' "$(MODEL)"
+	@printf 'MODEL_PATH=%s\n' "$(MODEL_PATH)"
+	@printf 'RUNTIME_BIN=%s\n' "$(RUNTIME_BIN)"
+	@printf 'RUNTIME_LISTEN=%s\n' "$(RUNTIME_LISTEN)"
 
 .PHONY: bench
 bench:

@@ -91,8 +91,22 @@ func (t *Tracker) Explain(now time.Time, members []membership.Member, staleAfter
 	defer t.mu.Unlock()
 
 	result := Explain(now, members, staleAfter)
-	leader := t.selectLeader(now, result.Candidates)
-	t.applyLeader(now, leader, &result)
+
+	if result.Leader == nil {
+		t.clearLeader(&result)
+		return result
+	}
+
+	if t.state.LeaderID != result.Leader.NodeID {
+		t.state.Epoch++
+	}
+
+	expiresAt := now.Add(t.leaseDuration)
+	t.state.LeaderID = result.Leader.NodeID
+	t.state.LeaseExpiresAt = expiresAt
+	result.Epoch = t.state.Epoch
+	result.LeaseExpiresAt = &expiresAt
+
 	return result
 }
 

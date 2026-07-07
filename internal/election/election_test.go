@@ -83,20 +83,24 @@ func TestExplainReportsCandidateReasons(t *testing.T) {
 	assertReason(t, result, "stale", ReasonStaleMember)
 }
 
-func TestTrackerKeepsIncumbentDuringLease(t *testing.T) {
+func TestTrackerRecomputesLeaderDuringLease(t *testing.T) {
 	now := testNow()
 	tracker := NewTracker(10 * time.Second)
+
 	members := []membership.Member{
 		testMember("incumbent", membership.NodeRoleJetson, 0, now, now),
 	}
+
 	result := tracker.Explain(now, members, time.Minute)
 	assertResultLeader(t, result, "incumbent")
 
 	members = append(members, testMember("older", membership.NodeRoleJetson, 0, now, now.Add(-time.Hour)))
+
 	result = tracker.Explain(now.Add(time.Second), members, time.Minute)
-	assertResultLeader(t, result, "incumbent")
-	if result.Epoch != 1 {
-		t.Fatalf("expected epoch 1, got %d", result.Epoch)
+	assertResultLeader(t, result, "older")
+
+	if result.Epoch != 2 {
+		t.Fatalf("expected epoch 2 after deterministic leader change, got %d", result.Epoch)
 	}
 }
 

@@ -2,10 +2,6 @@ package node
 
 import (
 	"fmt"
-	"net"
-	"net/url"
-	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -16,14 +12,28 @@ import (
 )
 
 const (
-	DefaultClusterID         = "default"
-	DefaultDataDir           = ".cache/jetsonfabric"
+	DefaultClusterID         = "home-lab"
+	DefaultNodeListen        = "0.0.0.0:0"
 	DefaultDiscoveryInterval = 10 * time.Second
 	DefaultStaleAfter        = 30 * time.Second
 	DefaultLeaderPreference  = 0
+
+	AutoRuntimeURL               = "auto"
+	DefaultRuntimeBin            = "dist/jetsonfabric-runtime-worker"
+	DefaultRuntimeListen         = "127.0.0.1:0"
+	DefaultRuntimeComputeBackend = "cuda"
+	DefaultRuntimeMode           = "pipeline_parallel"
+	DefaultRuntimeCtxSize        = 4096
+	DefaultRuntimeNGPULayers     = 999
+	DefaultRuntimeThreads        = 0
+
+	DefaultStageIndex = 0
+	DefaultStageCount = 1
+	DefaultLayerStart = 0
+	DefaultLayerEnd   = 28
 )
 
-var defaultDiscoveryModes = []string{discovery.ModeStatic, discovery.ModeMDNS}
+var defaultDiscoveryModes = []string{discovery.ModeMDNS}
 
 type Config struct {
 	ClusterID string
@@ -33,8 +43,22 @@ type Config struct {
 	DataDir   string
 
 	RuntimeURL string
-	Engine     cluster.Engine
-	Model      string
+	RuntimeBin string
+
+	Engine                cluster.Engine
+	Model                 string
+	ModelPath             string
+	RuntimeListen         string
+	RuntimeComputeBackend string
+	RuntimeMode           string
+	RuntimeCtxSize        int
+	RuntimeNGPULayers     int
+	RuntimeThreads        int
+
+	StageIndex int
+	StageCount int
+	LayerStart int
+	LayerEnd   int
 
 	Role             membership.NodeRole
 	LeaderPreference int
@@ -54,23 +78,36 @@ type Config struct {
 
 func DefaultConfigValue() Config {
 	return Config{
-		ClusterID:         DefaultClusterID,
-		Listen:            config.DefaultNodeListen(),
-		APIURL:            "",
-		DataDir:           DefaultDataDir,
-		RuntimeURL:        "http://127.0.0.1:9090",
-		Engine:            cluster.EngineJetsonFabric,
-		Role:              membership.NodeRoleAuto,
-		LeaderPreference:  DefaultLeaderPreference,
-		Seeds:             nil,
-		DiscoveryModes:    append([]string(nil), defaultDiscoveryModes...),
-		DiscoveryInterval: DefaultDiscoveryInterval,
-		StaleAfter:        DefaultStaleAfter,
-		MDNSService:       discovery.DefaultMDNSService,
-		MDNSDomain:        discovery.DefaultMDNSDomain,
-		MDNSBrowseTimeout: discovery.DefaultMDNSBrowseTimeout,
-		ModelsPath:        config.DefaultModelRegistryPath(),
-		BenchmarksPath:    config.DefaultBenchmarksPath(),
+		ClusterID:             DefaultClusterID,
+		Listen:                DefaultNodeListen,
+		APIURL:                "",
+		DataDir:               "",
+		RuntimeURL:            AutoRuntimeURL,
+		RuntimeBin:            DefaultRuntimeBin,
+		Engine:                cluster.EngineLlamaCPP,
+		Model:                 "qwen2.5-coder-1.5b-q4",
+		ModelPath:             "",
+		RuntimeListen:         DefaultRuntimeListen,
+		RuntimeComputeBackend: DefaultRuntimeComputeBackend,
+		RuntimeMode:           DefaultRuntimeMode,
+		RuntimeCtxSize:        DefaultRuntimeCtxSize,
+		RuntimeNGPULayers:     DefaultRuntimeNGPULayers,
+		RuntimeThreads:        DefaultRuntimeThreads,
+		StageIndex:            DefaultStageIndex,
+		StageCount:            DefaultStageCount,
+		LayerStart:            DefaultLayerStart,
+		LayerEnd:              DefaultLayerEnd,
+		Role:                  membership.NodeRoleAuto,
+		LeaderPreference:      DefaultLeaderPreference,
+		Seeds:                 nil,
+		DiscoveryModes:        append([]string(nil), defaultDiscoveryModes...),
+		DiscoveryInterval:     DefaultDiscoveryInterval,
+		StaleAfter:            DefaultStaleAfter,
+		MDNSService:           discovery.DefaultMDNSService,
+		MDNSDomain:            discovery.DefaultMDNSDomain,
+		MDNSBrowseTimeout:     discovery.DefaultMDNSBrowseTimeout,
+		ModelsPath:            config.DefaultModelRegistryPath(),
+		BenchmarksPath:        config.DefaultBenchmarksPath(),
 	}
 }
 
@@ -80,9 +117,14 @@ func NormalizeConfig(cfg Config) Config {
 	cfg.DiscoveryModes = normalizeDiscoveryModes(cfg.DiscoveryModes)
 	cfg.Role = resolveNodeRole(cfg.Role)
 	cfg = normalizeMDNSConfig(cfg)
+	cfg = normalizeRuntimeConfig(cfg)
+
+	// Only works for explicit non-zero ports.
+	// For 0.0.0.0:0, APIURL is derived after net.Listen in app.Run.
 	if cfg.APIURL == "" {
-		cfg.APIURL = defaultAdvertiseURL(cfg.NodeName, cfg.Listen)
+		cfg.APIURL = defaultAdvertiseURL(cfg.Listen)
 	}
+
 	return cfg
 }
 
@@ -92,10 +134,52 @@ func normalizeStringsInConfig(cfg Config) Config {
 	cfg.Listen = strings.TrimSpace(cfg.Listen)
 	cfg.APIURL = strings.TrimSpace(cfg.APIURL)
 	cfg.DataDir = strings.TrimSpace(cfg.DataDir)
+
 	cfg.RuntimeURL = strings.TrimSpace(cfg.RuntimeURL)
+	cfg.RuntimeBin = strings.TrimSpace(cfg.RuntimeBin)
 	cfg.Model = strings.TrimSpace(cfg.Model)
+	cfg.ModelPath = strings.TrimSpace(cfg.ModelPath)
+	cfg.RuntimeListen = strings.TrimSpace(cfg.RuntimeListen)
+	cfg.RuntimeComputeBackend = strings.TrimSpace(cfg.RuntimeComputeBackend)
+	cfg.RuntimeMode = strings.TrimSpace(cfg.RuntimeMode)
+
 	cfg.ModelsPath = strings.TrimSpace(cfg.ModelsPath)
 	cfg.BenchmarksPath = strings.TrimSpace(cfg.BenchmarksPath)
+	return cfg
+}
+
+func normalizeRuntimeConfig(cfg Config) Config {
+	if cfg.RuntimeURL == "" {
+		cfg.RuntimeURL = AutoRuntimeURL
+	}
+	if cfg.RuntimeBin == "" {
+		cfg.RuntimeBin = DefaultRuntimeBin
+	}
+	if cfg.RuntimeListen == "" {
+		cfg.RuntimeListen = DefaultRuntimeListen
+	}
+	if cfg.Engine == "" {
+		cfg.Engine = cluster.EngineLlamaCPP
+	}
+	if cfg.RuntimeComputeBackend == "" {
+		cfg.RuntimeComputeBackend = DefaultRuntimeComputeBackend
+	}
+	if cfg.RuntimeMode == "" {
+		cfg.RuntimeMode = DefaultRuntimeMode
+	}
+	if cfg.RuntimeCtxSize <= 0 {
+		cfg.RuntimeCtxSize = DefaultRuntimeCtxSize
+	}
+	if cfg.RuntimeNGPULayers == 0 {
+		cfg.RuntimeNGPULayers = DefaultRuntimeNGPULayers
+	}
+	if cfg.StageCount <= 0 {
+		cfg.StageCount = DefaultStageCount
+	}
+	if cfg.LayerEnd <= cfg.LayerStart {
+		cfg.LayerStart = DefaultLayerStart
+		cfg.LayerEnd = DefaultLayerEnd
+	}
 	return cfg
 }
 
@@ -121,15 +205,25 @@ func ValidateConfig(cfg Config) error {
 	if cfg.Listen == "" {
 		return fmt.Errorf("--listen is required")
 	}
-	if cfg.APIURL == "" {
-		return fmt.Errorf("--advertise-url could not be derived; set it explicitly")
+	if cfg.NodeName == "" {
+		return fmt.Errorf("--node-name could not be derived")
 	}
-	return validateRemainingConfig(cfg)
-}
-
-func validateRemainingConfig(cfg Config) error {
 	if cfg.DataDir == "" {
-		return fmt.Errorf("--data-dir is required")
+		return fmt.Errorf("--data-dir could not be derived")
+	}
+	if cfg.Model == "" {
+		return fmt.Errorf("--model is required")
+	}
+	if cfg.Engine == "" {
+		return fmt.Errorf("--engine is required")
+	}
+	if cfg.RuntimeAuto() {
+		if cfg.RuntimeBin == "" {
+			return fmt.Errorf("--runtime-bin is required when --runtime-url=auto")
+		}
+		if cfg.ModelPath == "" {
+			return fmt.Errorf("--model-path is required when --runtime-url=auto")
+		}
 	}
 	if err := validateDiscoveryModes(cfg.DiscoveryModes); err != nil {
 		return err
@@ -140,10 +234,6 @@ func validateRemainingConfig(cfg Config) error {
 	if cfg.StaleAfter <= 0 {
 		return fmt.Errorf("--stale-after must be greater than zero")
 	}
-	return validatePathsAndMDNS(cfg)
-}
-
-func validatePathsAndMDNS(cfg Config) error {
 	if cfg.MDNSBrowseTimeout <= 0 {
 		return fmt.Errorf("--mdns-browse-timeout must be greater than zero")
 	}
@@ -156,6 +246,10 @@ func validatePathsAndMDNS(cfg Config) error {
 	return nil
 }
 
+func (cfg Config) RuntimeAuto() bool {
+	return strings.EqualFold(strings.TrimSpace(cfg.RuntimeURL), AutoRuntimeURL)
+}
+
 func (cfg Config) DiscoveryEnabled(mode string) bool {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	for _, configured := range cfg.DiscoveryModes {
@@ -164,22 +258,6 @@ func (cfg Config) DiscoveryEnabled(mode string) bool {
 		}
 	}
 	return false
-}
-
-func (cfg Config) AdvertisePort() int {
-	parsed, err := url.Parse(cfg.APIURL)
-	if err == nil && parsed.Port() != "" {
-		port, _ := strconv.Atoi(parsed.Port())
-		if port > 0 {
-			return port
-		}
-	}
-	_, portText, err := net.SplitHostPort(cfg.Listen)
-	if err != nil {
-		return 0
-	}
-	port, _ := strconv.Atoi(portText)
-	return port
 }
 
 func normalizeStrings(values []string) []string {
@@ -231,22 +309,4 @@ func validateDiscoveryModes(values []string) error {
 		}
 	}
 	return nil
-}
-
-func defaultAdvertiseURL(nodeName string, listen string) string {
-	_, port, err := net.SplitHostPort(listen)
-	if err != nil || port == "" {
-		return ""
-	}
-	host := strings.TrimSpace(nodeName)
-	if host == "" {
-		host, _ = os.Hostname()
-	}
-	host = strings.TrimSpace(strings.TrimSuffix(host, "."))
-	if host == "" {
-		host = "127.0.0.1"
-	} else if !strings.Contains(host, ".") && host != "localhost" {
-		host += ".local"
-	}
-	return "http://" + host + ":" + port
 }
