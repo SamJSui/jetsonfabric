@@ -1,205 +1,221 @@
 # JetsonFabric
 
-JetsonFabric is an exo-inspired edge AI fabric for low-cost Jetson-class devices.
+Distributed LLM inference at the edge for Jetson-class devices, starting with
+Jetson Orin Nano nodes and CUDA-backed local runtimes.
 
-The goal is to turn multiple Jetson Orin Nano nodes into one observable serving
-cluster with node discovery, model placement, benchmark-driven routing,
-failover, and an OpenAI-compatible API surface.
+JetsonFabric is moving from an explicit `control + agent` prototype into a
+**peer-discovered node fabric with an elected coordinator**. Each machine runs a
+`jetsonfabric-node`; nodes discover each other with mDNS/static fallback, elect
+one coordinator, expose the same API surface, and forward compute work to a
+node-local runtime.
 
-This is not a local chatbot project. The core question is:
+Current architecture version: **node fabric preview**.
 
-> Can a low-cost Jetson edge cluster maintain useful quality while improving
-> throughput, latency, cost, reliability, or deployment flexibility versus a
-> single node or cloud-only baseline?
+## Goals
 
-## Initial Architecture
+- Run useful LLM inference on low-cost edge hardware.
+- Make multiple Jetson Orin Nano nodes feel like one observable serving fabric.
+- Use network discovery with mDNS instead of passing IPs around whenever the LAN
+  supports multicast.
+- Keep leader/coordinator selection internal to the cluster.
+- Keep CUDA/runtime execution local to each node.
+- Build toward real pipeline parallelism where ordered transformer layer stages
+  are assigned to nodes through deployment plans.
 
-- Go control plane: API gateway, node registry, model registry, scheduler,
-  dashboard API.
-- Go Jetson agent: reports node health, temperature, resources, queue state, and
-  runtime capabilities.
-- C++ runtime lane: future adapters for llama.cpp, TensorRT/ONNX, Triton,
-  layer-shard transport, and Jetson AI Lab containers.
-- Placement planner: decides whether to run single-node, replicated,
-  layer-split, or cloud fallback.
-- Benchmark service: records tokens/sec, p50/p95 latency, memory,
-  power/thermal, quality, and failures.
-- Python: benchmark analysis, graphs, and reports only.
-
-Distributed runtime phases:
-
-- POC: one Jetson, one full-model replica, one routed prompt, one benchmark.
-- P0/MVP: two Jetsons with real layer-split inference.
-- P1: tensor-parallelism experiment, measured against the POC and layer-split
-  baselines.
-- P2: operational edge fabric with model lifecycle, persistent state,
-  profile-driven placement, failover, dashboard/API visibility, and measured
-  runtime optimization.
-
-## Project Context
-
-- [AGENTS.md](AGENTS.md) captures coding-agent instructions and project boundaries.
-- [docs/project-context.md](docs/project-context.md) captures the pitch, value-add,
-  hardware strategy, and honest performance story.
-- [docs/poc-single-node-serving.md](docs/poc-single-node-serving.md) captures the
-  proof of concept: get one full-model replica serving on one Jetson.
-- [docs/p0-layer-split-mvp.md](docs/p0-layer-split-mvp.md) captures the MVP:
-  real layer-split inference across Jetson nodes.
-- [docs/roadmap.md](docs/roadmap.md) captures the POC/P0/P1/P2 progression from
-  single-node serving to layer split, tensor-parallel research, and operational
-  fabric work.
-- [docs/engineering-standards.md](docs/engineering-standards.md) captures the
-  required implementation quality bar.
-
-## Quick Start - Real Jetson POC
-
-The current target node is `dopey`. The POC path is:
+## Architecture
 
 ```text
-control plane on dev machine or Beelink
-  -> JetsonFabric agent on dopey
-  -> agent proxy on dopey
-  -> local OpenAI-compatible model backend on dopey
-  -> benchmark JSONL on the control machine
+client / curl / OpenAI-compatible caller
+  -> any jetsonfabric-node :52415
+  -> follower proxies public API to elected coordinator
+  -> coordinator plans routing/deployment
+  -> target node forwards stage work to local runtime
+  -> local C++/CUDA runtime executes assigned work
 ```
 
-### 1. Build
+Main pieces:
 
-From the repo root on the development machine:
+- `cmd/jetsonfabric-node`: the product process run on each machine.
+- `internal/discovery`: static seed discovery, mDNS discovery, and hydration via
+  HTTP announce.
+- `internal/membership`: in-memory member table with stale-member pruning,
+  semantic node roles, and runtime/capability metadata.
+- `internal/election`: deterministic role-gated leader selection over fresh
+  members, with a local lease/epoch tracker to reduce 1-2 node flapping.
+- `internal/facade`: public node API, follower proxying, local stage routing.
+- `internal/coordinator`: leader-only planning/control role embedded in a node.
+- `internal/runtimegateway`: node-to-local-runtime stage proxy.
+- `runtime/`: C++ runtime worker and pipeline-parallel stage execution shell.
+- `tools/bench`: developer benchmark client, not part of the production fabric.
+
+For the step-by-step startup, discovery, election, routing, and runtime sequence,
+see [`docs/architecture/node-fabric-workflow.md`](docs/architecture/node-fabric-workflow.md).
+
+For public-ready build, dependency, runtime, and documentation expectations, see
+[`docs/deployment-standards.md`](docs/deployment-standards.md).
+
+## Node fabric model
+
+Every real machine runs the same command:
 
 ```sh
-sh scripts/build.sh
+make node-run NODE_CLUSTER_ID=home-lab NODE_NAME=dopey
+make node-run NODE_CLUSTER_ID=home-lab NODE_NAME=beehive
 ```
 
-This builds Linux development binaries and Linux arm64 binaries for Jetson.
+Each node:
 
-### 2. Check dopey
+- owns a stable node ID under its data directory;
+- advertises itself over mDNS as `_jetsonfabric._tcp.local`;
+- periodically discovers peers;
+- exchanges full member records through `/v1/cluster/announce`;
+- derives a semantic role such as `jetson`, `worker`, `coordinator`, or `test`;
+- exposes public cluster/API routes on port `52415`;
+- forwards `/v1/layer-split/stage` to its local runtime.
 
-Verify the Jetson is reachable and has the expected hardware/runtime basics:
+mDNS is used only to bootstrap peer addresses. After a peer is discovered, the
+node performs an HTTP announce/handshake to hydrate the full membership record
+with capabilities, metrics, engine metadata, role, and fresh timestamps.
+
+## Leader selection
+
+Current selection is deterministic, not Raft consensus. It is now role-gated so
+normal nodes do not need numeric priority values:
+
+1. remove stale members;
+2. keep only roles that may lead: `coordinator` and `jetson`;
+3. rank by semantic role: `coordinator` before `jetson`;
+4. apply optional advanced `leader_preference` only within the same role;
+5. prefer the oldest running peer within the same rank;
+6. break ties by stable `node_id`.
+
+The facade wraps that deterministic result with a local leader lease and epoch.
+If the incumbent remains fresh and eligible, equivalent challengers do not steal
+leadership during the lease. Higher-rank or higher-preference challengers may
+preempt, and stale incumbents fail over immediately.
+
+Role defaults reduce config:
+
+- WSL/dev environments become `test` and do not lead.
+- Jetson devices become `jetson` and can lead.
+- Generic Linux PCs become `worker` and do not lead unless explicitly started
+  with `NODE_ROLE=coordinator`.
+
+Use `GET /v1/cluster/election` to inspect the election decision, candidate roles,
+eligibility, ranking fields, exclusion reasons, epoch, and lease expiry.
+
+This is intentionally simple for the current homelab/edge prototype. Raft is the
+right future path once there are three coordinator-capable voters for quorum.
+Before real deployment writes and long-running layer execution, the coordinator
+should also actively probe node health and runtime readiness. Membership means
+"may exist"; readiness means "can receive work now."
+
+## Pipeline parallelism direction
+
+Pipeline parallelism requires strict layer order. Discovery does not decide that
+order. The elected coordinator creates a deployment plan such as:
+
+```text
+stage 0: dopey    layers 0:14
+stage 1: beehive  layers 14:28
+```
+
+The current runtime path is intentionally conservative:
+
+- first prove one-node `pipeline_parallel` on `dopey` with `stage_count=1`;
+- forward stage requests through the node facade to `127.0.0.1:9090`;
+- keep the C++ runtime responsible for model/layer execution;
+- later replace HTTP/JSON activation transfer with a persistent binary data
+  plane for hot-path runtime-to-runtime communication.
+
+## Quick start: dopey + beehive discovery
+
+On `dopey`:
 
 ```sh
-sh scripts/check-jetson-node.sh --host dopey --expected-hostname dopey
+git pull
+go test ./...
+
+make node-run \
+  NODE_CLUSTER_ID=home-lab \
+  NODE_NAME=dopey \
+  NODE_DISCOVERY=mdns \
+  NODE_DATA_DIR=.cache/jetsonfabric-dopey
 ```
 
-### 3. Start the control plane
-
-Run the control plane on the development machine or Beelink. Listen on all
-interfaces so `dopey` can reach it over the LAN:
+On `beehive`:
 
 ```sh
-sh scripts/run-control.sh --listen 0.0.0.0:52415 --background
+git pull
+go test ./...
+
+make node-run \
+  NODE_CLUSTER_ID=home-lab \
+  NODE_NAME=beehive \
+  NODE_DISCOVERY=mdns \
+  NODE_DATA_DIR=.cache/jetsonfabric-beehive
 ```
 
-Use the development machine or Beelink LAN IP as the control URL from the Jetson,
-not `127.0.0.1`.
-
-### 4. Deploy the agent to dopey
+From Windows CMD, PowerShell, WSL, or another client:
 
 ```sh
-sh scripts/deploy-agent.sh \
-  --host dopey \
-  --control-url http://<control-host-ip>:52415 \
-  --smoke-test
+curl http://dopey.local:52415/v1/cluster/members
+curl http://dopey.local:52415/v1/cluster/leader
+curl http://dopey.local:52415/v1/cluster/election
 ```
 
-The smoke test sends a one-shot heartbeat. It proves the agent binary runs on
-`dopey` and can register with the control plane. It does not prove model serving
-yet.
+If `.local` or multicast is unavailable from the client environment, use a LAN or
+Tailscale address for the node you are querying. WSL is a dev client by default,
+not a required cluster member.
 
-### 5. Start a model backend on dopey
+## Quick start: dopey runtime stage gateway
 
-Start a real OpenAI-compatible backend on `dopey`, such as `llama-server`, bound
-to `127.0.0.1:8080` on the Jetson.
-
-For the POC, prefer a small quantized GGUF model such as
-`qwen2.5-coder-1.5b-q4`.
-
-### 6. Start the long-running agent proxy on dopey
-
-Run the agent in proxy mode so the control plane can route requests through the
-agent to the node-local model backend:
+Start the local runtime on `dopey`:
 
 ```sh
-ssh dopey '/usr/local/bin/jetsonfabric-agent \
-  --control-url http://<control-host-ip>:52415 \
-  --join-token dev-token \
-  --node-name dopey \
-  --listen 0.0.0.0:52416 \
-  --advertise-url http://dopey.local:52416 \
-  --llama-url http://127.0.0.1:8080 \
-  --model qwen2.5-coder-1.5b-q4'
+make runtime-run \
+  NODE_NAME=dopey \
+  RUNTIME_LISTEN=127.0.0.1:9090 \
+  RUNTIME_MODE=pipeline_parallel \
+  STAGE_INDEX=0 \
+  STAGE_COUNT=1 \
+  LAYER_START=0 \
+  LAYER_END=28
 ```
 
-### 7. Run the POC smoke test
-
-From the control/development machine:
+Start the node in another terminal:
 
 ```sh
-sh scripts/poc-dopey-smoke.sh \
-  --control-url http://127.0.0.1:52415
+make node-run \
+  NODE_CLUSTER_ID=home-lab \
+  NODE_NAME=dopey \
+  NODE_DISCOVERY=mdns \
+  NODE_DATA_DIR=.cache/jetsonfabric-dopey
 ```
 
-The smoke test verifies control health, agent health, `dopey` registration,
-route preview validity, chat completion output, route metadata, and benchmark
-JSONL presence.
-
-## Agent Container
-
-The agent can be built as a small container image, but the preferred POC deploy
-path is the native Go binary under host/systemd control. Containerizing the agent
-can be revisited after the host telemetry and runtime-management path is stable.
+Then test the node-to-runtime stage route:
 
 ```sh
-docker build -f Dockerfile.agent -t jetsonfabric-agent:dev .
+curl -sS -X POST http://127.0.0.1:52415/v1/layer-split/stage \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "session_id": "test-session",
+    "request_id": "test-request",
+    "model_id": "qwen2.5-coder-1.5b-q4",
+    "stage_index": 0,
+    "node_name": "dopey",
+    "role": "single",
+    "layer_start": 0,
+    "layer_end": 28,
+    "decode_step": 0,
+    "shape": [1, 1, 1],
+    "dtype": "synthetic",
+    "payload": "hello",
+    "bytes_in": 5,
+    "transport": "http"
+  }'
 ```
 
-For Jetson targets, build an arm64 image with Docker Buildx:
-
-```sh
-docker buildx build --platform linux/arm64 -f Dockerfile.agent -t jetsonfabric-agent:arm64 .
-```
-
-## Expanding To More Jetsons
-
-Eventually a new Jetson should be added by installing the agent and giving it the
-control-plane URL plus a join token.
-
-Expected join flow:
-
-```bash
-./jetsonfabric-agent \
-  --control-url http://beelink:52415 \
-  --join-token <token> \
-  --node-name sleepy
-```
-
-The control plane should then discover its hardware profile, runtime capabilities,
-and benchmark history before placing model work on it.
-
-## Non-Goals For V0
-
-- Do not claim a mini cluster beats frontier models.
-- Do not start with tensor parallelism as the primary performance story.
-- Do not make replicated serving the only feature.
-- Do not require Kubernetes before the scheduler and benchmark loop work.
-
-## First Credible Demo
-
-1. One control plane running on the Beelink or local machine.
-2. One Jetson agent reporting health and capabilities.
-3. One real local model backend running on the Jetson.
-4. One prompt routed through JetsonFabric to that model.
-5. One benchmark result recorded for the local model backend.
-6. Route preview explaining why the model should or should not run on the node.
-7. A second Jetson added later to prove the P0/MVP layer-split path.
-
-## Build
-
-Runtime services are Go-native:
-
-```sh
-sh scripts/build.sh
-```
-
-This produces Linux development binaries and Linux arm64 binaries for Jetson.
-See [docs/build.md](docs/build.md).
+Until real transformer layer execution is wired, the runtime should return an
+honest `layer_executor_not_implemented` style error. That still proves the node
+API reaches the local runtime.

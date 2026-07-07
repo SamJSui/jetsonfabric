@@ -2,7 +2,7 @@ package cluster
 
 import "time"
 
-// Engine identifies the local inference implementation behind an agent.
+// Engine identifies the local inference implementation behind a node runtime.
 // It answers: "What software executes inference?"
 type Engine string
 
@@ -68,10 +68,10 @@ const (
 	MetricTemperatureC = "temperature_c"
 )
 
-// EngineEndpoint is the agent-advertised endpoint for a local engine.
+// EngineEndpoint is a node-advertised endpoint for a local inference engine.
 //
-// BaseURL should usually be the agent URL, not the raw local engine URL,
-// because control routes requests through the agent proxy.
+// BaseURL should usually be the node URL, not the raw local runtime URL, because
+// cluster requests should go through the node facade and runtime gateway.
 type EngineEndpoint struct {
 	InstanceID       string   `json:"instance_id,omitempty"`
 	Engine           Engine   `json:"engine"`
@@ -89,16 +89,6 @@ type NodeRecord struct {
 	Metrics      map[string]any   `json:"metrics"`
 	Engines      []EngineEndpoint `json:"engines,omitempty"`
 	LastSeen     time.Time        `json:"last_seen"`
-}
-
-type HeartbeatRequest struct {
-	NodeName     string           `json:"node_name"`
-	Hostname     string           `json:"hostname"`
-	Arch         string           `json:"arch"`
-	OS           OperatingSystem  `json:"os"`
-	Capabilities map[string]any   `json:"capabilities"`
-	Metrics      map[string]any   `json:"metrics"`
-	Engines      []EngineEndpoint `json:"engines,omitempty"`
 }
 
 type ModelProfile struct {

@@ -14,6 +14,13 @@ struct Config {
     std::string node_name = "runtime";
     std::string model = "runtime-model";
 
+    std::string engine = "llama.cpp";
+    std::string compute_backend = "cuda";
+    std::string model_path;
+    int ctx_size = 4096;
+    int n_gpu_layers = 999;
+    int threads = 0;
+
     ExecutionMode mode = ExecutionMode::DataParallel;
     pipeline_parallel::StageAssignment stage_assignment;
 };

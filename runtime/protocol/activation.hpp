@@ -29,6 +29,8 @@ struct ActivationRequest {
 
     int bytes_in = 0;
     std::string transport = "http";
+
+    int max_tokens = 128;
 };
 
 struct StageTrace {
@@ -66,6 +68,8 @@ struct ActivationResponse {
 
     int bytes_in = 0;
     int bytes_out = 0;
+    int prompt_tokens = 0;
+    int completion_tokens = 0;
 
     std::string transport = "http";
     int latency_ms = 0;

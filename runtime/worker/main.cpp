@@ -4,6 +4,8 @@
 
 #include <atomic>
 #include <csignal>
+#include <exception>
+#include <iostream>
 
 namespace {
 
@@ -19,9 +21,13 @@ int main(int argc, char** argv) {
     std::signal(SIGINT, handle_signal);
     std::signal(SIGTERM, handle_signal);
 
-    jetsonfabric::runtime::Config config = jetsonfabric::runtime::parse_args(argc, argv);
-    jetsonfabric::runtime::RuntimeEngine engine(config);
-    jetsonfabric::runtime::HttpServer server(config, engine, g_running);
-
-    return server.run();
+    try {
+        jetsonfabric::runtime::Config config = jetsonfabric::runtime::parse_args(argc, argv);
+        jetsonfabric::runtime::RuntimeEngine engine(config);
+        jetsonfabric::runtime::HttpServer server(config, engine, g_running);
+        return server.run();
+    } catch (const std::exception& err) {
+        std::cerr << "runtime startup failed: " << err.what() << "\n";
+        return 1;
+    }
 }
