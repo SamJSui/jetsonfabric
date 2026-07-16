@@ -52,6 +52,11 @@ type Result struct {
 	Payload          string                `json:"payload,omitempty"`
 	PayloadBytes     int                   `json:"payload_bytes"`
 	SampledToken     *uint32               `json:"sampled_token,omitempty"`
+	TokenText        string                `json:"token_text,omitempty"`
+	EndOfGeneration  bool                  `json:"end_of_generation,omitempty"`
+	GeneratedText    string                `json:"generated_text,omitempty"`
+	SampledTokens    []uint32              `json:"sampled_tokens,omitempty"`
+	FinishReason     string                `json:"finish_reason,omitempty"`
 	PromptTokens     int                   `json:"prompt_tokens,omitempty"`
 	CompletionTokens int                   `json:"completion_tokens,omitempty"`
 	BytesIn          int64                 `json:"bytes_in,omitempty"`
@@ -77,7 +82,9 @@ type StageTrace struct {
 	PayloadCRC32In  uint32                `json:"payload_crc32_in"`
 	PayloadCRC32Out uint32                `json:"payload_crc32_out"`
 	Transport       string                `json:"transport"`
+	Operation       stagewire.Operation   `json:"operation"`
 	Phase           inference.Phase       `json:"phase"`
+	DecodeStep      int                   `json:"decode_step"`
 }
 
 type StageRequest = stagewire.StageRequest
@@ -127,13 +134,27 @@ func (e *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 	if kind == "" {
 		kind = stagewire.PayloadKindText
 	}
-	payloadMetadata := stagewire.Metadata{PayloadKind: kind}
-	if kind == stagewire.PayloadKindText {
-		payloadMetadata.Encoding = "utf-8"
-	}
 	payload := append([]byte(nil), req.Data...)
 	if payload == nil {
 		payload = []byte(req.Payload)
+	}
+	payloadMetadata := stagewire.Metadata{PayloadKind: kind}
+	switch kind {
+	case stagewire.PayloadKindText:
+		payloadMetadata.Encoding = "utf-8"
+	case stagewire.PayloadKindSampledToken:
+		payloadMetadata.DType = "u32"
+		payloadMetadata.Shape = []int64{1}
+		payloadMetadata.ByteOrder = "little"
+		payloadMetadata.Layout = "row_major"
+	case stagewire.PayloadKindTokens:
+		if len(payload)%4 != 0 || len(payload) == 0 {
+			return Result{}, fmt.Errorf("token payload must contain one or more 32-bit token IDs")
+		}
+		payloadMetadata.DType = "i32"
+		payloadMetadata.Shape = []int64{int64(len(payload) / 4)}
+		payloadMetadata.ByteOrder = "little"
+		payloadMetadata.Layout = "row_major"
 	}
 
 	result := Result{
@@ -141,6 +162,7 @@ func (e *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		Model:     req.Model,
 		Stages:    make([]StageTrace, 0, len(req.Plan.Stages)),
 	}
+	var finalResponse StageResponse
 
 	for _, stage := range req.Plan.Stages {
 		stageReq := buildStageRequest(requestID, req.Model, phase, req.DecodeStep, payloadMetadata, payload, req.MaxTokens, stage)
@@ -176,11 +198,14 @@ func (e *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		result.CompletionTokens += stageResp.CompletionTokens
 		result.BytesIn += stageResp.BytesIn
 		result.BytesOut += stageResp.BytesOut
+		finalResponse = stageResp
 	}
 
 	result.PayloadKind = kind
 	result.PayloadBytes = len(payload)
 	result.Data = append([]byte(nil), payload...)
+	result.TokenText = finalResponse.Message
+	result.EndOfGeneration = kind == stagewire.PayloadKindSampledToken && finalResponse.CompletionTokens == 0
 	if kind == stagewire.PayloadKindText {
 		result.Payload = string(payload)
 	}
@@ -193,6 +218,7 @@ func (e *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 
 func buildStageRequest(requestID string, model string, phase inference.Phase, decodeStep int, payloadMetadata stagewire.Metadata, payload []byte, maxTokens int, stage clusterplan.Stage) StageRequest {
 	metadata := stagewire.Metadata{
+		Operation:   stagewire.OperationExecute,
 		SessionID:   requestID,
 		RequestID:   requestID,
 		ModelID:     model,
@@ -212,6 +238,24 @@ func buildStageRequest(requestID string, model string, phase inference.Phase, de
 		MaxTokens:   maxTokens,
 	}
 	return StageRequest{Metadata: metadata, Payload: append([]byte(nil), payload...)}
+}
+
+func buildCloseSessionRequest(sessionID string, model string, stage clusterplan.Stage) StageRequest {
+	return StageRequest{Metadata: stagewire.Metadata{
+		Operation:   stagewire.OperationCloseSession,
+		SessionID:   sessionID,
+		RequestID:   sessionID + "-close",
+		ModelID:     model,
+		Phase:       inference.PhasePrefill,
+		StageIndex:  stage.StageIndex,
+		StageCount:  stage.StageCount,
+		NodeName:    stage.NodeName,
+		LayerStart:  stage.LayerStart,
+		LayerEnd:    stage.LayerEnd,
+		PayloadKind: stagewire.PayloadKindText,
+		Encoding:    "utf-8",
+		MaxTokens:   1,
+	}}
 }
 
 func (e *Executor) callStage(ctx context.Context, stage clusterplan.Stage, stageReq StageRequest) (StageResponse, int, StageTrace, error) {
@@ -236,7 +280,9 @@ func (e *Executor) callStage(ctx context.Context, stage clusterplan.Stage, stage
 		PayloadIn:      len(stageReq.Payload),
 		PayloadCRC32In: crc32.ChecksumIEEE(stageReq.Payload),
 		Transport:      stagewire.Transport,
+		Operation:      stageReq.Operation,
 		Phase:          stageReq.Phase,
+		DecodeStep:     stageReq.DecodeStep,
 	}
 	resp, err := e.client.Do(outbound)
 	if err != nil {
