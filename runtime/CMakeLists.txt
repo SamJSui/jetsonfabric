@@ -85,6 +85,7 @@ set(JF_RUNTIME_SOURCES
 
   protocol/execution_mode.cpp
   protocol/stage.cpp
+  protocol/stage_control.cpp
 
   adapters/llama_cpp_model.cpp
   adapters/llama_cpp_adapter.cpp
