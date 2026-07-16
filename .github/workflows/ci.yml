@@ -68,7 +68,7 @@ jobs:
           path: |
             runtime/third_party/llama.cpp
             runtime/build-ci-cpu
-          key: ci-runtime-${{ runner.os }}-${{ env.CI_LLAMA_CPP_COMMIT }}-${{ hashFiles('runtime/CMakeLists.txt', 'runtime/**/*.cpp', 'runtime/**/*.h', 'runtime/**/*.hpp') }}
+          key: ci-runtime-${{ runner.os }}-${{ env.CI_LLAMA_CPP_COMMIT }}-${{ hashFiles('runtime/CMakeLists.txt', 'runtime/**/*.cpp', 'runtime/**/*.h', 'runtime/**/*.hpp', 'runtime/patches/**', 'scripts/ci/**') }}
 
       - name: Run two-node real CPU E2E
         run: bash scripts/ci/smoke-real-runtime-cpu.sh
