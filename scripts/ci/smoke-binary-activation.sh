@@ -122,6 +122,7 @@ http_code="$(curl -sS -o "$response_file" -w '%{http_code}' \
     "request_id": "ci-binary-activation",
     "model": "synthetic-activation-v1",
     "payload": "activation-checkpoint",
+    "max_tokens": 1,
     "stage_count": 2,
     "allow_colocated_stages": true,
     "strict_payload_transitions": true
