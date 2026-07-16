@@ -13,8 +13,7 @@ public:
     explicit LlamaCppStageExecutor(adapters::LlamaCppStageConfig config);
 
     inference::ExecutionResult execute(const inference::StageInput& input) const override;
-
-    void close_session(const std::string& session_id) const;
+    void close_session(const std::string& session_id) const override;
     std::size_t session_count() const;
 
 private:
