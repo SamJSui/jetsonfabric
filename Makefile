@@ -16,6 +16,7 @@ RUNTIME_BIN ?= $(DIST_DIR)/jetsonfabric-runtime-worker
 
 LLAMA_CPP_REPO ?= https://github.com/ggml-org/llama.cpp
 LLAMA_CPP_DIR ?= runtime/third_party/llama.cpp
+LLAMA_CPP_COMMIT ?= bf2c86ddc0685f580595954056c2e77ebabfab4f
 
 BENCHMARKS_PATH ?= data/benchmarks.jsonl
 MODELS_PATH ?= configs/models.example.json
@@ -60,7 +61,7 @@ BENCH_CONCURRENCY ?= 1
 help:
 	@printf 'JetsonFabric targets\n\n'
 	@printf 'Setup:\n'
-	@printf '  make setup                Clone llama.cpp if missing\n\n'
+	@printf '  make setup                Prepare pinned llama.cpp checkout\n\n'
 	@printf 'Build/test:\n'
 	@printf '  make test                 Run Go tests\n'
 	@printf '  make build                Build node binaries and runtime\n'
@@ -94,13 +95,15 @@ node:
 
 .PHONY: setup
 setup:
-	@if [ -f "$(LLAMA_CPP_DIR)/CMakeLists.txt" ]; then \
-		printf 'llama.cpp already present at %s\n' "$(LLAMA_CPP_DIR)"; \
-	else \
+	@if [ ! -d "$(LLAMA_CPP_DIR)/.git" ]; then \
 		mkdir -p runtime/third_party; \
 		printf 'cloning llama.cpp into %s\n' "$(LLAMA_CPP_DIR)"; \
-		$(GIT) clone $(LLAMA_CPP_REPO) $(LLAMA_CPP_DIR); \
+		$(GIT) clone --filter=blob:none $(LLAMA_CPP_REPO) $(LLAMA_CPP_DIR); \
 	fi
+	@printf 'preparing llama.cpp commit %s\n' "$(LLAMA_CPP_COMMIT)"
+	@$(GIT) -C $(LLAMA_CPP_DIR) fetch --depth 1 origin $(LLAMA_CPP_COMMIT)
+	@$(GIT) -C $(LLAMA_CPP_DIR) checkout --detach $(LLAMA_CPP_COMMIT)
+	@$(GIT) -C $(LLAMA_CPP_DIR) reset --hard $(LLAMA_CPP_COMMIT)
 
 .PHONY: runtime
 runtime: setup
