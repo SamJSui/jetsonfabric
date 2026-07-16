@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK_DIR="$(mktemp -d)"
 BIN_DIR="$WORK_DIR/bin"
 LOG_DIR="$WORK_DIR/logs"
+ARTIFACT_LOG_DIR="${CI_ARTIFACT_LOG_DIR:-$ROOT_DIR/.ci-logs/real-runtime}"
 mkdir -p "$BIN_DIR" "$LOG_DIR"
 
 MODEL_PATH="${CI_MODEL_PATH:?CI_MODEL_PATH is required}"
@@ -14,6 +15,7 @@ RUNTIME_BUILD_DIR="${CI_RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build-ci-cpu}"
 NODE0_PORT="${CI_NODE0_PORT:-18180}"
 NODE1_PORT="${CI_NODE1_PORT:-18181}"
 MODEL_ID="ci-tiny-llama"
+response_file=""
 
 PIDS=()
 cleanup() {
@@ -29,6 +31,12 @@ cleanup() {
       echo "===== $log_file =====" >&2
       cat "$log_file" >&2
     done
+    rm -rf "$ARTIFACT_LOG_DIR"
+    mkdir -p "$ARTIFACT_LOG_DIR"
+    cp -a "$LOG_DIR"/. "$ARTIFACT_LOG_DIR"/ 2>/dev/null || true
+    if [[ -n "$response_file" && -f "$response_file" ]]; then
+      cp "$response_file" "$ARTIFACT_LOG_DIR/response.json"
+    fi
   fi
   rm -rf "$WORK_DIR"
   exit "$status"
@@ -64,6 +72,7 @@ wait_for_two_members() {
 }
 
 cd "$ROOT_DIR"
+rm -rf "$ARTIFACT_LOG_DIR"
 
 if [[ ! -f "$MODEL_PATH" ]]; then
   echo "CI model not found: $MODEL_PATH" >&2
@@ -80,13 +89,16 @@ if [[ ! -d "$LLAMA_CPP_DIR/.git" ]]; then
 fi
 git -C "$LLAMA_CPP_DIR" fetch --depth 1 origin "$LLAMA_CPP_COMMIT"
 git -C "$LLAMA_CPP_DIR" checkout --detach "$LLAMA_CPP_COMMIT"
+git -C "$LLAMA_CPP_DIR" reset --hard "$LLAMA_CPP_COMMIT"
 
 cmake -S runtime -B "$RUNTIME_BUILD_DIR" \
   -DCMAKE_BUILD_TYPE=Release \
   -DJF_LLAMA_CPP_SOURCE_DIR="$LLAMA_CPP_DIR" \
   -DGGML_CUDA=OFF \
-  -DGGML_NATIVE=OFF
-cmake --build "$RUNTIME_BUILD_DIR" --parallel 2
+  -DGGML_NATIVE=OFF \
+  2>&1 | tee "$LOG_DIR/cmake-configure.log"
+cmake --build "$RUNTIME_BUILD_DIR" --parallel 2 \
+  2>&1 | tee "$LOG_DIR/cmake-build.log"
 
 go build -buildvcs=false -o "$BIN_DIR/jetsonfabric-node" ./cmd/jetsonfabric-node
 
@@ -97,6 +109,10 @@ if [[ ! -x "$RUNTIME_BIN" || ! -x "$STAGE_TEST_BIN" ]]; then
   exit 1
 fi
 
+if ! CI_MODEL_PATH="$MODEL_PATH" "$STAGE_TEST_BIN" >"$LOG_DIR/llama-stage-equivalence.log" 2>&1; then
+  cat "$LOG_DIR/llama-stage-equivalence.log" >&2
+  exit 1
+fi
 LAYER_COUNT="$(CI_MODEL_PATH="$MODEL_PATH" "$STAGE_TEST_BIN" --print-layer-count)"
 BASELINE_TOKEN="$(CI_MODEL_PATH="$MODEL_PATH" "$STAGE_TEST_BIN" --baseline-token)"
 if [[ ! "$LAYER_COUNT" =~ ^[0-9]+$ || "$LAYER_COUNT" -lt 2 ]]; then
