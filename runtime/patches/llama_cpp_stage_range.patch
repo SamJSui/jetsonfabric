@@ -1,0 +1,189 @@
+diff --git a/src/llama-cparams.h b/src/llama-cparams.h
+index 58520caa..c53929a1 100644
+--- a/src/llama-cparams.h
++++ b/src/llama-cparams.h
+@@ -20,6 +20,9 @@ struct llama_cparams {
+     int32_t  n_threads;       // number of threads to use for generation
+     int32_t  n_threads_batch; // number of threads to use for batch processing
+ 
++    uint32_t layer_start;     // first transformer layer to execute, inclusive
++    uint32_t layer_end;       // transformer layer end, exclusive
++
+     int32_t  nextn_layer_offset = 0;
+ 
+     float rope_freq_base;
+diff --git a/src/llama-context.h b/src/llama-context.h
+index bf91daa8..9b16050d 100644
+--- a/src/llama-context.h
++++ b/src/llama-context.h
+@@ -117,6 +117,7 @@ struct llama_context {
+     void set_embeddings (bool value);
+     void set_embeddings_nextn(bool value, bool masked);
+     void set_embeddings_layer_inp(uint32_t lid, bool enable);
++    bool set_layer_range(uint32_t layer_start, uint32_t layer_end);
+     void set_nextn_layer_offset(int32_t offset);
+     void set_causal_attn(bool value);
+     void set_warmup(bool value);
+diff --git a/src/llama-ext.h b/src/llama-ext.h
+index 348bbae9..850252c4 100644
+--- a/src/llama-ext.h
++++ b/src/llama-ext.h
+@@ -115,6 +115,12 @@ LLAMA_API void llama_set_embeddings_layer_inp(struct llama_context * ctx, uint3
+ // LLAMA_API float * llama_get_embeddings(struct llama_context * ctx);
+ LLAMA_API float * llama_get_embeddings_layer_inp(struct llama_context * ctx, uint32_t lid);
+ 
++// Restrict graph execution to [layer_start, layer_end). The first range may
++// consume token IDs; later ranges consume raw F32 hidden states through
++// llama_batch.embd. Non-final ranges return hidden states through embeddings.
++// JetsonFabric pins this WIP extension to one llama.cpp revision.
++LLAMA_API bool llama_set_layer_range(struct llama_context * ctx, uint32_t layer_start, uint32_t layer_end);
++
+ LLAMA_API llama_context * llama_get_ctx_other(struct llama_context * ctx);
+ 
+ //
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 3a469bc9..eb2b477a 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -105,6 +105,8 @@ llama_context::llama_context(
+ 
+     cparams.embeddings_layer_inp.resize(hparams.n_layer(), false);
+     embd_layer_inp.resize(hparams.n_layer());
++    cparams.layer_start = 0;
++    cparams.layer_end   = hparams.n_layer();
+ 
+     cparams.ctx_type     = params.ctx_type;
+     cparams.pooling_type = params.pooling_type;
+@@ -1141,6 +1143,23 @@ void llama_context::set_embeddings_layer_inp(uint32_t lid, bool enable) {
+     sched_need_reserve = true;
+ }
+ 
++bool llama_context::set_layer_range(uint32_t layer_start, uint32_t layer_end) {
++    const uint32_t n_layer = model.hparams.n_layer();
++    if (layer_start >= layer_end || layer_end > n_layer) {
++        LLAMA_LOG_ERROR("%s: invalid layer range [%u:%u) for %u layers\n",
++                __func__, layer_start, layer_end, n_layer);
++        return false;
++    }
++    if (cparams.layer_start == layer_start && cparams.layer_end == layer_end) {
++        return true;
++    }
++    cparams.layer_start = layer_start;
++    cparams.layer_end   = layer_end;
++    gf_res_prev->reset();
++    sched_need_reserve = true;
++    return true;
++}
++
+ void llama_context::set_nextn_layer_offset(int32_t offset) {
+     cparams.nextn_layer_offset = offset;
+ }
+@@ -1679,6 +1698,11 @@ int llama_context::decode(const llama_batch & batch_inp) {
+     const int64_t n_vocab = vocab.n_tokens();
+     const int64_t n_embd  = hparams.n_embd_inp();
+ 
++    if (cparams.layer_start > 0 && batch_inp.token != nullptr) {
++        LLAMA_LOG_ERROR("%s: non-first layer range requires llama_batch.embd input\n", __func__);
++        return -1;
++    }
++
+     // when computing embeddings, all tokens are output
+     const bool output_all   = cparams.embeddings;
+     const bool has_samplers = !sampling.samplers.empty();
+@@ -3679,6 +3703,10 @@ void llama_set_embeddings_layer_inp(llama_context * ctx, uint32_t lid, bool val
+     ctx->set_embeddings_layer_inp(lid, value);
+ }
+ 
++bool llama_set_layer_range(llama_context * ctx, uint32_t layer_start, uint32_t layer_end) {
++    return ctx->set_layer_range(layer_start, layer_end);
++}
++
+ void llama_set_nextn_layer_offset(llama_context * ctx, int32_t offset) {
+     ctx->set_nextn_layer_offset(offset);
+ }
+diff --git a/src/llama-graph.h b/src/llama-graph.h
+index c84cb6a4..c03cf25c 100644
+--- a/src/llama-graph.h
++++ b/src/llama-graph.h
+@@ -774,6 +774,8 @@ struct llm_graph_params {
+             cparams.embeddings              == other.cparams.embeddings              &&
+             cparams.embeddings_nextn        == other.cparams.embeddings_nextn        &&
+             cparams.embeddings_nextn_masked == other.cparams.embeddings_nextn_masked &&
++            cparams.layer_start             == other.cparams.layer_start             &&
++            cparams.layer_end               == other.cparams.layer_end               &&
+             cparams.causal_attn             == other.cparams.causal_attn             &&
+             arch  == other.arch  &&
+             gtype == other.gtype &&
+diff --git a/src/models/llama.cpp b/src/models/llama.cpp
+index 4bfebc88..fa5ec6dc 100644
+--- a/src/models/llama.cpp
++++ b/src/models/llama.cpp
+@@ -125,7 +125,7 @@ llama_model_llama::graph<embed>::graph(const llama_model & model, const llm_grap
+ 
+     ggml_tensor * inp_out_ids = build_inp_out_ids();
+ 
+-    for (int il = 0; il < n_layer; ++il) {
++    for (int il = cparams.layer_start; il < (int) cparams.layer_end; ++il) {
+         res->t_layer_inp[il] = inpL;
+ 
+         ggml_tensor * inpSA = inpL;
+@@ -173,7 +173,7 @@ llama_model_llama::graph<embed>::graph(const llama_model & model, const llm_grap
+             cur = build_attn(inp_attn,
+                     model.layers[il].wo, model.layers[il].wo_b, model.layers[il].wo_s,
+                     Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, kq_scale, il);
+             cb(cur, "attn_out", il);
+         }
+-        if (il == n_layer - 1 && inp_out_ids) {
++        if (cparams.layer_end == (uint32_t) n_layer && il == n_layer - 1 && inp_out_ids) {
+             cur   = ggml_get_rows(ctx0,   cur, inp_out_ids);
+             inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+         }
+@@ -228,6 +228,12 @@ llama_model_llama::graph<embed>::graph(const llama_model & model, const llm_grap
+         inpL = cur;
+     }
+     cur = inpL;
++
++    if (cparams.layer_end < (uint32_t) n_layer) {
++        res->t_embd = cur;
++        ggml_build_forward_expand(gf, cur);
++        return;
++    }
+ 
+     cur = build_norm(cur,
+             model.output_norm, NULL,
+diff --git a/src/models/qwen2.cpp b/src/models/qwen2.cpp
+index e9c2ea80..1a627d57 100644
+--- a/src/models/qwen2.cpp
++++ b/src/models/qwen2.cpp
+@@ -70,7 +70,7 @@ llama_model_qwen2::graph::graph(const llama_model & model, const llm_graph_param
+ 
+     ggml_tensor * inp_out_ids = build_inp_out_ids();
+ 
+-    for (int il = 0; il < n_layer; ++il) {
++    for (int il = cparams.layer_start; il < (int) cparams.layer_end; ++il) {
+         ggml_tensor * inpSA = inpL;
+ 
+         // norm
+@@ -105,7 +105,7 @@ llama_model_qwen2::graph::graph(const llama_model & model, const llm_graph_param
+             cur = build_attn(inp_attn,
+                     model.layers[il].wo, model.layers[il].wo_b, model.layers[il].wo_s,
+                     Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, 1.0f/sqrtf(float(n_embd_head)), il);
+         }
+-        if (il == n_layer - 1 && inp_out_ids) {
++        if (cparams.layer_end == (uint32_t) n_layer && il == n_layer - 1 && inp_out_ids) {
+             cur   = ggml_get_rows(ctx0,   cur, inp_out_ids);
+             inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+         }
+@@ -134,6 +134,12 @@ llama_model_qwen2::graph::graph(const llama_model & model, const llm_graph_param
+         inpL = cur;
+     }
+     cur = inpL;
++
++    if (cparams.layer_end < (uint32_t) n_layer) {
++        res->t_embd = cur;
++        ggml_build_forward_expand(gf, cur);
++        return;
++    }
+ 
+     cur = build_norm(cur,
+             model.output_norm, NULL,
