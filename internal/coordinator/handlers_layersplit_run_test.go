@@ -42,6 +42,7 @@ func TestLayerSplitRunReportsActivationHandoff(t *testing.T) {
 		"request_id":"run-1",
 		"model":"qwen2.5-coder-1.5b-q4",
 		"payload":"prompt",
+		"max_tokens":1,
 		"stage_count":2,
 		"allow_colocated_stages":true,
 		"strict_payload_transitions":true
@@ -121,7 +122,13 @@ func newCoordinatorFrameServer(t *testing.T, run func(stagewire.StageRequest) st
 		if err != nil {
 			t.Fatalf("decode frame: %v", err)
 		}
-		encoded, err := stagewire.Marshal(run(req))
+		var response stagewire.StageResponse
+		if req.Operation == stagewire.OperationCloseSession {
+			response = stagewire.StageResponse{Metadata: responseMetadataForCoordinator(req, stagewire.PayloadKindText)}
+		} else {
+			response = run(req)
+		}
+		encoded, err := stagewire.Marshal(response)
 		if err != nil {
 			t.Fatalf("encode frame: %v", err)
 		}
@@ -138,6 +145,9 @@ func responseMetadataForCoordinator(req stagewire.StageRequest, kind stagewire.P
 	metadata.Shape = nil
 	metadata.ByteOrder = ""
 	metadata.Layout = ""
+	if kind == stagewire.PayloadKindText {
+		metadata.Encoding = "utf-8"
+	}
 	if kind == stagewire.PayloadKindActivation {
 		metadata.DType = "f32"
 		metadata.Shape = []int64{4, 16}
