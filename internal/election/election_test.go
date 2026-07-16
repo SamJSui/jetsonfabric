@@ -68,6 +68,19 @@ func TestElectLeaderSkipsStaleMembers(t *testing.T) {
 	assertLeader(t, leader, ok, "fresh")
 }
 
+func TestElectLeaderReturnsFalseWhenNoEligibleMembers(t *testing.T) {
+	now := testNow()
+	leader, ok := ElectLeader(now, []membership.Member{
+		testMember("worker", membership.NodeRoleWorker, 0, now, now),
+		testMember("test", membership.NodeRoleTest, 0, now, now),
+		testMember("stale-jetson", membership.NodeRoleJetson, 0, now.Add(-2*time.Minute), now),
+	}, time.Minute)
+
+	if ok {
+		t.Fatalf("expected no leader, got %+v", leader)
+	}
+}
+
 func TestExplainReportsCandidateReasons(t *testing.T) {
 	now := testNow()
 	result := Explain(now, []membership.Member{
@@ -81,6 +94,27 @@ func TestExplainReportsCandidateReasons(t *testing.T) {
 	}
 	assertReason(t, result, "worker", ReasonRoleNotEligible)
 	assertReason(t, result, "stale", ReasonStaleMember)
+}
+
+func TestSameMembershipViewElectsSameLeaderRegardlessOfOrder(t *testing.T) {
+	now := testNow()
+
+	a := testMember("node-a", membership.NodeRoleJetson, 0, now, now)
+	b := testMember("node-b", membership.NodeRoleJetson, 0, now, now.Add(-time.Minute))
+	c := testMember("node-c", membership.NodeRoleWorker, 100, now, now.Add(-time.Hour))
+
+	result1 := Explain(now, []membership.Member{a, b, c}, time.Minute)
+	result2 := Explain(now, []membership.Member{c, a, b}, time.Minute)
+	result3 := Explain(now, []membership.Member{b, c, a}, time.Minute)
+
+	if result1.Leader == nil || result2.Leader == nil || result3.Leader == nil {
+		t.Fatalf("expected leaders: %+v %+v %+v", result1.Leader, result2.Leader, result3.Leader)
+	}
+
+	want := result1.Leader.NodeID
+	if result2.Leader.NodeID != want || result3.Leader.NodeID != want {
+		t.Fatalf("leaders diverged: %s, %s, %s", result1.Leader.NodeID, result2.Leader.NodeID, result3.Leader.NodeID)
+	}
 }
 
 func TestTrackerRecomputesLeaderDuringLease(t *testing.T) {
@@ -129,6 +163,24 @@ func TestTrackerFailsOverWhenIncumbentIsStale(t *testing.T) {
 		testMember("fresh", membership.NodeRoleJetson, 0, now, now),
 	}
 	assertResultLeader(t, tracker.Explain(now.Add(time.Second), second, time.Minute), "fresh")
+}
+
+func TestTrackerEpochDoesNotChangeWhenLeaderStaysSame(t *testing.T) {
+	now := testNow()
+	tracker := NewTracker(10 * time.Second)
+	members := []membership.Member{testMember("node-a", membership.NodeRoleJetson, 0, now, now)}
+
+	first := tracker.Explain(now, members, time.Minute)
+	assertResultLeader(t, first, "node-a")
+	if first.Epoch != 1 {
+		t.Fatalf("expected first epoch 1, got %d", first.Epoch)
+	}
+
+	second := tracker.Explain(now.Add(time.Second), members, time.Minute)
+	assertResultLeader(t, second, "node-a")
+	if second.Epoch != 1 {
+		t.Fatalf("expected epoch to remain 1, got %d", second.Epoch)
+	}
 }
 
 func assertLeader(t *testing.T, leader membership.Member, ok bool, nodeID string) {

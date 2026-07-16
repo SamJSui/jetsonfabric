@@ -1,136 +1,130 @@
 # Architecture
 
-See [Architecture Diagrams](architecture-diagrams.md) for component, sequence,
-contract, and node lifecycle diagrams.
+See [Architecture Diagrams](architecture-diagrams.md) for visual views of these contracts.
 
-JetsonFabric has four layers:
+## Product shape
 
-1. Control plane
-2. Node agents
-3. Runtime workers
-4. Benchmark and routing policy
+Every logical node runs one Go process:
 
-## Control Plane
+```text
+jetsonfabric-node
+  -> identity, membership, discovery, and election
+  -> cluster planning and coordinator APIs
+  -> runtime bridge
+  -> node-local jetsonfabric-runtime-worker
+      -> inference-engine adapter such as llama.cpp
+```
 
-The control plane is Go-native.
+The runtime worker is a JetsonFabric-owned host process. The engine is the model implementation it hosts, and the compute backend is CPU or CUDA.
 
-The control plane owns the cluster model:
+## Main boundaries
 
-- nodes
-- models
-- deployments
-- placement previews
-- metrics
-- benchmark history
-- routing decisions
+1. `cmd/jetsonfabric-node` parses flags and starts the node app.
+2. `internal/node` owns process lifecycle and runtime supervision.
+3. `internal/membership` and `internal/discovery` maintain the local peer view.
+4. `internal/election` selects a coordinator; `internal/facade` provides the any-node API.
+5. `internal/clusterplan` selects eligible nodes, orders stages, assigns layer ranges, and reports topology.
+6. `internal/inference` defines prefill/decode lifecycle and legal payload semantics.
+7. `internal/stagewire` defines and validates the versioned binary stage frame.
+8. `internal/stageexec` executes an ordered pass and carries each binary payload into the next stage.
+9. `internal/runtimebridge` streams node-local stage frames to the supervised runtime.
+10. `runtime/` hosts C++ engine adapters and implements the matching frame contract.
 
-It exposes a local API and, later, a dashboard plus an OpenAI-compatible API.
+The package names answer separate questions:
 
-## Node Agents
+```text
+inference:       what should a distributed inference session mean?
+clusterplan:     where should each stage run?
+stagewire:       what crosses the stage boundary?
+stageexec:       how is an ordered stage pass invoked?
+runtimebridge:   how does the Go node reach its local C++ runtime?
+```
 
-Node agents are Go-native so they can run as a small systemd-managed binary on
-Jetson devices.
+## Execution vocabulary
 
-Each Jetson runs an agent that sends heartbeats and capability data to the
-control plane. A new Jetson joins the cluster by installing this agent and
-providing the control-plane URL plus a join token.
+Execution mode describes how inference work is distributed:
 
-Agents also expose the node-facing model proxy API. The control plane should
-route model requests to the agent, and the agent should forward them to the
-node-local runtime such as `llama-server`, TensorRT, Triton, or a future custom
-C++ worker. This keeps runtime ports, model paths, and node-local process details
-out of the control plane.
+- `data_parallel`: each replica owns a complete model.
+- `pipeline_parallel`: ordered transformer layer ranges are assigned to stages.
+- `tensor_parallel`: tensor operations are partitioned across devices or nodes.
 
-The agent should eventually collect:
+Stage position is represented only by `stage_index` and `stage_count`:
 
-- Jetson model
-- JetPack version
-- CUDA/TensorRT availability
-- memory
-- temperature
-- power mode
-- throttling state
-- loaded model shards
-- runtime health
+```text
+is_first = stage_index == 0
+is_last  = stage_index == stage_count - 1
+```
 
-For the POC, the agent knows:
+For `stage_count=1`, index `0` is both first and last. Layer ranges are contiguous and exhaustive.
 
-- which local runtime URL to proxy to
-- which JetsonFabric model IDs that runtime serves
-- which agent URL should be advertised back to the control plane
+Topology describes physical placement:
 
-Model downloads and runtime launch can remain script-managed until the POC
-single-node serving path works. A later model artifact manifest should move model
-source URLs, local paths, expected hashes, and launch commands under explicit
-agent/runtime management.
+- `colocated`: stages share a physical host.
+- `distributed`: stages span physical hosts.
 
-## Runtime Workers
+The stage wire contract supports `text`, `tokens`, `activation`, and `sampled_token`. Logits and KV cache remain engine-local.
 
-Runtime workers are adapters around actual model engines:
+## Node lifecycle
 
-- C++ llama.cpp adapter for quantized LLM baselines
-- C++ TensorRT/ONNX adapter for optimized inference
-- Triton adapter for production-style serving experiments
-- custom C++ layer-split runtime for distributed transformer inference
+A node binds its API listener, derives its advertised URL, starts or attaches to its runtime worker, constructs the facade/coordinator/runtime-bridge stack, publishes itself to membership, starts discovery, and serves until shutdown.
 
-Python is only for benchmark analysis, graphing, and offline report generation.
+`membership.Store` is a local peer cache, not a consensus database. Planning takes a fresh snapshot for each request.
 
-Runtime workers should be C++ first. C is acceptable only at external API
-boundaries such as POSIX sockets, CUDA, `libibverbs`, or vendor runtime
-libraries. Wrap those C APIs in small C++ types so tensor buffers, sessions,
-sockets, CUDA handles, and registered memory have clear ownership.
+## Request routing
 
-CUDA is not a default dependency for every service. It enters the runtime lane
-when JetsonFabric needs GPU-aware behavior:
+Clients can call any node. Coordinator-owned requests are served locally by the elected coordinator or proxied to its `APIURL`. `POST /v1/layer-split/stage` remains node-local and is forwarded through `runtimebridge` to that node's runtime URL.
 
-- TensorRT or llama.cpp GPU integration
-- pinned or mapped host buffers
-- CPU/GPU transfer measurement
-- activation compression kernels
-- possible GPUDirect/RDMA experiments after TCP baselines exist
+## Stage data plane
 
-The Go control plane should never own raw tensor bytes. It selects routes,
-records benchmarks, and instructs runtime workers. The C++ runtime owns
-layer-shard execution and tensor transport.
+One stage operation uses `stagewire` v1:
 
-## Tensor Transport
+```text
+fixed binary header
+  -> versioned JSON metadata
+  -> raw payload bytes
+```
 
-Layer-split runtime work should start with a simple TCP transport. The first
-wire protocol should be explicit and boring:
+The frame uses media type `application/vnd.jetsonfabric.stage.v1+octet-stream`. Tensor bytes are not base64-encoded. Metadata carries dtype, shape, little-endian byte order, row-major layout, byte length, and CRC32. See [Stagewire v1](stagewire-v1.md).
 
-- request or session ID
-- decode step
-- source and target layer boundary
-- batch size
-- sequence length
-- hidden dimension
-- dtype
-- byte length
-- payload bytes
+The coordinator-mediated P0 path is:
 
-Use typed enums in code for fields such as dtype and route/runtime mode, with
-stable numeric values on the wire. Do not serialize raw C++ structs directly;
-encode and decode fields explicitly so padding, alignment, and endian behavior
-do not become hidden protocol contracts.
+```text
+runtime stage 0
+  -> node 0 runtimebridge
+  -> stageexec at coordinator
+  -> node 1 API
+  -> node 1 runtimebridge
+  -> runtime stage 1
+```
 
-Transport phases:
+Direct runtime-to-runtime transport may replace this path later without changing the stagewire payload semantics.
 
-1. Built-in network with TCP for the P0/MVP layer-split baseline.
-2. Optional 10GbE TCP using the same JetsonFabric tensor protocol.
-3. Optional RDMA transport only after measurements show TCP or CPU copy overhead
-   is the bottleneck.
-4. Tensor-parallel experiments only after layer split and transport data justify
-   the synchronization cost.
+## Current execution status
 
-## Placement Modes
+The existing llama.cpp path still performs full-model generation at each stage. Its inter-stage semantic payload remains `text`, although transport now uses the binary stagewire frame.
 
-V0 supports route previews only. Planned modes:
+A synthetic CI engine proves the activation data plane independently of llama.cpp:
 
-- single-node
-- replica_serving
-- layer split
-- tensor-parallel experiment
-- Codex/cloud fallback
+```text
+text
+  -> synthetic stage 0
+  -> f32[4,16] activation bytes
+  -> second logical node and runtime
+  -> u32 sampled-token payload containing activation CRC32
+```
 
-Replica mode is a baseline, not the product identity. Layer split and
-profile-driven placement are the main research direction.
+CI asserts byte length and checksum continuity across the logical-node boundary. This proves activation transport, not partial transformer execution.
+
+## P0 partial-layer target
+
+```text
+text
+  -> tokenizer
+  -> first assigned layer range
+  -> activation stagewire payload
+  -> remaining assigned layer ranges
+  -> final-stage logits and sampling
+  -> sampled token
+```
+
+Each stage keeps KV state for its assigned layers local across decode steps. The remaining engine milestone is to make llama.cpp or another adapter produce and consume the real activation tensors defined by this data plane.

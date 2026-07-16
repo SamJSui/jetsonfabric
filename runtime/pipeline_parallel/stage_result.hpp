@@ -1,6 +1,6 @@
 #pragma once
 
-#include "protocol/activation.hpp"
+#include "protocol/stage.hpp"
 
 #include <string>
 
@@ -11,7 +11,7 @@ struct StageRunResult {
     std::string status = "500 Internal Server Error";
     std::string error_code;
     std::string error_message;
-    protocol::ActivationResponse response;
+    protocol::StageResponse response;
 };
 
 } // namespace jetsonfabric::runtime::pipeline_parallel

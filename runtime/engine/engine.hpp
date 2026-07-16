@@ -6,21 +6,23 @@
 
 namespace jetsonfabric::runtime {
 
-struct EngineResponse {
+struct RuntimeResponse {
     std::string status;
+    std::string content_type;
     std::string body;
 };
 
-class Engine {
+class RuntimeAPI {
 public:
-    virtual ~Engine() = default;
+    virtual ~RuntimeAPI() = default;
 
     virtual std::string runtime_name() const = 0;
-    virtual ExecutionMode mode() const = 0;
+    virtual std::string engine_name() const = 0;
+    virtual ExecutionMode execution_mode() const = 0;
     virtual std::string model() const = 0;
 
-    virtual EngineResponse chat_completion(const std::string& request_body) const = 0;
-    virtual EngineResponse run_stage(const std::string& request_body) const = 0;
+    virtual RuntimeResponse chat_completion(const std::string& request_body) const = 0;
+    virtual RuntimeResponse run_stage(const std::string& request_body) const = 0;
 };
 
 } // namespace jetsonfabric::runtime

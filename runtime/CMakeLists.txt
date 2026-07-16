@@ -50,16 +50,17 @@ set(JF_RUNTIME_SOURCES
   api/http_server.cpp
 
   protocol/execution_mode.cpp
-  protocol/activation.cpp
+  protocol/stage.cpp
 
   adapters/llama_cpp_adapter.cpp
 
   pipeline_parallel/stage_assignment.cpp
   pipeline_parallel/stage_worker.cpp
   pipeline_parallel/llama_cpp_full_model_executor.cpp
+  pipeline_parallel/synthetic_activation_executor.cpp
 
-  engine/runtime_engine.cpp
-  engine/runtime_engine_factory.cpp
+  engine/runtime_service.cpp
+  engine/inference_engine_factory.cpp
 )
 
 add_executable(jetsonfabric-runtime-worker

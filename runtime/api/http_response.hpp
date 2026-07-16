@@ -13,6 +13,7 @@ struct HttpResponse {
 };
 
 HttpResponse json_response(std::string status, std::string body);
+HttpResponse binary_response(std::string status, std::string content_type, std::string body);
 HttpResponse not_found_response();
 
 } // namespace jetsonfabric::runtime

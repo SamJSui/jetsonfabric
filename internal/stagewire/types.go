@@ -1,0 +1,78 @@
+// Package stagewire defines the versioned binary contract used for one
+// JetsonFabric stage operation. It owns framing and transport metadata, while
+// internal/inference owns semantic lifecycle and payload-transition rules.
+package stagewire
+
+import "github.com/SamJSui/jetsonfabric/internal/inference"
+
+const (
+	ContentType = "application/vnd.jetsonfabric.stage.v1+octet-stream"
+	Transport   = "http_binary_v1"
+)
+
+type PayloadKind = inference.PayloadKind
+
+const (
+	PayloadKindText         = inference.PayloadKindText
+	PayloadKindTokens       = inference.PayloadKindTokens
+	PayloadKindActivation   = inference.PayloadKindActivation
+	PayloadKindSampledToken = inference.PayloadKindSampledToken
+)
+
+// Metadata is encoded as JSON inside a stagewire frame. Payload bytes follow the
+// metadata directly and are never base64-encoded or represented as JSON arrays.
+type Metadata struct {
+	ProtocolVersion uint16 `json:"protocol_version"`
+
+	SessionID string `json:"session_id"`
+	RequestID string `json:"request_id"`
+	ModelID   string `json:"model_id"`
+
+	Phase      inference.Phase `json:"phase"`
+	DecodeStep int             `json:"decode_step"`
+
+	StageIndex int    `json:"stage_index"`
+	StageCount int    `json:"stage_count"`
+	NodeName   string `json:"node_name"`
+
+	LayerStart int `json:"layer_start"`
+	LayerEnd   int `json:"layer_end"`
+
+	PayloadKind PayloadKind `json:"payload_kind"`
+	Encoding    string      `json:"encoding,omitempty"`
+	DType       string      `json:"dtype,omitempty"`
+	Shape       []int64     `json:"shape,omitempty"`
+	ByteOrder   string      `json:"byte_order,omitempty"`
+	Layout      string      `json:"layout,omitempty"`
+
+	PayloadBytes int64  `json:"payload_bytes"`
+	PayloadCRC32 uint32 `json:"payload_crc32"`
+	Transport    string `json:"transport"`
+
+	MaxTokens int `json:"max_tokens,omitempty"`
+
+	BytesIn          int64  `json:"bytes_in,omitempty"`
+	BytesOut         int64  `json:"bytes_out,omitempty"`
+	PromptTokens     int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens int    `json:"completion_tokens,omitempty"`
+	LatencyMS        int    `json:"latency_ms,omitempty"`
+	Error            string `json:"error,omitempty"`
+	Message          string `json:"message,omitempty"`
+}
+
+func (m Metadata) Position() inference.StagePosition {
+	return inference.StagePosition{Index: m.StageIndex, Count: m.StageCount}
+}
+
+func (m Metadata) IsFirstStage() bool { return m.Position().IsFirst() }
+func (m Metadata) IsLastStage() bool  { return m.Position().IsLast() }
+
+// Frame is the in-process representation of one stagewire message. Metadata is
+// embedded so existing call sites can continue to access fields directly.
+type Frame struct {
+	Metadata
+	Payload []byte `json:"-"`
+}
+
+type StageRequest = Frame
+type StageResponse = Frame

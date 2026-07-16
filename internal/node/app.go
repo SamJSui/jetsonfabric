@@ -16,7 +16,7 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/facade"
 	"github.com/SamJSui/jetsonfabric/internal/membership"
 	"github.com/SamJSui/jetsonfabric/internal/modelregistry"
-	"github.com/SamJSui/jetsonfabric/internal/runtimegateway"
+	"github.com/SamJSui/jetsonfabric/internal/runtimebridge"
 	"github.com/SamJSui/jetsonfabric/internal/system"
 )
 
@@ -92,12 +92,13 @@ func (a *App) coordinatorRouter() (http.Handler, error) {
 	server := coordinator.NewServer(
 		registry,
 		coordinator.WithBenchmarkRecorder(benchmarks.NewJSONLRecorder(a.cfg.BenchmarksPath)),
+		coordinator.WithMembershipSource(a.store, a.cfg.StaleAfter),
 	)
 	return server.Router(), nil
 }
 
 func (a *App) stageRunner() (http.Handler, error) {
-	return runtimegateway.NewStageProxy(a.cfg.RuntimeURL)
+	return runtimebridge.NewStageProxy(a.cfg.RuntimeURL)
 }
 
 func (a *App) publicRouter(coordinatorRouter http.Handler) (http.Handler, error) {
@@ -112,7 +113,7 @@ func (a *App) publicRouter(coordinatorRouter http.Handler) (http.Handler, error)
 }
 
 func (a *App) chatProxy() (http.Handler, error) {
-	return runtimegateway.NewChatProxy(runtimegateway.ChatProxyConfig{
+	return runtimebridge.NewChatProxy(runtimebridge.ChatProxyConfig{
 		RuntimeURL: a.cfg.RuntimeURL,
 		NodeName:   a.cfg.NodeName,
 		Model:      a.cfg.Model,
@@ -349,7 +350,7 @@ func (a *App) selfMember(now time.Time) membership.Member {
 		LeaderPreference: a.cfg.LeaderPreference,
 		Arch:             snapshot.Arch,
 		OS:               snapshot.OS,
-		Capabilities:     snapshot.Capabilities,
+		Capabilities:     a.memberCapabilities(snapshot.Capabilities),
 		Metrics:          snapshot.Metrics,
 		StartedAt:        a.startedAt,
 		LastSeen:         now,

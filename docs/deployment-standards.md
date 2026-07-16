@@ -66,17 +66,17 @@ Minimum documented runtime path:
 ```text
 jetsonfabric-node
   -> jetsonfabric-runtime-worker
-      -> real engine integration
+      -> inference engine adapter
       -> compute backend such as CPU or CUDA
 ```
 
 Use project terminology consistently:
 
-- `runtime`: JetsonFabric local process that accepts node-routed execution work.
-- `engine`: inference implementation such as llama.cpp or JetsonFabric runtime code.
+- `runtime`: JetsonFabric-owned host process that accepts node-routed execution work and owns engine adapters.
+- `engine`: inference implementation such as llama.cpp or TensorRT-LLM.
 - `compute_backend`: execution API such as CPU or CUDA.
-- `adapter`: JetsonFabric integration wrapper around an external engine.
-- `executor`: runtime component that executes a full-model request or layer/stage request.
+- `adapter`: JetsonFabric integration wrapper around an engine.
+- `executor`: runtime component that executes a full-model request or an assigned layer range.
 
 Do not present synthetic payload transforms as product functionality. Synthetic behavior is allowed only for narrow tests or temporary seams that unblock real engine integration.
 

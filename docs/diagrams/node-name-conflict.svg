@@ -1,77 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 640" role="img" aria-labelledby="title desc">
-  <title id="title">Node Name Conflict Policy</title>
-  <desc id="desc">The POC and MVP use node_name as identity; duplicate live node names are configuration conflicts.</desc>
-  <defs>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
-    </marker>
-  </defs>
-  <style>
-    .bg { fill: #f8fafc; }
-    .title { font: 700 24px Arial, sans-serif; fill: #0f172a; }
-    .state { fill: #ffffff; stroke: #334155; stroke-width: 1.5; rx: 10; }
-    .ok { fill: #ecfdf5; stroke: #047857; stroke-width: 1.5; rx: 10; }
-    .bad { fill: #fef2f2; stroke: #b91c1c; stroke-width: 1.5; rx: 10; }
-    .arrow { stroke: #334155; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
-    .label { font: 700 15px Arial, sans-serif; fill: #0f172a; }
-    .small { font: 13px Arial, sans-serif; fill: #334155; }
-  </style>
-
-  <rect class="bg" width="900" height="640"/>
-  <text class="title" x="40" y="44">Node Name Conflict Policy</text>
-  <text class="small" x="40" y="68">POC/MVP treats node_name as identity. The control plane reports duplicate live names instead of rewriting them.</text>
-
-  <rect class="state" x="340" y="105" width="220" height="58"/>
-  <text class="label" x="391" y="139">Heartbeat arrives</text>
-
-  <rect class="state" x="340" y="215" width="220" height="58"/>
-  <text class="label" x="392" y="249">node_name present?</text>
-
-  <rect class="bad" x="75" y="215" width="190" height="58"/>
-  <text class="label" x="120" y="242">Reject 400</text>
-  <text class="small" x="114" y="262">missing node_name</text>
-
-  <rect class="state" x="340" y="325" width="220" height="58"/>
-  <text class="label" x="394" y="359">name already seen?</text>
-
-  <rect class="ok" x="635" y="325" width="190" height="58"/>
-  <text class="label" x="688" y="352">Register</text>
-  <text class="small" x="678" y="372">new node name</text>
-
-  <rect class="state" x="340" y="435" width="220" height="58"/>
-  <text class="label" x="382" y="469">same live endpoint?</text>
-
-  <rect class="ok" x="75" y="435" width="190" height="58"/>
-  <text class="label" x="127" y="462">Refresh</text>
-  <text class="small" x="113" y="482">same live node</text>
-
-  <rect class="bad" x="635" y="435" width="190" height="58"/>
-  <text class="label" x="687" y="462">Conflict</text>
-  <text class="small" x="671" y="482">different live node</text>
-
-  <rect class="ok" x="340" y="545" width="220" height="58"/>
-  <text class="label" x="398" y="572">Replace</text>
-  <text class="small" x="382" y="592">old record expired</text>
-
-  <path class="arrow" d="M450 163 V215"/>
-  <path class="arrow" d="M340 244 H265"/>
-  <text class="small" x="286" y="235">no</text>
-
-  <path class="arrow" d="M450 273 V325"/>
-  <text class="small" x="462" y="304">yes</text>
-
-  <path class="arrow" d="M560 354 H635"/>
-  <text class="small" x="586" y="345">no</text>
-
-  <path class="arrow" d="M450 383 V435"/>
-  <text class="small" x="462" y="414">yes</text>
-
-  <path class="arrow" d="M340 464 H265"/>
-  <text class="small" x="286" y="455">yes</text>
-
-  <path class="arrow" d="M560 464 H635"/>
-  <text class="small" x="586" y="455">no</text>
-
-  <path class="arrow" d="M450 493 V545"/>
-  <text class="small" x="462" y="524">expired</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 700" role="img" aria-labelledby="title desc">
+  <title id="title">Logical Node Identity and Topology</title>
+  <desc id="desc">Logical node identity is distinct from physical host identity; route metadata reports colocated or distributed topology using physical host counts.</desc>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker><style>.title{font:700 25px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.subtitle{font:14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#475569}.host{fill:#ecfeff;stroke:#0891b2;stroke-width:3;rx:18}.node{fill:#f8fafc;stroke:#334155;stroke-width:2;rx:14}.warn{fill:#fff1f2;stroke:#e11d48;stroke-width:2;rx:14}.ok{fill:#dcfce7;stroke:#16a34a;stroke-width:2;rx:14}.label{font:700 15px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.small{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#334155}.note{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#64748b}.line{stroke:#334155;stroke-width:2;marker-end:url(#arrow);fill:none}.dash{stroke:#64748b;stroke-width:2;stroke-dasharray:6 5;marker-end:url(#arrow);fill:none}</style></defs>
+  <text x="40" y="42" class="title">Logical node identity and topology</text><text x="40" y="67" class="subtitle">A logical node is a process. A physical host is the machine. Counts keep those concepts separate.</text>
+  <rect x="60" y="130" width="430" height="310" class="host"/><text x="275" y="164" text-anchor="middle" class="label">Physical host: dopey</text><text x="275" y="187" text-anchor="middle" class="small">same GPU, memory, disk, loopback stack</text>
+  <rect x="100" y="225" width="165" height="95" class="node"/><text x="182" y="258" text-anchor="middle" class="label">Logical node A</text><text x="182" y="281" text-anchor="middle" class="small">node_name=dopey-a</text><text x="182" y="298" text-anchor="middle" class="small">node_id persisted</text>
+  <rect x="300" y="225" width="165" height="95" class="node"/><text x="382" y="258" text-anchor="middle" class="label">Logical node B</text><text x="382" y="281" text-anchor="middle" class="small">node_name=dopey-b</text><text x="382" y="298" text-anchor="middle" class="small">node_id persisted</text>
+  <rect x="100" y="345" width="365" height="58" class="warn"/><text x="282" y="370" text-anchor="middle" class="label">topology=colocated</text><text x="282" y="391" text-anchor="middle" class="small">stage_count=2, logical_node_count=2, physical_host_count=1</text>
+  <rect x="610" y="130" width="200" height="120" class="host"/><text x="710" y="164" text-anchor="middle" class="label">Physical host</text><text x="710" y="187" text-anchor="middle" class="small">grumpy</text><text x="710" y="204" text-anchor="middle" class="small">logical node C</text><text x="710" y="221" text-anchor="middle" class="small">own GPU/memory</text>
+  <rect x="850" y="130" width="200" height="120" class="host"/><text x="950" y="164" text-anchor="middle" class="label">Physical host</text><text x="950" y="187" text-anchor="middle" class="small">sleepy</text><text x="950" y="204" text-anchor="middle" class="small">logical node D</text><text x="950" y="221" text-anchor="middle" class="small">own GPU/memory</text>
+  <rect x="620" y="325" width="410" height="95" class="ok"/><text x="825" y="358" text-anchor="middle" class="label">topology=distributed</text><text x="825" y="381" text-anchor="middle" class="small">stage_count=2, logical_node_count=2, physical_host_count=2</text><text x="825" y="398" text-anchor="middle" class="small">planner prefers distinct physical_host_id values</text>
+  <rect x="180" y="535" width="740" height="85" class="node"/><text x="550" y="568" text-anchor="middle" class="label">Identity and policy</text><text x="550" y="591" text-anchor="middle" class="small">node_id is logical identity; hostname/physical_host_id group processes by machine</text><text x="550" y="608" text-anchor="middle" class="small">allow_colocated_stages is false by default and enabled only for explicit development runs</text>
+  <path d="M490 285 H610" class="dash"/><path d="M810 190 H850" class="line"/><path d="M825 250 V325" class="line"/><path d="M282 403 C310 475,440 520,550 535" class="dash"/><path d="M825 420 C805 485,680 520,550 535" class="dash"/>
+  <text x="520" y="273" class="note">development topology</text><text x="822" y="178" class="note">different hosts</text>
 </svg>

@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI_LLAMA_CPP_COMMIT: bf2c86ddc0685f580595954056c2e77ebabfab4f
+  CI_LLAMA_CPP_DIR: runtime/third_party/llama.cpp
+  CI_RUNTIME_BUILD_DIR: runtime/build-ci-cpu
+  CI_MODEL_PATH: ${{ github.workspace }}/.cache/models/stories15M-q4_0.gguf
+  CI_MODEL_URL: https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories15M-q4_0.gguf
+
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run unit tests
+        run: go test ./...
+
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build jq
+
+      - name: Cache CI model
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/models
+          key: ci-model-${{ runner.os }}-stories15m-q4-0-v1
+
+      - name: Download CI model
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$(dirname "$CI_MODEL_PATH")"
+          curl -fL --retry 3 --retry-delay 2 "$CI_MODEL_URL" -o "$CI_MODEL_PATH"
+
+      - name: Verify CI model
+        run: |
+          test -s "$CI_MODEL_PATH"
+          test "$(head -c 4 "$CI_MODEL_PATH")" = "GGUF"
+          ls -lh "$CI_MODEL_PATH"
+
+      - name: Cache llama.cpp checkout and CPU build
+        uses: actions/cache@v4
+        with:
+          path: |
+            runtime/third_party/llama.cpp
+            runtime/build-ci-cpu
+          key: ci-runtime-${{ runner.os }}-${{ env.CI_LLAMA_CPP_COMMIT }}-${{ hashFiles('runtime/CMakeLists.txt', 'runtime/**/*.cpp', 'runtime/**/*.h', 'runtime/**/*.hpp') }}
+
+      - name: Run two-node real CPU E2E
+        run: bash scripts/ci/smoke-real-runtime-cpu.sh
+
+      - name: Run two-node binary activation E2E
+        run: bash scripts/ci/smoke-binary-activation.sh

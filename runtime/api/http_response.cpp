@@ -17,11 +17,11 @@ std::string HttpResponse::serialize() const {
 }
 
 HttpResponse json_response(std::string status, std::string body) {
-    return HttpResponse{
-        .status = std::move(status),
-        .content_type = "application/json",
-        .body = std::move(body),
-    };
+    return HttpResponse{std::move(status), "application/json", std::move(body)};
+}
+
+HttpResponse binary_response(std::string status, std::string content_type, std::string body) {
+    return HttpResponse{std::move(status), std::move(content_type), std::move(body)};
 }
 
 HttpResponse not_found_response() {
