@@ -88,14 +88,22 @@ func (s *Server) handleLayerSplitRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := stageexec.New(stageexec.Config{}).Execute(r.Context(), stageexec.Request{
+	executor := stageexec.New(stageexec.Config{})
+	executionRequest := stageexec.Request{
 		RequestID:                runReq.RequestID,
 		Model:                    model.ID,
 		Payload:                  runReq.Payload,
 		MaxTokens:                runReq.MaxTokens,
 		Plan:                     plan,
 		StrictPayloadTransitions: runReq.StrictPayloadTransitions,
-	})
+	}
+	var result stageexec.Result
+	var err error
+	if runReq.StrictPayloadTransitions {
+		result, err = executor.Generate(r.Context(), executionRequest)
+	} else {
+		result, err = executor.Execute(r.Context(), executionRequest)
+	}
 	if err != nil {
 		writeLayerSplitRunError(w, http.StatusBadGateway, errorPipelineStageFailed, err.Error(), &plan, &result)
 		return
