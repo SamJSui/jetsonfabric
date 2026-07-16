@@ -70,6 +70,8 @@ struct StageOutput {
     Payload payload;
     int prompt_tokens = 0;
     int completion_tokens = 0;
+    std::string token_text;
+    bool end_of_generation = false;
 };
 
 struct ExecutionError {
