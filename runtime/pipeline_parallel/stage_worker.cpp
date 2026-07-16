@@ -66,11 +66,7 @@ inference::StageInput to_stage_input(const protocol::StageRequest& request) {
     };
 }
 
-protocol::StageResponse to_stage_response(
-    const protocol::StageRequest& request,
-    const inference::StageOutput& output,
-    int latency_ms
-) {
+protocol::StageResponse base_response(const protocol::StageRequest& request) {
     protocol::StageResponse response;
     response.session_id = request.session_id;
     response.request_id = request.request_id;
@@ -82,7 +78,15 @@ protocol::StageResponse to_stage_response(
     response.node_name = request.node_name;
     response.layer_start = request.layer_start;
     response.layer_end = request.layer_end;
+    return response;
+}
 
+protocol::StageResponse to_stage_response(
+    const protocol::StageRequest& request,
+    const inference::StageOutput& output,
+    int latency_ms
+) {
+    protocol::StageResponse response = base_response(request);
     response.payload_kind = inference::to_string(output.payload.kind);
     response.encoding = output.payload.encoding;
     response.dtype = output.payload.tensor.dtype;
@@ -90,11 +94,20 @@ protocol::StageResponse to_stage_response(
     response.byte_order = output.payload.tensor.byte_order;
     response.layout = output.payload.tensor.layout;
     response.payload = output.payload.bytes;
-
     response.bytes_in = static_cast<std::int64_t>(request.payload.size());
     response.bytes_out = static_cast<std::int64_t>(response.payload.size());
     response.prompt_tokens = output.prompt_tokens;
     response.completion_tokens = output.completion_tokens;
+    response.latency_ms = latency_ms;
+    response.message = output.token_text;
+    return response;
+}
+
+protocol::StageResponse close_response(const protocol::StageRequest& request, int latency_ms) {
+    protocol::StageResponse response = base_response(request);
+    response.payload_kind = "text";
+    response.encoding = "utf-8";
+    response.bytes_in = static_cast<std::int64_t>(request.payload.size());
     response.latency_ms = latency_ms;
     return response;
 }
@@ -152,6 +165,30 @@ StageRunResult StageWorker::run(const protocol::StageRequest& request) const {
     result.ok = true;
     result.status = "200 OK";
     result.response = to_stage_response(request, execution.output, latency);
+    return result;
+}
+
+StageRunResult StageWorker::close_session(const protocol::StageRequest& request) const {
+    const std::string assignment_error = validate_stage_assignment(assignment_);
+    if (!assignment_error.empty()) {
+        return bad_request("invalid_stage_assignment", assignment_error);
+    }
+    const std::string request_error = validate_request(request);
+    if (!request_error.empty()) {
+        return bad_request("invalid_stage_request", request_error);
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    try {
+        layer_executor_.close_session(request.session_id);
+    } catch (const std::exception& error) {
+        return error_result("502 Bad Gateway", "stage_session_close_failed", error.what());
+    }
+
+    StageRunResult result;
+    result.ok = true;
+    result.status = "200 OK";
+    result.response = close_response(request, elapsed_ms(start));
     return result;
 }
 
