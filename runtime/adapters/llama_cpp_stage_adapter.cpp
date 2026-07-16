@@ -27,7 +27,9 @@ struct BatchOwner {
     llama_batch batch{};
 
     BatchOwner(int32_t n_tokens, int32_t embedding_size)
-        : batch(llama_batch_init(n_tokens, embedding_size, 1)) {}
+        : batch(llama_batch_init(n_tokens, embedding_size, 1)) {
+        batch.n_tokens = n_tokens;
+    }
 
     ~BatchOwner() {
         llama_batch_free(batch);
