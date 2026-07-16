@@ -78,3 +78,12 @@ jobs:
 
       - name: Run two-node binary activation E2E
         run: bash scripts/ci/smoke-binary-activation.sh
+
+      - name: Upload CI diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-diagnostics-${{ github.run_id }}
+          path: .ci-logs
+          if-no-files-found: ignore
+          retention-days: 7
