@@ -44,17 +44,15 @@ func deviceClass(operatingSystem cluster.OperatingSystem) cluster.DeviceClass {
 }
 
 func engines() []string {
-	found := []string{}
-
-	if commandExists(commandLlamaCLI) || commandExists(commandLlamaServer) {
-		found = append(found, string(cluster.EngineLlamaCPP))
+	// The runtime worker is a host process, not an engine. The current worker
+	// binary hosts the llama.cpp adapter, so any of these installed commands
+	// advertise the same inference-engine capability exactly once.
+	if commandExists(commandLlamaCLI) ||
+		commandExists(commandLlamaServer) ||
+		commandExists(commandJetsonFabricRuntime) {
+		return []string{string(cluster.EngineLlamaCPP)}
 	}
-
-	if commandExists(commandJetsonFabricRuntime) {
-		found = append(found, string(cluster.EngineJetsonFabric))
-	}
-
-	return found
+	return nil
 }
 
 func containerRuntimes() []string {
@@ -90,6 +88,5 @@ func cudaAvailable() bool {
 			return true
 		}
 	}
-
 	return false
 }

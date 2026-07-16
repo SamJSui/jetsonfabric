@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,6 +77,137 @@ func TestLayerSplitStageRoutesToLocalStageRunner(t *testing.T) {
 	}
 }
 
+func TestFollowerProxiesCoordinatorRequestsToLeader(t *testing.T) {
+	leaderCalled := false
+	leaderServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaderCalled = true
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("unexpected proxied path: %s", r.URL.Path)
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"served_by": "leader"})
+	}))
+	defer leaderServer.Close()
+
+	store := membership.NewStore()
+	now := time.Now().UTC()
+	store.Upsert(testFacadeMember("self", "follower", membership.NodeRoleJetson, now))
+	leader := testFacadeMember("leader", "leader", membership.NodeRoleCoordinator, now)
+	leader.APIURL = leaderServer.URL
+	store.Upsert(leader)
+
+	router := NewRouter(Config{
+		SelfID:     "self",
+		Store:      store,
+		StaleAfter: 30 * time.Second,
+		Coordinator: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Fatal("follower should not serve coordinator locally")
+		}),
+	})
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+
+	if !leaderCalled {
+		t.Fatal("expected leader server to be called")
+	}
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected OK, got %d: %s", response.Code, response.Body.String())
+	}
+	assertJSONField(t, response.Body.String(), "served_by", "leader")
+}
+
+func TestLeaderServesCoordinatorLocally(t *testing.T) {
+	store := membership.NewStore()
+	now := time.Now().UTC()
+	store.Upsert(testFacadeMember("self", "leader", membership.NodeRoleCoordinator, now))
+
+	localCalled := false
+	router := NewRouter(Config{
+		SelfID:     "self",
+		Store:      store,
+		StaleAfter: 30 * time.Second,
+		Coordinator: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			localCalled = true
+			if r.URL.Path != "/v1/models" {
+				t.Fatalf("unexpected local coordinator path: %s", r.URL.Path)
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"served_by": "local"})
+		}),
+	})
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+
+	if !localCalled {
+		t.Fatal("expected local coordinator to be called")
+	}
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected OK, got %d: %s", response.Code, response.Body.String())
+	}
+	assertJSONField(t, response.Body.String(), "served_by", "local")
+}
+
+func TestCoordinatorRequestReturnsLeaderUnavailableWhenNoLeader(t *testing.T) {
+	store := membership.NewStore()
+	now := time.Now().UTC()
+	store.Upsert(testFacadeMember("worker", "worker", membership.NodeRoleWorker, now))
+
+	router := NewRouter(Config{SelfID: "worker", Store: store, StaleAfter: 30 * time.Second})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", response.Code, response.Body.String())
+	}
+	assertJSONField(t, response.Body.String(), "error", "leader_unavailable")
+}
+
+func TestAnnounceRejectsClusterMismatch(t *testing.T) {
+	store := membership.NewStore()
+	store.Upsert(testFacadeMember("self", "dopey", membership.NodeRoleJetson, time.Now().UTC()))
+
+	router := NewRouter(Config{SelfID: "self", Store: store, StaleAfter: 30 * time.Second})
+	body := strings.NewReader(`{
+		"cluster_id": "other-cluster",
+		"node_id": "peer",
+		"node_name": "peer",
+		"api_url": "http://peer.local:52415"
+	}`)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, PathClusterAnnounce, body))
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", response.Code, response.Body.String())
+	}
+	assertJSONField(t, response.Body.String(), "error", "cluster_mismatch")
+}
+
+func TestAnnounceUpsertsMemberAndReturnsClusterView(t *testing.T) {
+	store := membership.NewStore()
+	store.Upsert(testFacadeMember("self", "dopey", membership.NodeRoleJetson, time.Now().UTC()))
+
+	router := NewRouter(Config{SelfID: "self", Store: store, StaleAfter: 30 * time.Second})
+	body := strings.NewReader(`{
+		"cluster_id": "home-lab",
+		"node_id": "peer",
+		"node_name": "peer",
+		"role": "jetson",
+		"api_url": "http://peer.local:52415"
+	}`)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, PathClusterAnnounce, body))
+
+	view := decodeClusterView(t, response)
+	if _, ok := store.Get("peer"); !ok {
+		t.Fatal("expected peer to be upserted")
+	}
+	if len(view.Members) != 2 {
+		t.Fatalf("expected 2 members, got %+v", view.Members)
+	}
+}
+
 func decodeClusterView(t *testing.T, response *httptest.ResponseRecorder) ClusterView {
 	t.Helper()
 	assertOK(t, response)
@@ -111,6 +243,17 @@ func assertCandidateReason(t *testing.T, result election.Result, nodeID string, 
 		}
 	}
 	t.Fatalf("expected %s reason %s in %+v", nodeID, reason, result.Candidates)
+}
+
+func assertJSONField(t *testing.T, body string, key string, want string) {
+	t.Helper()
+	var decoded map[string]string
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if decoded[key] != want {
+		t.Fatalf("expected %s=%q, got %q in %s", key, want, decoded[key], body)
+	}
 }
 
 func testFacadeMember(id string, name string, role membership.NodeRole, lastSeen time.Time) membership.Member {

@@ -210,6 +210,10 @@ print-node-config:
 	@printf 'MODEL_PATH=%s\n' "$(MODEL_PATH)"
 	@printf 'RUNTIME_BIN=%s\n' "$(RUNTIME_BIN)"
 	@printf 'RUNTIME_LISTEN=%s\n' "$(RUNTIME_LISTEN)"
+	@printf 'STAGE_INDEX=%s\n' "$(STAGE_INDEX)"
+	@printf 'STAGE_COUNT=%s\n' "$(STAGE_COUNT)"
+	@printf 'LAYER_START=%s\n' "$(LAYER_START)"
+	@printf 'LAYER_END=%s\n' "$(LAYER_END)"
 
 .PHONY: bench
 bench:

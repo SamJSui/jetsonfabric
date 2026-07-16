@@ -1,221 +1,273 @@
 # JetsonFabric
 
-Distributed LLM inference at the edge for Jetson-class devices, starting with
-Jetson Orin Nano nodes and CUDA-backed local runtimes.
+Distributed LLM inference at the edge for Jetson-class devices.
 
-JetsonFabric is moving from an explicit `control + agent` prototype into a
-**peer-discovered node fabric with an elected coordinator**. Each machine runs a
-`jetsonfabric-node`; nodes discover each other with mDNS/static fallback, elect
-one coordinator, expose the same API surface, and forward compute work to a
-node-local runtime.
+JetsonFabric is a peer-discovered node fabric. Every machine runs the same Go
+process, `jetsonfabric-node`. A node owns identity, membership, discovery,
+election, planning, API routing, and supervision of a node-local C++ runtime
+worker.
 
-Current architecture version: **node fabric preview**.
-
-## Goals
-
-- Run useful LLM inference on low-cost edge hardware.
-- Make multiple Jetson Orin Nano nodes feel like one observable serving fabric.
-- Use network discovery with mDNS instead of passing IPs around whenever the LAN
-  supports multicast.
-- Keep leader/coordinator selection internal to the cluster.
-- Keep CUDA/runtime execution local to each node.
-- Build toward real pipeline parallelism where ordered transformer layer stages
-  are assigned to nodes through deployment plans.
+The runtime worker is a JetsonFabric-owned host process. It loads an inference
+engine adapter such as `llama.cpp`; future adapters may target TensorRT-LLM or
+other engines. The runtime itself is not an inference engine.
 
 ## Architecture
 
 ```text
-client / curl / OpenAI-compatible caller
-  -> any jetsonfabric-node :52415
-  -> follower proxies public API to elected coordinator
-  -> coordinator plans routing/deployment
-  -> target node forwards stage work to local runtime
-  -> local C++/CUDA runtime executes assigned work
+client
+  -> any jetsonfabric-node
+  -> elected coordinator plans ordered stages
+  -> each target node forwards work to its local runtime worker
+  -> runtime worker invokes its configured inference engine
 ```
 
-Main pieces:
+Main packages:
 
-- `cmd/jetsonfabric-node`: the product process run on each machine.
-- `internal/discovery`: static seed discovery, mDNS discovery, and hydration via
-  HTTP announce.
-- `internal/membership`: in-memory member table with stale-member pruning,
-  semantic node roles, and runtime/capability metadata.
-- `internal/election`: deterministic role-gated leader selection over fresh
-  members, with a local lease/epoch tracker to reduce 1-2 node flapping.
-- `internal/facade`: public node API, follower proxying, local stage routing.
-- `internal/coordinator`: leader-only planning/control role embedded in a node.
-- `internal/runtimegateway`: node-to-local-runtime stage proxy.
-- `runtime/`: C++ runtime worker and pipeline-parallel stage execution shell.
-- `tools/bench`: developer benchmark client, not part of the production fabric.
+- `cmd/jetsonfabric-node`: the product process run on every machine.
+- `internal/discovery`: static and mDNS peer discovery.
+- `internal/membership`: local fresh-member cache.
+- `internal/election`: deterministic coordinator election.
+- `internal/facade`: any-node API and follower proxying.
+- `internal/coordinator`: model registry and route/run handlers.
+- `internal/clusterplan`: count-agnostic stage planning and layer arithmetic.
+- `internal/stagewire`: shared stage request/response wire contract.
+- `internal/stageexec`: ordered inter-stage execution.
+- `internal/runtimebridge`: node-to-runtime adaptation and proxying.
+- `runtime/`: C++ runtime worker and engine adapters.
 
-For the step-by-step startup, discovery, election, routing, and runtime sequence,
-see [`docs/architecture/node-fabric-workflow.md`](docs/architecture/node-fabric-workflow.md).
+## Terminology
 
-For public-ready build, dependency, runtime, and documentation expectations, see
-[`docs/deployment-standards.md`](docs/deployment-standards.md).
-
-## Node fabric model
-
-Every real machine runs the same command:
-
-```sh
-make node-run NODE_CLUSTER_ID=home-lab NODE_NAME=dopey
-make node-run NODE_CLUSTER_ID=home-lab NODE_NAME=beehive
-```
-
-Each node:
-
-- owns a stable node ID under its data directory;
-- advertises itself over mDNS as `_jetsonfabric._tcp.local`;
-- periodically discovers peers;
-- exchanges full member records through `/v1/cluster/announce`;
-- derives a semantic role such as `jetson`, `worker`, `coordinator`, or `test`;
-- exposes public cluster/API routes on port `52415`;
-- forwards `/v1/layer-split/stage` to its local runtime.
-
-mDNS is used only to bootstrap peer addresses. After a peer is discovered, the
-node performs an HTTP announce/handshake to hydrate the full membership record
-with capabilities, metrics, engine metadata, role, and fresh timestamps.
-
-## Leader selection
-
-Current selection is deterministic, not Raft consensus. It is now role-gated so
-normal nodes do not need numeric priority values:
-
-1. remove stale members;
-2. keep only roles that may lead: `coordinator` and `jetson`;
-3. rank by semantic role: `coordinator` before `jetson`;
-4. apply optional advanced `leader_preference` only within the same role;
-5. prefer the oldest running peer within the same rank;
-6. break ties by stable `node_id`.
-
-The facade wraps that deterministic result with a local leader lease and epoch.
-If the incumbent remains fresh and eligible, equivalent challengers do not steal
-leadership during the lease. Higher-rank or higher-preference challengers may
-preempt, and stale incumbents fail over immediately.
-
-Role defaults reduce config:
-
-- WSL/dev environments become `test` and do not lead.
-- Jetson devices become `jetson` and can lead.
-- Generic Linux PCs become `worker` and do not lead unless explicitly started
-  with `NODE_ROLE=coordinator`.
-
-Use `GET /v1/cluster/election` to inspect the election decision, candidate roles,
-eligibility, ranking fields, exclusion reasons, epoch, and lease expiry.
-
-This is intentionally simple for the current homelab/edge prototype. Raft is the
-right future path once there are three coordinator-capable voters for quorum.
-Before real deployment writes and long-running layer execution, the coordinator
-should also actively probe node health and runtime readiness. Membership means
-"may exist"; readiness means "can receive work now."
-
-## Pipeline parallelism direction
-
-Pipeline parallelism requires strict layer order. Discovery does not decide that
-order. The elected coordinator creates a deployment plan such as:
+### Runtime and engine
 
 ```text
-stage 0: dopey    layers 0:14
-stage 1: beehive  layers 14:28
+runtime process: jetsonfabric-runtime-worker
+engine:          llama.cpp
+compute backend: cpu or cuda
 ```
 
-The current runtime path is intentionally conservative:
+The runtime worker hosts the engine. Model profiles therefore list actual
+inference engines only.
 
-- first prove one-node `pipeline_parallel` on `dopey` with `stage_count=1`;
-- forward stage requests through the node facade to `127.0.0.1:9090`;
-- keep the C++ runtime responsible for model/layer execution;
-- later replace HTTP/JSON activation transfer with a persistent binary data
-  plane for hot-path runtime-to-runtime communication.
+### Execution mode
 
-## Quick start: dopey + beehive discovery
+Execution mode describes how inference work is distributed:
 
-On `dopey`:
+- `data_parallel`: each replica owns a complete model.
+- `pipeline_parallel`: ordered transformer layer ranges are assigned to stages.
+- `tensor_parallel`: tensor operations are partitioned across devices or nodes.
 
-```sh
-git pull
-go test ./...
+### Stage arithmetic
 
-make node-run \
-  NODE_CLUSTER_ID=home-lab \
-  NODE_NAME=dopey \
-  NODE_DISCOVERY=mdns \
-  NODE_DATA_DIR=.cache/jetsonfabric-dopey
+Stage position is represented only by `stage_index` and `stage_count`.
+
+```text
+is_first = stage_index == 0
+is_last  = stage_index == stage_count - 1
 ```
 
-On `beehive`:
+For `stage_count=1`, stage index `0` is both first and last. There is no special
+stage-role string.
 
-```sh
-git pull
-go test ./...
+Layer ranges are assigned for any positive stage count. For 28 layers:
 
-make node-run \
-  NODE_CLUSTER_ID=home-lab \
-  NODE_NAME=beehive \
-  NODE_DISCOVERY=mdns \
-  NODE_DATA_DIR=.cache/jetsonfabric-beehive
+```text
+stage_count=2: [0:14] [14:28]
+stage_count=3: [0:10] [10:19] [19:28]
+stage_count=4: [0:7]  [7:14] [14:21] [21:28]
 ```
 
-From Windows CMD, PowerShell, WSL, or another client:
+### Topology
 
-```sh
-curl http://dopey.local:52415/v1/cluster/members
-curl http://dopey.local:52415/v1/cluster/leader
-curl http://dopey.local:52415/v1/cluster/election
+Route previews report objective topology and counts:
+
+```json
+{
+  "topology": "colocated",
+  "stage_count": 2,
+  "logical_node_count": 2,
+  "physical_host_count": 1
+}
 ```
 
-If `.local` or multicast is unavailable from the client environment, use a LAN or
-Tailscale address for the node you are querying. WSL is a dev client by default,
-not a required cluster member.
+`topology` is either `colocated` or `distributed`. Counts carry the precise
+information; there is no special one-node placement category.
 
-## Quick start: dopey runtime stage gateway
+### Payload kinds
 
-Start the local runtime on `dopey`:
+The shared stage wire contract defines semantic payload kinds:
+
+- `text`: UTF-8 user-facing or compatibility text.
+- `tokens`: tokenizer token IDs.
+- `activation`: hidden-state tensors between transformer partitions.
+- `sampled_token`: the selected next token.
+
+Logits and KV cache remain internal to the inference engine. They are not
+inter-stage wire payload kinds. Tensor metadata uses `dtype` and `shape`; text
+uses `encoding=utf-8` and is not a tensor dtype.
+
+## Current execution milestone
+
+The coordinator and runtime path is fully exercised with two real nodes, two
+real C++ runtime workers, two real `llama.cpp` CPU engine instances, and a real
+GGUF model in CI.
+
+The current inter-stage payload is still `text`:
+
+```text
+input text
+  -> stage 0 full-model generation
+  -> text handoff
+  -> stage 1 full-model generation
+  -> final text
+```
+
+The API reports this directly:
+
+```json
+{
+  "inter_stage_payload_kind": "text",
+  "plan": {
+    "mode": "pipeline_parallel",
+    "topology": "colocated",
+    "stage_count": 2
+  },
+  "result": {
+    "payload_kind": "text"
+  }
+}
+```
+
+This validates membership, planning, runtime supervision, node routing, and
+handoff. It is not yet partial transformer execution.
+
+The next runtime milestone is to change the inter-stage payload to
+`activation` and execute only each stage's assigned layer range:
+
+```text
+text
+  -> tokenizer
+  -> tokens
+  -> stage 0 assigned layers
+  -> activation
+  -> stage 1 assigned layers
+  -> logits (engine-internal)
+  -> sampler
+  -> sampled token / decoded text
+```
+
+Each runtime keeps the KV cache for its assigned layer range local across decode
+steps.
+
+## Build and test
 
 ```sh
-make runtime-run \
-  NODE_NAME=dopey \
-  RUNTIME_LISTEN=127.0.0.1:9090 \
-  RUNTIME_MODE=pipeline_parallel \
+make test
+make setup
+make runtime
+make node
+```
+
+CUDA runtime build on Jetson:
+
+```sh
+make runtime-cuda RUNTIME_CUDA_ARCH=87
+```
+
+## Run nodes
+
+Example two-stage configuration:
+
+```sh
+make run-node \
+  NODE_NAME=dopey-stage0 \
   STAGE_INDEX=0 \
-  STAGE_COUNT=1 \
+  STAGE_COUNT=2 \
   LAYER_START=0 \
+  LAYER_END=14
+
+make run-node \
+  NODE_NAME=beehive-stage1 \
+  STAGE_INDEX=1 \
+  STAGE_COUNT=2 \
+  LAYER_START=14 \
   LAYER_END=28
 ```
 
-Start the node in another terminal:
+Use command-line Make variables after the target so they override values in
+`.env.local`.
+
+Inspect membership:
 
 ```sh
-make node-run \
-  NODE_CLUSTER_ID=home-lab \
-  NODE_NAME=dopey \
-  NODE_DISCOVERY=mdns \
-  NODE_DATA_DIR=.cache/jetsonfabric-dopey
+curl http://dopey.local:<port>/v1/cluster/members | jq
 ```
 
-Then test the node-to-runtime stage route:
+Preview two stages:
 
 ```sh
-curl -sS -X POST http://127.0.0.1:52415/v1/layer-split/stage \
+curl "http://dopey.local:<port>/v1/routes/preview?model=qwen2.5-coder-1.5b-q4&stage_count=2" | jq
+```
+
+For colocated local development:
+
+```sh
+curl "http://127.0.0.1:<port>/v1/routes/preview?model=qwen2.5-coder-1.5b-q4&stage_count=2&allow_colocated_stages=true" | jq
+```
+
+Run the current end-to-end stage path:
+
+```sh
+curl -X POST http://127.0.0.1:<port>/v1/layer-split/run \
   -H 'Content-Type: application/json' \
   -d '{
-    "session_id": "test-session",
-    "request_id": "test-request",
-    "model_id": "qwen2.5-coder-1.5b-q4",
-    "stage_index": 0,
-    "node_name": "dopey",
-    "role": "single",
-    "layer_start": 0,
-    "layer_end": 28,
-    "decode_step": 0,
-    "shape": [1, 1, 1],
-    "dtype": "synthetic",
-    "payload": "hello",
-    "bytes_in": 5,
-    "transport": "http"
-  }'
+    "request_id": "local-run",
+    "model": "qwen2.5-coder-1.5b-q4",
+    "payload": "Hello from JetsonFabric",
+    "max_tokens": 8,
+    "stage_count": 2,
+    "allow_colocated_stages": true
+  }' | jq
 ```
 
-Until real transformer layer execution is wired, the runtime should return an
-honest `layer_executor_not_implemented` style error. That still proves the node
-API reaches the local runtime.
+A direct stage request uses count arithmetic and explicit payload semantics:
+
+```json
+{
+  "session_id": "session-1",
+  "request_id": "request-1",
+  "model_id": "qwen2.5-coder-1.5b-q4",
+  "stage_index": 0,
+  "stage_count": 1,
+  "node_name": "dopey",
+  "layer_start": 0,
+  "layer_end": 28,
+  "decode_step": 0,
+  "payload_kind": "text",
+  "encoding": "utf-8",
+  "payload": "hello",
+  "bytes_in": 5,
+  "transport": "http_json",
+  "max_tokens": 8
+}
+```
+
+## CI
+
+GitHub Actions runs:
+
+1. `go test ./...`
+2. A two-node real CPU E2E test using a cached tiny GGUF model.
+
+The E2E validates:
+
+- two real node processes;
+- two real supervised runtime workers;
+- the hosted `llama.cpp` engine on CPU;
+- membership and advertised assignments;
+- count-agnostic route metadata;
+- both stage HTTP responses;
+- typed text payload handoff;
+- nonempty final generation.
+
+Authoritative CUDA, JetPack, ARM64, and physical-network validation belongs on
+self-hosted Jetson runners.

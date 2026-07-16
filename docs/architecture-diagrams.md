@@ -1,54 +1,85 @@
 # Architecture Diagrams
 
-These diagrams describe the intended JetsonFabric shape for the POC serving
-baseline, P0/MVP layer split, and later runtime work. They are checked in as SVG
-files so GitHub renders them as normal markdown images without depending on
-Mermaid support.
+These checked-in SVG diagrams describe the current JetsonFabric node fabric and
+the activation-pipeline target. They render on GitHub without Mermaid support.
 
-## POC Serving Component View
+## Codebase Map
 
-![JetsonFabric POC serving component view](diagrams/component-view.svg)
+![JetsonFabric codebase map](diagrams/codebase-map.svg)
 
-## P0/MVP Layer-Split Component View
+## Package Dependency View
 
-![JetsonFabric P0/MVP layer-split component view](diagrams/future-layer-split-component.svg)
+![JetsonFabric Go package dependency diagram](diagrams/package-dependency.svg)
 
-## Model Registry And Artifact Flow
+## Type Contract View
 
-The control plane loads model metadata. It does not load model weights. Agents
-and runtimes need local model artifacts before they can advertise or execute a
-backend.
+![JetsonFabric type contract view](diagrams/type-contract-view.svg)
+
+## Current Node Component View
+
+A `jetsonfabric-node` owns identity, membership, discovery, election, facade
+routing, planning, runtime bridging, and its supervised runtime worker.
+
+![JetsonFabric current node component view](diagrams/component-view.svg)
+
+## Startup Sequence
+
+The listener is bound before externally advertised API and runtime addresses are
+derived.
+
+![JetsonFabric node startup sequence](diagrams/startup-sequence.svg)
+
+## Membership-Backed Planning
+
+The planner consumes a fresh membership snapshot and returns count-aware stages,
+layer ranges, topology counts, and peer API URLs.
+
+![JetsonFabric membership-backed planning component view](diagrams/future-layer-split-component.svg)
+
+## Model Registry and Runtime Artifact Flow
+
+The Go node loads model metadata. The C++ runtime worker loads local model
+artifacts through its configured inference engine adapter.
 
 ![JetsonFabric model registry and artifact flow](diagrams/model-artifact-flow.svg)
 
-## Go Contract View
-
-This is a package boundary view, not an inheritance diagram. Boundary structs
-stay separate so API, storage, routing, transport, and benchmarks can evolve
-independently.
+## Go Package Boundary View
 
 ![JetsonFabric Go package boundary view](diagrams/go-contract-view.svg)
 
-## Agent Join And Heartbeat
+## Node Discovery and Membership Hydration
 
-![JetsonFabric agent join sequence](diagrams/agent-join-sequence.svg)
+![JetsonFabric node discovery sequence](diagrams/agent-join-sequence.svg)
 
-## POC Prompt Path
+## Current Any-Node Chat Path
 
-![JetsonFabric POC prompt sequence](diagrams/poc-prompt-sequence.svg)
+Chat requests use `stage_index=0`, `stage_count=1`, and a text payload. Stage
+position is derived from count arithmetic rather than a role string.
 
-## P0/MVP Layer-Split Path
+![JetsonFabric current any-node chat sequence](diagrams/poc-prompt-sequence.svg)
 
-In the P0/MVP layer-split path, the control plane plans and observes. It should
-not relay activation tensors.
+## Sequential Stage Path and Activation Target
 
-![JetsonFabric future layer-split sequence](diagrams/layer-split-sequence.svg)
+Sequential node/runtime handoff is current. Replacing text handoff with real
+activation tensors and assigned-layer execution is the next runtime milestone.
 
-## Node Name Conflict Policy
+![JetsonFabric layer-split sequence](diagrams/layer-split-sequence.svg)
 
-![JetsonFabric node name conflict policy](diagrams/node-name-conflict.svg)
+## Deployment View
 
-For the POC and MVP, `node_name` is the identity. It defaults to the Jetson
-hostname, so lab nodes can be named `dopey`, `grumpy`, and `sleepy`. Duplicate
-live names are configuration conflicts rather than names the control plane
-silently rewrites.
+Logical node count and physical host count are separate. Runtime URLs are local;
+peer traffic uses node API URLs.
+
+![JetsonFabric deployment view](diagrams/deployment-view.svg)
+
+## Logical Node Identity and Topology
+
+Multiple logical nodes may share one physical host for development. Route metadata
+reports this as `topology=colocated`; physical multi-host execution reports
+`topology=distributed`.
+
+![JetsonFabric logical node identity policy](diagrams/node-name-conflict.svg)
+
+## Test Strategy View
+
+![JetsonFabric test strategy view](diagrams/test-strategy-view.svg)

@@ -1,5 +1,5 @@
 #include "api/http_server.hpp"
-#include "engine/runtime_engine.hpp"
+#include "engine/runtime_service.hpp"
 #include "worker/config.hpp"
 
 #include <atomic>
@@ -23,8 +23,8 @@ int main(int argc, char** argv) {
 
     try {
         jetsonfabric::runtime::Config config = jetsonfabric::runtime::parse_args(argc, argv);
-        jetsonfabric::runtime::RuntimeEngine engine(config);
-        jetsonfabric::runtime::HttpServer server(config, engine, g_running);
+        jetsonfabric::runtime::RuntimeService runtime(config);
+        jetsonfabric::runtime::HttpServer server(config, runtime, g_running);
         return server.run();
     } catch (const std::exception& err) {
         std::cerr << "runtime startup failed: " << err.what() << "\n";

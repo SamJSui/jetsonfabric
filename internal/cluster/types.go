@@ -2,23 +2,22 @@ package cluster
 
 import "time"
 
-// Engine identifies the local inference implementation behind a node runtime.
-// It answers: "What software executes inference?"
+// Engine identifies the inference engine hosted by a node runtime.
+// It answers: "Which model implementation executes inference?"
 type Engine string
 
 const (
-	EngineLlamaCPP     Engine = "llama.cpp"
-	EngineJetsonFabric Engine = "jetsonfabric-runtime"
+	EngineLlamaCPP Engine = "llama.cpp"
 )
 
 // ExecutionMode identifies how inference work is distributed.
 //
-// DataParallel means each participating node/engine owns a complete model replica.
-// A one-node full-model route is data_parallel with replica_count=1.
+// DataParallel means each participating runtime owns a complete model replica.
+// A route with one replica is still data_parallel.
 //
-// PipelineParallel means transformer layers/stages are split across stages/nodes.
+// PipelineParallel means transformer layers are partitioned across ordered stages.
 //
-// TensorParallel means tensor operations such as matmuls are split across devices/nodes.
+// TensorParallel means tensor operations such as matmuls are split across devices or nodes.
 type ExecutionMode string
 
 const (
@@ -64,6 +63,11 @@ const (
 	CapabilityDeviceClass     = "device_class"
 	CapabilityComputeBackends = "compute_backends"
 	CapabilityPipelineWeight  = "pipeline_weight"
+
+	CapabilityRuntimeStageIndex = "runtime_stage_index"
+	CapabilityRuntimeStageCount = "runtime_stage_count"
+	CapabilityRuntimeLayerStart = "runtime_layer_start"
+	CapabilityRuntimeLayerEnd   = "runtime_layer_end"
 
 	MetricTemperatureC = "temperature_c"
 )

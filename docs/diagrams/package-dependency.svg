@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1220 720" role="img" aria-labelledby="title desc">
+  <title id="title">Go Package Dependency Diagram</title>
+  <desc id="desc">Directional package dependency view for the current JetsonFabric Go codebase.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+    <style>
+      .title{font:700 26px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.subtitle{font:14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#475569}.pkg{fill:#f8fafc;stroke:#334155;stroke-width:2;rx:14}.core{fill:#ecfeff;stroke:#0891b2;stroke-width:3;rx:16}.shared{fill:#fef3c7;stroke:#d97706;stroke-width:2;rx:14}.future{fill:#f5f3ff;stroke:#7c3aed;stroke-width:2;rx:14}.label{font:700 14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.small{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#334155}.line{stroke:#334155;stroke-width:2;marker-end:url(#arrow);fill:none}.dash{stroke:#64748b;stroke-width:2;stroke-dasharray:6 5;marker-end:url(#arrow);fill:none}.note{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#64748b}
+    </style>
+  </defs>
+  <text x="40" y="45" class="title">Package dependency diagram</text>
+  <text x="40" y="70" class="subtitle">Arrows point from caller/importer toward the package it depends on. Keep this acyclic and boring.</text>
+
+  <rect x="60" y="120" width="185" height="72" class="pkg"/><text x="152" y="151" text-anchor="middle" class="label">cmd/jetsonfabric-node</text><text x="152" y="173" text-anchor="middle" class="small">CLI boundary</text>
+  <rect x="360" y="105" width="210" height="102" class="core"/><text x="465" y="138" text-anchor="middle" class="label">internal/node</text><text x="465" y="161" text-anchor="middle" class="small">composition root</text><text x="465" y="178" text-anchor="middle" class="small">lifecycle owner</text>
+  <rect x="710" y="120" width="170" height="72" class="shared"/><text x="795" y="151" text-anchor="middle" class="label">internal/cluster</text><text x="795" y="173" text-anchor="middle" class="small">shared domain types</text>
+
+  <rect x="60" y="300" width="170" height="82" class="pkg"/><text x="145" y="331" text-anchor="middle" class="label">discovery</text><text x="145" y="353" text-anchor="middle" class="small">find peers</text>
+  <rect x="285" y="300" width="170" height="82" class="pkg"/><text x="370" y="331" text-anchor="middle" class="label">membership</text><text x="370" y="353" text-anchor="middle" class="small">peer cache</text>
+  <rect x="510" y="300" width="170" height="82" class="pkg"/><text x="595" y="331" text-anchor="middle" class="label">election</text><text x="595" y="353" text-anchor="middle" class="small">leader ranking</text>
+  <rect x="735" y="300" width="170" height="82" class="pkg"/><text x="820" y="331" text-anchor="middle" class="label">facade</text><text x="820" y="353" text-anchor="middle" class="small">HTTP routing</text>
+  <rect x="960" y="300" width="170" height="82" class="pkg"/><text x="1045" y="331" text-anchor="middle" class="label">coordinator</text><text x="1045" y="353" text-anchor="middle" class="small">model/routes</text>
+
+  <rect x="285" y="515" width="170" height="82" class="pkg"/><text x="370" y="546" text-anchor="middle" class="label">api</text><text x="370" y="568" text-anchor="middle" class="small">route constants</text>
+  <rect x="510" y="515" width="210" height="82" class="pkg"/><text x="615" y="546" text-anchor="middle" class="label">runtimebridge</text><text x="615" y="568" text-anchor="middle" class="small">runtime HTTP bridge</text>
+  <rect x="780" y="515" width="170" height="82" class="pkg"/><text x="865" y="546" text-anchor="middle" class="label">modelregistry</text><text x="865" y="568" text-anchor="middle" class="small">metadata loader</text>
+  <rect x="1000" y="515" width="170" height="82" class="future"/><text x="1085" y="546" text-anchor="middle" class="label">clusterplan</text><text x="1085" y="568" text-anchor="middle" class="small">stage placement</text>
+
+  <path d="M245 156 H360" class="line"/><path d="M465 207 C400 250, 235 270, 145 300" class="line"/><path d="M465 207 C440 250, 395 270, 370 300" class="line"/><path d="M465 207 C495 250, 565 270, 595 300" class="line"/><path d="M465 207 C550 250, 735 270, 820 300" class="line"/><path d="M570 156 H710" class="line"/><path d="M230 341 H285" class="line"/><path d="M455 341 H510" class="line"/><path d="M680 341 H735" class="line"/><path d="M905 341 H960" class="line"/><path d="M820 382 C770 455, 680 490, 615 515" class="line"/><path d="M820 382 C710 470, 500 490, 370 515" class="line"/><path d="M1045 382 C1000 455, 925 490, 865 515" class="line"/><path d="M1045 382 V515" class="dash"/><path d="M370 382 C425 445, 540 490, 615 515" class="dash"/><path d="M370 382 C495 465, 715 490, 865 515" class="dash"/><path d="M795 192 C700 240, 430 260, 370 300" class="dash"/><path d="M795 192 C850 245, 970 265, 1045 300" class="dash"/>
+
+  <text x="252" y="144" class="note">starts</text><text x="585" y="144" class="note">uses types</text><text x="960" y="500" class="note">placement</text>
+</svg>

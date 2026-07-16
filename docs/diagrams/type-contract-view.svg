@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 780" role="img" aria-labelledby="title desc">
+  <title id="title">JetsonFabric Type Contract Diagram</title>
+  <desc id="desc">Class-style Go type contract view showing the core structs, ownership boundaries, and important methods.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+    <style>
+      .title{font:700 26px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.subtitle{font:14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#475569}.class{fill:#f8fafc;stroke:#334155;stroke-width:2;rx:14}.owner{fill:#ecfeff;stroke:#0891b2;stroke-width:3;rx:16}.runtime{fill:#fef3c7;stroke:#d97706;stroke-width:2;rx:14}.label{font:700 15px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.small{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#334155}.caption{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#64748b}.line{stroke:#334155;stroke-width:2;marker-end:url(#arrow);fill:none}.dash{stroke:#64748b;stroke-width:2;stroke-dasharray:6 5;marker-end:url(#arrow);fill:none}
+    </style>
+  </defs>
+
+  <text x="40" y="45" class="title">Type contract diagram</text>
+  <text x="40" y="70" class="subtitle">Go has structs and interfaces, not classes; this view shows the main contracts worth remembering.</text>
+
+  <rect x="60" y="115" width="255" height="172" class="owner"/>
+  <text x="187" y="145" text-anchor="middle" class="label">node.App</text>
+  <text x="85" y="172" class="small">cfg Config</text><text x="85" y="190" class="small">nodeID string</text><text x="85" y="208" class="small">store *membership.Store</text><text x="85" y="226" class="small">server *http.Server</text><text x="85" y="244" class="small">runtimeSupervisor</text><text x="85" y="266" class="small">Run(ctx), shutdown()</text>
+
+  <rect x="385" y="115" width="235" height="172" class="class"/>
+  <text x="502" y="145" text-anchor="middle" class="label">node.Config</text>
+  <text x="410" y="172" class="small">ClusterID, NodeName</text><text x="410" y="190" class="small">Listen, APIURL</text><text x="410" y="208" class="small">RuntimeURL, RuntimeListen</text><text x="410" y="226" class="small">Model, ModelPath</text><text x="410" y="244" class="small">Role, DiscoveryModes</text><text x="410" y="266" class="small">RuntimeAuto()</text>
+
+  <rect x="700" y="115" width="235" height="172" class="class"/>
+  <text x="817" y="145" text-anchor="middle" class="label">membership.Member</text>
+  <text x="725" y="172" class="small">ClusterID, NodeID</text><text x="725" y="190" class="small">NodeName, Hostname</text><text x="725" y="208" class="small">Role, APIURL, RuntimeURL</text><text x="725" y="226" class="small">Capabilities, Metrics</text><text x="725" y="244" class="small">StartedAt, LastSeen</text><text x="725" y="266" class="small">Valid(), IsStale()</text>
+
+  <rect x="60" y="360" width="235" height="152" class="class"/>
+  <text x="177" y="390" text-anchor="middle" class="label">membership.Store</text>
+  <text x="85" y="417" class="small">members map[string]Member</text><text x="85" y="435" class="small">mu sync.RWMutex</text><text x="85" y="457" class="small">Upsert(Member)</text><text x="85" y="475" class="small">Get(nodeID)</text><text x="85" y="493" class="small">List(), Prune()</text>
+
+  <rect x="365" y="340" width="250" height="192" class="owner"/>
+  <text x="490" y="370" text-anchor="middle" class="label">facade.Router</text>
+  <text x="390" y="397" class="small">selfID string</text><text x="390" y="415" class="small">store *Store</text><text x="390" y="433" class="small">coordinator http.Handler</text><text x="390" y="451" class="small">stageRunner http.Handler</text><text x="390" y="473" class="small">handleCoordinator()</text><text x="390" y="491" class="small">handleStageRun()</text><text x="390" y="509" class="small">handleAnnounce()</text>
+
+  <rect x="690" y="360" width="235" height="152" class="runtime"/>
+  <text x="807" y="390" text-anchor="middle" class="label">ChatProxy</text>
+  <text x="715" y="417" class="small">runtimeURL *url.URL</text><text x="715" y="435" class="small">nodeName, model</text><text x="715" y="457" class="small">ServeHTTP()</text><text x="715" y="475" class="small">prepareChatRequest()</text><text x="715" y="493" class="small">buildStageRequest()</text>
+
+  <rect x="970" y="360" width="190" height="152" class="runtime"/>
+  <text x="1065" y="390" text-anchor="middle" class="label">StageProxy</text>
+  <text x="990" y="417" class="small">runtimeURL</text><text x="990" y="435" class="small">client</text><text x="990" y="457" class="small">ServeHTTP()</text><text x="990" y="475" class="small">newRuntimeRequest()</text><text x="990" y="493" class="small">copyResponse()</text>
+
+  <rect x="385" y="600" width="250" height="112" class="runtime"/>
+  <text x="510" y="630" text-anchor="middle" class="label">RuntimeSupervisor</text>
+  <text x="410" y="657" class="small">cmd *exec.Cmd</text><text x="410" y="675" class="small">URL string</text><text x="410" y="697" class="small">StartRuntimeSupervisor()</text>
+
+  <rect x="700" y="600" width="235" height="112" class="class"/>
+  <text x="817" y="630" text-anchor="middle" class="label">election.Tracker</text>
+  <text x="725" y="657" class="small">Epoch</text><text x="725" y="675" class="small">Leader</text><text x="725" y="697" class="small">Explain(now, members)</text>
+
+  <path d="M315 200 H385" class="line"/><path d="M315 245 C335 310, 120 320, 177 360" class="line"/><path d="M295 436 H365" class="line"/><path d="M620 201 H700" class="dash"/><path d="M490 340 C555 280, 720 270, 817 287" class="dash"/><path d="M615 436 H690" class="line"/><path d="M925 436 H970" class="line"/><path d="M510 600 C420 555, 250 520, 187 287" class="dash"/><path d="M615 470 C675 525, 755 575, 817 600" class="dash"/>
+
+  <text x="336" y="188" class="caption">owns config</text><text x="319" y="424" class="caption">reads members</text><text x="642" y="424" class="caption">calls local</text><text x="938" y="424" class="caption">stage path</text>
+</svg>

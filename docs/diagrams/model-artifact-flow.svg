@@ -1,76 +1,88 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 470" role="img" aria-labelledby="title desc">
-  <title id="title">Model Registry And Artifact Flow</title>
-  <desc id="desc">Control loads model metadata, agents validate advertised model artifacts, and runtimes load local model files.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 650" role="img" aria-labelledby="title desc">
+  <title id="title">Model Registry And Runtime Artifact Flow</title>
+  <desc id="desc">Current flow: the Go node loads model metadata and supervises a C++ runtime that loads local GGUF artifacts.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
     </marker>
-    <marker id="future-arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
-    </marker>
+    <style>
+      .title { font: 700 26px system-ui, -apple-system, Segoe UI, sans-serif; fill: #0f172a; }
+      .subtitle { font: 14px system-ui, -apple-system, Segoe UI, sans-serif; fill: #475569; }
+      .box { fill: #f8fafc; stroke: #334155; stroke-width: 2; rx: 14; }
+      .go { fill: #ecfeff; stroke: #0891b2; stroke-width: 2; rx: 14; }
+      .runtime { fill: #fef3c7; stroke: #d97706; stroke-width: 2; rx: 14; }
+      .warn { fill: #fff1f2; stroke: #e11d48; stroke-width: 2; rx: 14; }
+      .label { font: 700 15px system-ui, -apple-system, Segoe UI, sans-serif; fill: #0f172a; }
+      .small { font: 12px system-ui, -apple-system, Segoe UI, sans-serif; fill: #334155; }
+      .note { font: 12px system-ui, -apple-system, Segoe UI, sans-serif; fill: #64748b; }
+      .line { stroke: #334155; stroke-width: 2; marker-end: url(#arrow); fill: none; }
+      .dash { stroke: #64748b; stroke-width: 2; stroke-dasharray: 6 5; marker-end: url(#arrow); fill: none; }
+    </style>
   </defs>
-  <style>
-    .bg { fill: #f8fafc; }
-    .title { font: 700 24px Arial, sans-serif; fill: #0f172a; }
-    .box { fill: #ffffff; stroke: #334155; stroke-width: 1.5; rx: 8; }
-    .file { fill: #ecfdf5; stroke: #047857; stroke-width: 1.5; rx: 8; }
-    .runtime { fill: #fff7ed; stroke: #9a3412; stroke-width: 1.5; rx: 8; }
-    .label { font: 700 15px Arial, sans-serif; fill: #0f172a; }
-    .small { font: 13px Arial, sans-serif; fill: #334155; }
-    .code { font: 12px Consolas, monospace; fill: #334155; }
-    .arrow { stroke: #334155; stroke-width: 1.7; fill: none; marker-end: url(#arrow); }
-    .future { stroke: #64748b; stroke-width: 1.6; fill: none; stroke-dasharray: 7 5; marker-end: url(#future-arrow); }
-  </style>
 
-  <rect class="bg" width="1080" height="470"/>
-  <text class="title" x="40" y="44">Model Registry And Artifact Flow</text>
-  <text class="small" x="40" y="68">Control loads metadata. Agents and runtimes need local artifacts before they can serve or execute shards.</text>
+  <text x="40" y="45" class="title">Model registry and runtime artifact flow</text>
+  <text x="40" y="70" class="subtitle">The Go node plans and records metadata; the C++ runtime owns local model loading and generation.</text>
 
-  <rect class="file" x="55" y="130" width="245" height="95"/>
-  <text class="label" x="82" y="162">Model registry</text>
-  <text class="code" x="82" y="187">configs/models.example.json</text>
-  <text class="small" x="82" y="207">model_id, runtime, layers</text>
+  <rect x="45" y="130" width="210" height="105" class="box"/>
+  <text x="150" y="164" text-anchor="middle" class="label">configs/models*.json</text>
+  <text x="150" y="187" text-anchor="middle" class="small">model IDs</text>
+  <text x="150" y="204" text-anchor="middle" class="small">layer count</text>
+  <text x="150" y="221" text-anchor="middle" class="small">placement modes</text>
 
-  <rect class="box" x="390" y="130" width="245" height="95"/>
-  <text class="label" x="438" y="162">Control Plane</text>
-  <text class="small" x="418" y="187">loads registry via --models</text>
-  <text class="small" x="418" y="207">plans routes and stages</text>
+  <rect x="330" y="115" width="230" height="135" class="go"/>
+  <text x="445" y="148" text-anchor="middle" class="label">modelregistry</text>
+  <text x="445" y="171" text-anchor="middle" class="small">loads metadata</text>
+  <text x="445" y="188" text-anchor="middle" class="small">does not load weights</text>
+  <text x="445" y="205" text-anchor="middle" class="small">feeds coordinator</text>
+  <text x="445" y="222" text-anchor="middle" class="small">route preview input</text>
 
-  <rect class="file" x="55" y="290" width="245" height="95"/>
-  <text class="label" x="82" y="322">Artifact catalog</text>
-  <text class="code" x="82" y="347">configs/model-artifacts.example.json</text>
-  <text class="small" x="82" y="367">source URL, local path</text>
+  <rect x="650" y="115" width="230" height="135" class="go"/>
+  <text x="765" y="148" text-anchor="middle" class="label">node.Config</text>
+  <text x="765" y="171" text-anchor="middle" class="small">--model</text>
+  <text x="765" y="188" text-anchor="middle" class="small">--model-path</text>
+  <text x="765" y="205" text-anchor="middle" class="small">runtime settings</text>
+  <text x="765" y="222" text-anchor="middle" class="small">supervision args</text>
 
-  <rect class="box" x="390" y="290" width="245" height="95"/>
-  <text class="label" x="468" y="322">Agent</text>
-  <text class="small" x="418" y="347">validates advertised model</text>
-  <text class="small" x="418" y="367">advertises ready backend</text>
+  <rect x="960" y="130" width="200" height="105" class="runtime"/>
+  <text x="1060" y="164" text-anchor="middle" class="label">local GGUF file</text>
+  <text x="1060" y="187" text-anchor="middle" class="small">models/qwen.gguf</text>
+  <text x="1060" y="204" text-anchor="middle" class="small">node-local artifact</text>
 
-  <rect class="file" x="735" y="290" width="245" height="95"/>
-  <text class="label" x="780" y="322">Local model file</text>
-  <text class="code" x="762" y="347">.cache/models/*.gguf</text>
-  <text class="small" x="762" y="367">or mounted Jetson path</text>
+  <rect x="330" y="360" width="230" height="120" class="go"/>
+  <text x="445" y="393" text-anchor="middle" class="label">Coordinator</text>
+  <text x="445" y="416" text-anchor="middle" class="small">model registry</text>
+  <text x="445" y="433" text-anchor="middle" class="small">route endpoints</text>
+  <text x="445" y="450" text-anchor="middle" class="small">benchmark recorder</text>
 
-  <rect class="runtime" x="735" y="130" width="245" height="95"/>
-  <text class="label" x="782" y="162">Model runtime</text>
-  <text class="small" x="762" y="187">POC: llama-server full model</text>
-  <text class="small" x="762" y="207">P0/MVP: shard-capable runtime</text>
+  <rect x="650" y="345" width="230" height="150" class="go"/>
+  <text x="765" y="378" text-anchor="middle" class="label">Runtime supervisor</text>
+  <text x="765" y="401" text-anchor="middle" class="small">builds runtime args</text>
+  <text x="765" y="418" text-anchor="middle" class="small">starts worker process</text>
+  <text x="765" y="435" text-anchor="middle" class="small">waits for /healthz</text>
+  <text x="765" y="452" text-anchor="middle" class="small">returns runtime URL</text>
 
-  <path class="arrow" d="M300 178 H390"/>
-  <text class="small" x="316" y="168">metadata only</text>
+  <rect x="960" y="345" width="200" height="150" class="runtime"/>
+  <text x="1060" y="378" text-anchor="middle" class="label">C++ runtime</text>
+  <text x="1060" y="401" text-anchor="middle" class="small">llama.cpp adapter</text>
+  <text x="1060" y="418" text-anchor="middle" class="small">loads model path</text>
+  <text x="1060" y="435" text-anchor="middle" class="small">generates full text</text>
+  <text x="1060" y="452" text-anchor="middle" class="small">partial layers later</text>
 
-  <path class="arrow" d="M300 338 H390"/>
-  <text class="small" x="314" y="328">catalog lookup</text>
+  <rect x="45" y="515" width="515" height="70" class="warn"/>
+  <text x="302" y="545" text-anchor="middle" class="label">Remote planning rule</text>
+  <text x="302" y="568" text-anchor="middle" class="small">Peers call member.APIURL + /v1/layer-split/stage, never another node's loopback RuntimeURL.</text>
 
-  <path class="arrow" d="M635 338 H735"/>
-  <text class="small" x="658" y="328">local path</text>
+  <path d="M255 182 H330" class="line"/>
+  <path d="M560 182 H650" class="line"/>
+  <path d="M880 182 H960" class="line"/>
+  <path d="M445 250 V360" class="line"/>
+  <path d="M765 250 V345" class="line"/>
+  <path d="M880 420 H960" class="line"/>
+  <path d="M1060 235 V345" class="dash"/>
+  <path d="M560 550 H690" class="dash"/>
 
-  <path class="arrow" d="M858 290 V225"/>
-  <text class="small" x="872" y="264">load weights</text>
-
-  <path class="future" d="M635 178 H735"/>
-  <text class="small" x="660" y="168">future shard plan</text>
-
-  <path class="future" d="M512 225 V290"/>
-  <text class="small" x="526" y="260">future deployment intent</text>
+  <text x="275" y="170" class="note">metadata</text>
+  <text x="585" y="170" class="note">selected model</text>
+  <text x="895" y="170" class="note">path</text>
+  <text x="890" y="408" class="note">local HTTP</text>
 </svg>

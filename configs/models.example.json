@@ -3,7 +3,7 @@
     {
       "id": "qwen2.5-coder-1.5b-q4",
       "family": "llm",
-      "supported_engines": ["llama.cpp", "jetsonfabric-runtime"],
+      "supported_engines": ["llama.cpp"],
       "layer_count": 28,
       "min_memory_gb": 3,
       "preferred_compute": null,
@@ -12,7 +12,7 @@
     {
       "id": "qwen2.5-coder-7b-q4",
       "family": "llm",
-      "supported_engines": ["llama.cpp", "jetsonfabric-runtime"],
+      "supported_engines": ["llama.cpp"],
       "layer_count": 28,
       "min_memory_gb": 8,
       "preferred_compute": "cuda",

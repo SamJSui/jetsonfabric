@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">JetsonFabric Deployment View</title>
+  <desc id="desc">Deployment diagram showing logical node processes, physical hosts, node-local runtime workers, and peer discovery links.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+    <style>
+      .title{font:700 26px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.subtitle{font:14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#475569}.host{fill:#ecfeff;stroke:#0891b2;stroke-width:3;rx:18}.node{fill:#f8fafc;stroke:#334155;stroke-width:2;rx:14}.runtime{fill:#fef3c7;stroke:#d97706;stroke-width:2;rx:14}.warn{fill:#fff1f2;stroke:#e11d48;stroke-width:2;rx:14}.label{font:700 15px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.small{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#334155}.note{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#64748b}.line{stroke:#334155;stroke-width:2;marker-end:url(#arrow);fill:none}.peer{stroke:#64748b;stroke-width:2;stroke-dasharray:7 5;marker-end:url(#arrow);fill:none}
+    </style>
+  </defs>
+  <text x="40" y="45" class="title">Deployment view</text>
+  <text x="40" y="70" class="subtitle">Each logical node is a process. Each process supervises or attaches to a node-local runtime worker.</text>
+
+  <rect x="55" y="125" width="320" height="430" class="host"/><text x="215" y="158" text-anchor="middle" class="label">Physical host: dopey</text><text x="215" y="181" text-anchor="middle" class="small">Jetson Orin / same GPU + memory</text>
+  <rect x="90" y="225" width="120" height="82" class="node"/><text x="150" y="255" text-anchor="middle" class="label">node A</text><text x="150" y="278" text-anchor="middle" class="small">dopey-a</text><text x="150" y="295" text-anchor="middle" class="small">APIURL :port</text>
+  <rect x="225" y="225" width="120" height="82" class="node"/><text x="285" y="255" text-anchor="middle" class="label">node B</text><text x="285" y="278" text-anchor="middle" class="small">dopey-b</text><text x="285" y="295" text-anchor="middle" class="small">dev logical</text>
+  <rect x="90" y="365" width="120" height="82" class="runtime"/><text x="150" y="395" text-anchor="middle" class="label">runtime A</text><text x="150" y="418" text-anchor="middle" class="small">127.0.0.1</text><text x="150" y="435" text-anchor="middle" class="small">local only</text>
+  <rect x="225" y="365" width="120" height="82" class="runtime"/><text x="285" y="395" text-anchor="middle" class="label">runtime B</text><text x="285" y="418" text-anchor="middle" class="small">127.0.0.1</text><text x="285" y="435" text-anchor="middle" class="small">local only</text>
+  <rect x="90" y="475" width="255" height="48" class="warn"/><text x="218" y="504" text-anchor="middle" class="small">colocated_logical: orchestration test, not perf proof</text>
+
+  <rect x="475" y="125" width="260" height="330" class="host"/><text x="605" y="158" text-anchor="middle" class="label">Physical host: grumpy</text><text x="605" y="181" text-anchor="middle" class="small">distinct Jetson</text>
+  <rect x="545" y="235" width="120" height="82" class="node"/><text x="605" y="265" text-anchor="middle" class="label">node C</text><text x="605" y="288" text-anchor="middle" class="small">grumpy-a</text><text x="605" y="305" text-anchor="middle" class="small">APIURL :port</text>
+  <rect x="545" y="350" width="120" height="82" class="runtime"/><text x="605" y="380" text-anchor="middle" class="label">runtime C</text><text x="605" y="403" text-anchor="middle" class="small">node-local</text>
+
+  <rect x="850" y="125" width="260" height="330" class="host"/><text x="980" y="158" text-anchor="middle" class="label">Physical host: sleepy</text><text x="980" y="181" text-anchor="middle" class="small">distinct Jetson</text>
+  <rect x="920" y="235" width="120" height="82" class="node"/><text x="980" y="265" text-anchor="middle" class="label">node D</text><text x="980" y="288" text-anchor="middle" class="small">sleepy-a</text><text x="980" y="305" text-anchor="middle" class="small">APIURL :port</text>
+  <rect x="920" y="350" width="120" height="82" class="runtime"/><text x="980" y="380" text-anchor="middle" class="label">runtime D</text><text x="980" y="403" text-anchor="middle" class="small">node-local</text>
+
+  <rect x="360" y="585" width="510" height="70" class="node"/><text x="615" y="615" text-anchor="middle" class="label">Remote call rule</text><text x="615" y="638" text-anchor="middle" class="small">Peers call node API URLs. Runtime URLs may be loopback and are not remote contracts.</text>
+
+  <path d="M150 307 V365" class="line"/><path d="M285 307 V365" class="line"/><path d="M605 317 V350" class="line"/><path d="M980 317 V350" class="line"/>
+  <path d="M345 255 C420 210, 500 210, 545 255" class="peer"/><path d="M665 255 C760 210, 875 210, 920 255" class="peer"/><path d="M345 295 C520 520, 790 520, 920 295" class="peer"/>
+  <path d="M605 455 V585" class="peer"/>
+
+  <text x="405" y="222" class="note">mDNS / announce</text><text x="762" y="222" class="note">mDNS / announce</text><text x="630" y="562" class="note">cluster planning uses physical host grouping</text>
+</svg>

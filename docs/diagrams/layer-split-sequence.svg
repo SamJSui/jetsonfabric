@@ -1,68 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">
-  <title id="title">Future Layer Split Sequence</title>
-  <desc id="desc">Control starts a route and runtime workers exchange activation tensors directly.</desc>
-  <defs>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
-    </marker>
-    <marker id="tensor-arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L0,6 L9,3 z" fill="#9a3412"/>
-    </marker>
-  </defs>
-  <style>
-    .bg { fill: #f8fafc; }
-    .title { font: 700 24px Arial, sans-serif; fill: #0f172a; }
-    .head { fill: #ffffff; stroke: #334155; stroke-width: 1.5; rx: 8; }
-    .future { fill: #fff7ed; stroke: #9a3412; stroke-width: 1.5; rx: 8; }
-    .lane { stroke: #94a3b8; stroke-width: 1.2; stroke-dasharray: 6 5; }
-    .arrow { stroke: #334155; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
-    .tensor { stroke: #9a3412; stroke-width: 2; fill: none; marker-end: url(#tensor-arrow); }
-    .label { font: 700 14px Arial, sans-serif; fill: #0f172a; }
-    .text { font: 13px Arial, sans-serif; fill: #334155; }
-    .note { fill: #fef3c7; stroke: #d97706; stroke-width: 1.2; rx: 6; }
-  </style>
-
-  <rect class="bg" width="1120" height="620"/>
-  <text class="title" x="40" y="44">Future Layer-Split Runtime Path</text>
-
-  <rect class="head" x="40" y="85" width="130" height="48"/>
-  <text class="label" x="82" y="115">Client</text>
-  <rect class="head" x="225" y="85" width="150" height="48"/>
-  <text class="label" x="250" y="115">Control</text>
-  <rect class="head" x="450" y="85" width="150" height="48"/>
-  <text class="label" x="481" y="115">Agent A</text>
-  <rect class="future" x="665" y="85" width="150" height="48"/>
-  <text class="label" x="690" y="115">Runtime A</text>
-  <rect class="future" x="880" y="85" width="150" height="48"/>
-  <text class="label" x="905" y="115">Runtime B</text>
-
-  <line class="lane" x1="105" y1="133" x2="105" y2="570"/>
-  <line class="lane" x1="300" y1="133" x2="300" y2="570"/>
-  <line class="lane" x1="525" y1="133" x2="525" y2="570"/>
-  <line class="lane" x1="740" y1="133" x2="740" y2="570"/>
-  <line class="lane" x1="955" y1="133" x2="955" y2="570"/>
-
-  <rect class="note" x="420" y="155" width="500" height="42"/>
-  <text class="text" x="444" y="181">Control plans and observes; it does not relay activation tensors.</text>
-
-  <path class="arrow" d="M105 230 H300"/>
-  <text class="text" x="128" y="222">POST /v1/chat/completions</text>
-
-  <path class="arrow" d="M300 285 C250 285 250 325 300 325"/>
-  <text class="text" x="322" y="310">plan pipeline_parallel route</text>
-
-  <path class="arrow" d="M300 370 H525"/>
-  <text class="text" x="354" y="362">start route on first stage</text>
-
-  <path class="arrow" d="M525 420 H740"/>
-  <text class="text" x="555" y="412">RunPrefillStage: layers 0..N</text>
-
-  <path class="tensor" d="M740 470 H955"/>
-  <text class="text" x="768" y="462">activation tensor bytes + metadata</text>
-
-  <path class="arrow" d="M955 520 H300"/>
-  <text class="text" x="586" y="512">final token/result + stage metadata</text>
-
-  <path class="arrow" d="M300 560 H105"/>
-  <text class="text" x="126" y="552">response with route metadata</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Sequential Stage Path and Activation Target</title>
+  <desc id="desc">The coordinator builds a count-aware plan, calls stages through peer API URLs, records topology and payload traces, and will later replace text handoff with activations.</desc>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker><style>.title{font:700 25px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.subtitle{font:14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#475569}.head{fill:#ecfeff;stroke:#0891b2;stroke-width:2;rx:12}.stage{fill:#fef3c7;stroke:#d97706;stroke-width:2;rx:12}.future{fill:#f5f3ff;stroke:#7c3aed;stroke-width:2;rx:12}.label{font:700 14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.small{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#334155}.line{stroke:#94a3b8;stroke-width:2;stroke-dasharray:5 6}.msg{stroke:#334155;stroke-width:2;marker-end:url(#arrow);fill:none}.return{stroke:#64748b;stroke-width:2;stroke-dasharray:6 5;marker-end:url(#arrow);fill:none}.note{fill:#f8fafc;stroke:#cbd5e1;stroke-width:1.5;rx:10}</style></defs>
+  <text x="40" y="42" class="title">Sequential stage path and activation target</text><text x="40" y="67" class="subtitle">Text handoff is current; assigned-layer activation handoff is the next runtime milestone.</text>
+  <rect x="45" y="105" width="120" height="50" class="head"/><text x="105" y="136" text-anchor="middle" class="label">Client</text><line x1="105" y1="155" x2="105" y2="700" class="line"/>
+  <rect x="220" y="105" width="150" height="50" class="head"/><text x="295" y="136" text-anchor="middle" class="label">Coordinator</text><line x1="295" y1="155" x2="295" y2="700" class="line"/>
+  <rect x="430" y="105" width="160" height="50" class="future"/><text x="510" y="136" text-anchor="middle" class="label">clusterplan</text><line x1="510" y1="155" x2="510" y2="700" class="line"/>
+  <rect x="650" y="105" width="150" height="50" class="stage"/><text x="725" y="136" text-anchor="middle" class="label">Stage 0 node</text><line x1="725" y1="155" x2="725" y2="700" class="line"/>
+  <rect x="855" y="105" width="150" height="50" class="stage"/><text x="930" y="136" text-anchor="middle" class="label">Stage 1 node</text><line x1="930" y1="155" x2="930" y2="700" class="line"/>
+  <rect x="1060" y="105" width="100" height="50" class="future"/><text x="1110" y="128" text-anchor="middle" class="label">Trace /</text><text x="1110" y="144" text-anchor="middle" class="label">metrics</text><line x1="1110" y1="155" x2="1110" y2="700" class="line"/>
+  <path d="M105 195 H295" class="msg"/><text x="200" y="183" text-anchor="middle" class="small">stage run request</text>
+  <path d="M295 250 H510" class="msg"/><text x="402" y="238" text-anchor="middle" class="small">Preview(snapshot, model, stage_count)</text>
+  <path d="M510 305 H295" class="return"/><text x="402" y="293" text-anchor="middle" class="small">ordered stages + topology counts</text>
+  <path d="M295 360 H725" class="msg"/><text x="510" y="348" text-anchor="middle" class="small">POST stage_index=0 to node APIURL</text>
+  <path d="M725 415 H295" class="return"/><text x="510" y="403" text-anchor="middle" class="small">typed output payload</text>
+  <path d="M295 470 H930" class="msg"/><text x="612" y="458" text-anchor="middle" class="small">POST stage_index=1 with prior payload</text>
+  <path d="M930 525 H295" class="return"/><text x="612" y="513" text-anchor="middle" class="small">final text output</text>
+  <path d="M295 580 H1110" class="msg"/><text x="702" y="568" text-anchor="middle" class="small">record stage_count, topology, payload kinds, timings</text>
+  <path d="M295 635 H105" class="return"/><text x="200" y="623" text-anchor="middle" class="small">response</text>
+  <rect x="420" y="620" width="590" height="72" class="note"/><text x="715" y="648" text-anchor="middle" class="label">Activation target</text><text x="715" y="671" text-anchor="middle" class="small">First stage accepts tokens; intermediate boundaries carry activations; final-stage logits and KV cache remain engine-internal.</text>
 </svg>

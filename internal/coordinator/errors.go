@@ -10,6 +10,8 @@ const (
 	errorMissingNodeName         errorCode = "missing_node_name"
 	errorMissingModel            errorCode = "missing_model"
 	errorMissingMessages         errorCode = "missing_messages"
+	errorMissingPayload          errorCode = "missing_payload"
+	errorInvalidStageCount       errorCode = "invalid_stage_count"
 	errorUnknownModel            errorCode = "unknown_model"
 	errorNoDataParallelRoute     errorCode = "no_single_node_route"
 	errorBackendConfigInvalid    errorCode = "backend_config_invalid"

@@ -1,70 +1,27 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">
-  <title id="title">POC Prompt Path Sequence</title>
-  <desc id="desc">Client request flows through control, model registry, agent proxy, llama-server, and benchmark recorder.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Current Any-Node Chat Path Sequence</title>
+  <desc id="desc">Current request sequence: a follower proxies chat to the elected coordinator; the coordinator builds a stage request with stage_index 0 and stage_count 1 and calls its local runtime worker.</desc>
   <defs>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
-    </marker>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+    <style>.title{font:700 25px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.subtitle{font:14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#475569}.head{fill:#ecfeff;stroke:#0891b2;stroke-width:2;rx:12}.runtime{fill:#fef3c7;stroke:#d97706;stroke-width:2;rx:12}.label{font:700 14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.small{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#334155}.line{stroke:#94a3b8;stroke-width:2;stroke-dasharray:5 6}.msg{stroke:#334155;stroke-width:2;marker-end:url(#arrow);fill:none}.return{stroke:#64748b;stroke-width:2;stroke-dasharray:6 5;marker-end:url(#arrow);fill:none}.note{fill:#f8fafc;stroke:#cbd5e1;stroke-width:1.5;rx:10}</style>
   </defs>
-  <style>
-    .bg { fill: #f8fafc; }
-    .title { font: 700 24px Arial, sans-serif; fill: #0f172a; }
-    .head { fill: #ffffff; stroke: #334155; stroke-width: 1.5; rx: 8; }
-    .lane { stroke: #94a3b8; stroke-width: 1.2; stroke-dasharray: 6 5; }
-    .arrow { stroke: #334155; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
-    .label { font: 600 14px Arial, sans-serif; fill: #0f172a; }
-    .text { font: 13px Arial, sans-serif; fill: #334155; }
-  </style>
-  <rect class="bg" width="1120" height="620"/>
-  <text class="title" x="40" y="44">POC Prompt Path</text>
-
-  <rect class="head" x="35" y="80" width="130" height="48"/>
-  <text class="label" x="76" y="110">Client</text>
-  <rect class="head" x="205" y="80" width="150" height="48"/>
-  <text class="label" x="230" y="110">Control</text>
-  <rect class="head" x="405" y="80" width="150" height="48"/>
-  <text class="label" x="431" y="110">Registry</text>
-  <rect class="head" x="605" y="80" width="150" height="48"/>
-  <text class="label" x="632" y="110">Agent</text>
-  <rect class="head" x="805" y="80" width="150" height="48"/>
-  <text class="label" x="836" y="110">Llama</text>
-  <rect class="head" x="990" y="80" width="100" height="48"/>
-  <text class="label" x="1012" y="110">Bench</text>
-
-  <line class="lane" x1="100" y1="128" x2="100" y2="570"/>
-  <line class="lane" x1="280" y1="128" x2="280" y2="570"/>
-  <line class="lane" x1="480" y1="128" x2="480" y2="570"/>
-  <line class="lane" x1="680" y1="128" x2="680" y2="570"/>
-  <line class="lane" x1="880" y1="128" x2="880" y2="570"/>
-  <line class="lane" x1="1040" y1="128" x2="1040" y2="570"/>
-
-  <path class="arrow" d="M100 165 H280"/>
-  <text class="text" x="122" y="157">POST /v1/chat/completions</text>
-
-  <path class="arrow" d="M280 220 H480"/>
-  <text class="text" x="324" y="212">load model profile</text>
-
-  <path class="arrow" d="M480 255 H280"/>
-  <text class="text" x="340" y="247">model profile</text>
-
-  <path class="arrow" d="M280 305 C230 305 230 345 280 345"/>
-  <text class="text" x="300" y="330">select compatible online node</text>
-
-  <path class="arrow" d="M280 385 H680"/>
-  <text class="text" x="406" y="377">POST /v1/chat/completions</text>
-
-  <path class="arrow" d="M680 425 H880"/>
-  <text class="text" x="715" y="417">proxy request</text>
-
-  <path class="arrow" d="M880 465 H680"/>
-  <text class="text" x="728" y="457">model response</text>
-
-  <path class="arrow" d="M680 500 H280"/>
-  <text class="text" x="430" y="492">agent response</text>
-
-  <path class="arrow" d="M280 535 H1040"/>
-  <text class="text" x="514" y="527">record latency, route, tokens, metrics</text>
-
-  <path class="arrow" d="M280 570 H100"/>
-  <text class="text" x="128" y="562">response + route metadata</text>
+  <text x="40" y="42" class="title">Current any-node chat path</text>
+  <text x="40" y="67" class="subtitle">Unified node serving, coordinator proxying, and real full-model llama.cpp generation.</text>
+  <rect x="45" y="105" width="125" height="50" class="head"/><text x="108" y="136" text-anchor="middle" class="label">Client</text><line x1="108" y1="155" x2="108" y2="700" class="line"/>
+  <rect x="235" y="105" width="160" height="50" class="head"/><text x="315" y="136" text-anchor="middle" class="label">Follower facade</text><line x1="315" y1="155" x2="315" y2="700" class="line"/>
+  <rect x="465" y="105" width="150" height="50" class="head"/><text x="540" y="136" text-anchor="middle" class="label">Election</text><line x1="540" y1="155" x2="540" y2="700" class="line"/>
+  <rect x="685" y="105" width="150" height="50" class="head"/><text x="760" y="136" text-anchor="middle" class="label">Coordinator facade</text><line x1="760" y1="155" x2="760" y2="700" class="line"/>
+  <rect x="885" y="105" width="150" height="50" class="head"/><text x="960" y="136" text-anchor="middle" class="label">ChatProxy</text><line x1="960" y1="155" x2="960" y2="700" class="line"/>
+  <rect x="1080" y="105" width="90" height="50" class="runtime"/><text x="1125" y="128" text-anchor="middle" class="label">Runtime</text><text x="1125" y="144" text-anchor="middle" class="label">worker</text><line x1="1125" y1="155" x2="1125" y2="700" class="line"/>
+  <path d="M108 195 H315" class="msg"/><text x="212" y="183" text-anchor="middle" class="small">POST /v1/chat/completions</text>
+  <path d="M315 250 H540" class="msg"/><text x="428" y="238" text-anchor="middle" class="small">Explain(now, store.List())</text>
+  <path d="M540 305 H315" class="return"/><text x="428" y="293" text-anchor="middle" class="small">coordinator != self</text>
+  <path d="M315 360 H760" class="msg"/><text x="538" y="348" text-anchor="middle" class="small">proxy to coordinator.APIURL</text>
+  <path d="M760 415 H540" class="msg"/><text x="650" y="403" text-anchor="middle" class="small">coordinator check</text>
+  <path d="M540 470 H760" class="return"/><text x="650" y="458" text-anchor="middle" class="small">coordinator == self</text>
+  <path d="M760 525 H960" class="msg"/><text x="860" y="513" text-anchor="middle" class="small">serve local chat request</text>
+  <path d="M960 580 H1125" class="msg"/><text x="1042" y="568" text-anchor="middle" class="small">POST /v1/layer-split/stage</text>
+  <path d="M1125 625 H960" class="return"/><text x="1042" y="613" text-anchor="middle" class="small">text + token counts</text>
+  <path d="M960 655 H760" class="return"/><path d="M760 675 H315" class="return"/><path d="M315 695 H108" class="return"/>
+  <rect x="600" y="235" width="520" height="72" class="note"/><text x="860" y="263" text-anchor="middle" class="label">Current runtime request</text><text x="860" y="286" text-anchor="middle" class="small">stage_index=0, stage_count=1, payload_kind=text, encoding=utf-8</text>
 </svg>

@@ -9,7 +9,7 @@ class LlamaCppFullModelExecutor final : public LayerExecutor {
 public:
     explicit LlamaCppFullModelExecutor(adapters::LlamaCppAdapter& adapter);
 
-    StageRunResult run_layers(const protocol::ActivationRequest& request) const override;
+    StageRunResult run_layers(const protocol::StageRequest& request) const override;
 
 private:
     adapters::LlamaCppAdapter& adapter_;
