@@ -10,6 +10,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+include(CTest)
+
 set(JF_LLAMA_CPP_SOURCE_DIR
   "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp"
   CACHE PATH "Path to a local llama.cpp checkout"
@@ -48,6 +50,8 @@ set(JF_RUNTIME_SOURCES
 
   api/http_response.cpp
   api/http_server.cpp
+
+  inference/stage.cpp
 
   protocol/execution_mode.cpp
   protocol/stage.cpp
@@ -91,4 +95,23 @@ elseif(TARGET llama::llama)
   target_link_libraries(jetsonfabric-runtime-worker PRIVATE llama::llama)
 else()
   message(FATAL_ERROR "llama.cpp was added, but no llama target was found")
+endif()
+
+if(BUILD_TESTING)
+  add_executable(jetsonfabric-runtime-stage-interface-test
+    inference/stage.cpp
+    inference/stage_test.cpp
+  )
+  target_include_directories(jetsonfabric-runtime-stage-interface-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-runtime-stage-interface-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME runtime-stage-interface
+    COMMAND jetsonfabric-runtime-stage-interface-test
+  )
 endif()

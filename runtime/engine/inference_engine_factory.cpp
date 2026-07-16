@@ -21,8 +21,8 @@ public:
           }),
           executor_(adapter_) {}
 
-    pipeline_parallel::StageRunResult run_layers(const protocol::StageRequest& request) const override {
-        return executor_.run_layers(request);
+    inference::ExecutionResult execute(const inference::StageInput& input) const override {
+        return executor_.execute(input);
     }
 
 private:
@@ -37,7 +37,9 @@ InferenceEngineParts build_inference_engine_parts(const Config& config) {
         return InferenceEngineParts{.layer_executor = std::make_unique<LlamaCppExecutorHolder>(config)};
     }
     if (config.engine == "synthetic") {
-        return InferenceEngineParts{.layer_executor = std::make_unique<pipeline_parallel::SyntheticActivationExecutor>()};
+        return InferenceEngineParts{
+            .layer_executor = std::make_unique<pipeline_parallel::SyntheticActivationExecutor>(),
+        };
     }
     throw std::invalid_argument("unsupported inference engine: " + config.engine);
 }

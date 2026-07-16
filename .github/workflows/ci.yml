@@ -73,5 +73,8 @@ jobs:
       - name: Run two-node real CPU E2E
         run: bash scripts/ci/smoke-real-runtime-cpu.sh
 
+      - name: Run native runtime unit tests
+        run: ctest --test-dir "$CI_RUNTIME_BUILD_DIR" --output-on-failure
+
       - name: Run two-node binary activation E2E
         run: bash scripts/ci/smoke-binary-activation.sh

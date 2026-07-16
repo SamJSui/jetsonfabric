@@ -5,11 +5,13 @@
 
 namespace jetsonfabric::runtime::pipeline_parallel {
 
+// LlamaCppFullModelExecutor is the compatibility executor used until llama.cpp
+// can produce and consume partial-layer activation tensors.
 class LlamaCppFullModelExecutor final : public LayerExecutor {
 public:
     explicit LlamaCppFullModelExecutor(adapters::LlamaCppAdapter& adapter);
 
-    StageRunResult run_layers(const protocol::StageRequest& request) const override;
+    inference::ExecutionResult execute(const inference::StageInput& input) const override;
 
 private:
     adapters::LlamaCppAdapter& adapter_;
