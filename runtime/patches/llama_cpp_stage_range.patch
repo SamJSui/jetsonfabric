@@ -127,7 +127,7 @@ index 4bfebc88..fa5ec6dc 100644
          res->t_layer_inp[il] = inpL;
  
          ggml_tensor * inpSA = inpL;
-@@ -173,7 +173,7 @@ llama_model_llama::graph<embed>::graph(const llama_model & model, const llm_grap
+@@ -173,9 +173,9 @@ llama_model_llama::graph<embed>::graph(const llama_model & model, const llm_grap
              cur = build_attn(inp_attn,
                      model.layers[il].wo, model.layers[il].wo_b, model.layers[il].wo_s,
                      Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, kq_scale, il);
@@ -164,7 +164,7 @@ index e9c2ea80..1a627d57 100644
          ggml_tensor * inpSA = inpL;
  
          // norm
-@@ -105,7 +105,7 @@ llama_model_qwen2::graph::graph(const llama_model & model, const llm_graph_param
+@@ -105,8 +105,8 @@ llama_model_qwen2::graph::graph(const llama_model & model, const llm_graph_param
              cur = build_attn(inp_attn,
                      model.layers[il].wo, model.layers[il].wo_b, model.layers[il].wo_s,
                      Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, 1.0f/sqrtf(float(n_embd_head)), il);
