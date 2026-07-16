@@ -273,7 +273,11 @@ struct LlamaCppStageAdapter::Impl {
         const std::int32_t token = static_cast<std::int32_t>(std::distance(logits, best));
         inference::StageOutput output;
         output.payload = sampled_token_payload(token);
-        output.completion_tokens = 1;
+        output.end_of_generation = config.model->is_end_token(token);
+        if (!output.end_of_generation) {
+            output.token_text = config.model->token_piece(token);
+            output.completion_tokens = 1;
+        }
         return inference::ExecutionResult::success(std::move(output));
     }
 
