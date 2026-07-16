@@ -76,11 +76,7 @@ void require_success(const ExecutionResult& result, const char* step) {
     }
 }
 
-int run_test(const std::string& model_path) {
-    auto model = std::make_shared<LlamaCppModel>(LlamaCppModelConfig{
-        .model_path = model_path,
-        .n_gpu_layers = 0,
-    });
+int run_test(const std::shared_ptr<LlamaCppModel>& model) {
     if (model->n_layer() < 2) {
         throw std::runtime_error("partial-layer test requires at least two transformer layers");
     }
@@ -186,7 +182,7 @@ int main(int argc, char** argv) {
             std::cout << response.token_ids[0] << '\n';
             return 0;
         }
-        return run_test(model_path);
+        return run_test(model);
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
