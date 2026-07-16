@@ -2,6 +2,7 @@
 
 #include "engine/inference_engine_factory.hpp"
 #include "protocol/stage.hpp"
+#include "protocol/stage_control.hpp"
 
 #include <exception>
 #include <utility>
@@ -82,14 +83,18 @@ RuntimeResponse RuntimeService::run_stage(const std::string& request_body) const
         return json_error("400 Bad Request", "invalid_execution_mode", "stage execution requires pipeline_parallel mode");
     }
 
+    std::string operation;
     protocol::StageRequest request;
     try {
+        operation = protocol::decode_stage_operation(request_body);
         request = protocol::decode_stage_request(request_body);
     } catch (const std::exception& err) {
         return json_error("400 Bad Request", "invalid_stage_request", err.what());
     }
 
-    const pipeline_parallel::StageRunResult result = stage_worker_.run(request);
+    const pipeline_parallel::StageRunResult result = operation == protocol::kStageOperationCloseSession
+        ? stage_worker_.close_session(request)
+        : stage_worker_.run(request);
     if (!result.ok) {
         protocol::StageResponse response = stage_error_response(request, result.error_code, result.error_message);
         return RuntimeResponse{result.status, protocol::kStageWireContentType, protocol::encode_stage_response(std::move(response))};
