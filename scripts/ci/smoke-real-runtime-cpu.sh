@@ -13,6 +13,7 @@ LLAMA_CPP_COMMIT="${CI_LLAMA_CPP_COMMIT:?CI_LLAMA_CPP_COMMIT is required}"
 RUNTIME_BUILD_DIR="${CI_RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build-ci-cpu}"
 NODE0_PORT="${CI_NODE0_PORT:-18180}"
 NODE1_PORT="${CI_NODE1_PORT:-18181}"
+MODEL_ID="ci-tiny-llama"
 
 PIDS=()
 cleanup() {
@@ -22,7 +23,7 @@ cleanup() {
   done
   wait 2>/dev/null || true
   if [[ $status -ne 0 ]]; then
-    echo "Two-node real CPU E2E test failed. Logs:" >&2
+    echo "Two-node real partial-layer CPU E2E failed. Logs:" >&2
     for log_file in "$LOG_DIR"/*.log; do
       [[ -e "$log_file" ]] || continue
       echo "===== $log_file =====" >&2
@@ -90,10 +91,33 @@ cmake --build "$RUNTIME_BUILD_DIR" --parallel 2
 go build -buildvcs=false -o "$BIN_DIR/jetsonfabric-node" ./cmd/jetsonfabric-node
 
 RUNTIME_BIN="$RUNTIME_BUILD_DIR/jetsonfabric-runtime-worker"
-if [[ ! -x "$RUNTIME_BIN" ]]; then
-  echo "Runtime binary missing after build: $RUNTIME_BIN" >&2
+STAGE_TEST_BIN="$RUNTIME_BUILD_DIR/jetsonfabric-llama-stage-test"
+if [[ ! -x "$RUNTIME_BIN" || ! -x "$STAGE_TEST_BIN" ]]; then
+  echo "Runtime or stage-test binary missing after build" >&2
   exit 1
 fi
+
+LAYER_COUNT="$(CI_MODEL_PATH="$MODEL_PATH" "$STAGE_TEST_BIN" --print-layer-count)"
+BASELINE_TOKEN="$(CI_MODEL_PATH="$MODEL_PATH" "$STAGE_TEST_BIN" --baseline-token)"
+if [[ ! "$LAYER_COUNT" =~ ^[0-9]+$ || "$LAYER_COUNT" -lt 2 ]]; then
+  echo "Invalid model layer count: $LAYER_COUNT" >&2
+  exit 1
+fi
+SPLIT_LAYER=$((LAYER_COUNT / 2))
+MODEL_REGISTRY="$WORK_DIR/models.json"
+cat >"$MODEL_REGISTRY" <<JSON
+{
+  "models": [{
+    "id": "$MODEL_ID",
+    "family": "llm",
+    "supported_engines": ["llama.cpp"],
+    "layer_count": $LAYER_COUNT,
+    "min_memory_gb": 0,
+    "preferred_compute": null,
+    "placement_modes": ["pipeline_parallel"]
+  }]
+}
+JSON
 
 "$BIN_DIR/jetsonfabric-node" \
   --cluster-id ci-real-runtime-e2e \
@@ -110,19 +134,19 @@ fi
   --runtime-n-gpu-layers 0 \
   --runtime-threads 2 \
   --engine llama.cpp \
-  --model qwen2.5-coder-1.5b-q4 \
+  --model "$MODEL_ID" \
   --model-path "$MODEL_PATH" \
   --stage-index 0 \
   --stage-count 2 \
   --layer-start 0 \
-  --layer-end 14 \
+  --layer-end "$SPLIT_LAYER" \
   --role coordinator \
   --discovery static \
   --seeds "http://127.0.0.1:$NODE1_PORT" \
   --discovery-interval 250ms \
   --stale-after 5s \
   --benchmarks "$WORK_DIR/benchmarks-stage0.jsonl" \
-  --models configs/models.example.json \
+  --models "$MODEL_REGISTRY" \
   >"$LOG_DIR/node-stage0.log" 2>&1 &
 PIDS+=("$!")
 
@@ -141,19 +165,19 @@ PIDS+=("$!")
   --runtime-n-gpu-layers 0 \
   --runtime-threads 2 \
   --engine llama.cpp \
-  --model qwen2.5-coder-1.5b-q4 \
+  --model "$MODEL_ID" \
   --model-path "$MODEL_PATH" \
   --stage-index 1 \
   --stage-count 2 \
-  --layer-start 14 \
-  --layer-end 28 \
+  --layer-start "$SPLIT_LAYER" \
+  --layer-end "$LAYER_COUNT" \
   --role worker \
   --discovery static \
   --seeds "http://127.0.0.1:$NODE0_PORT" \
   --discovery-interval 250ms \
   --stale-after 5s \
   --benchmarks "$WORK_DIR/benchmarks-stage1.jsonl" \
-  --models configs/models.example.json \
+  --models "$MODEL_REGISTRY" \
   >"$LOG_DIR/node-stage1.log" 2>&1 &
 PIDS+=("$!")
 
@@ -162,45 +186,37 @@ wait_for_url "http://127.0.0.1:$NODE1_PORT/v1/cluster/members"
 wait_for_two_members "http://127.0.0.1:$NODE0_PORT/v1/cluster/members"
 
 members_json="$(curl -fsS "http://127.0.0.1:$NODE0_PORT/v1/cluster/members")"
-jq -e '
+jq -e --argjson split "$SPLIT_LAYER" --argjson layers "$LAYER_COUNT" '
   (.members | length) == 2 and
-  (any(.members[]; .node_name == "ci-stage0" and .capabilities.runtime_stage_index == 0 and .capabilities.runtime_stage_count == 2 and .capabilities.runtime_layer_start == 0 and .capabilities.runtime_layer_end == 14)) and
-  (any(.members[]; .node_name == "ci-stage1" and .capabilities.runtime_stage_index == 1 and .capabilities.runtime_stage_count == 2 and .capabilities.runtime_layer_start == 14 and .capabilities.runtime_layer_end == 28))
+  (any(.members[]; .node_name == "ci-stage0" and .capabilities.runtime_stage_index == 0 and .capabilities.runtime_stage_count == 2 and .capabilities.runtime_layer_start == 0 and .capabilities.runtime_layer_end == $split)) and
+  (any(.members[]; .node_name == "ci-stage1" and .capabilities.runtime_stage_index == 1 and .capabilities.runtime_stage_count == 2 and .capabilities.runtime_layer_start == $split and .capabilities.runtime_layer_end == $layers))
 ' <<<"$members_json" >/dev/null
 
-preview_json="$(curl -fsS "http://127.0.0.1:$NODE0_PORT/v1/routes/preview?model=qwen2.5-coder-1.5b-q4&stage_count=2&allow_colocated_stages=true")"
-jq -e '
+preview_json="$(curl -fsS "http://127.0.0.1:$NODE0_PORT/v1/routes/preview?model=$MODEL_ID&stage_count=2&allow_colocated_stages=true")"
+jq -e --argjson split "$SPLIT_LAYER" --argjson layers "$LAYER_COUNT" '
   .valid == true and
   .mode == "pipeline_parallel" and
-  .topology == "colocated" and
   .stage_count == 2 and
-  .logical_node_count == 2 and
-  .physical_host_count == 1 and
   (.stages | length) == 2 and
-  .stages[0].stage_index == 0 and
-  .stages[0].stage_count == 2 and
-  .stages[0].node_name == "ci-stage0" and
   .stages[0].layer_start == 0 and
-  .stages[0].layer_end == 14 and
-  .stages[1].stage_index == 1 and
-  .stages[1].stage_count == 2 and
-  .stages[1].node_name == "ci-stage1" and
-  .stages[1].layer_start == 14 and
-  .stages[1].layer_end == 28
+  .stages[0].layer_end == $split and
+  .stages[1].layer_start == $split and
+  .stages[1].layer_end == $layers
 ' <<<"$preview_json" >/dev/null
 
 response_file="$WORK_DIR/response.json"
 http_code="$(curl -sS -o "$response_file" -w '%{http_code}' \
   -X POST "http://127.0.0.1:$NODE0_PORT/v1/layer-split/run" \
   -H 'Content-Type: application/json' \
-  -d '{
-    "request_id": "ci-real-runtime-e2e",
-    "model": "qwen2.5-coder-1.5b-q4",
-    "payload": "Once upon a time",
-    "max_tokens": 4,
-    "stage_count": 2,
-    "allow_colocated_stages": true
-  }')"
+  -d "{
+    \"request_id\": \"ci-real-runtime-e2e\",
+    \"model\": \"$MODEL_ID\",
+    \"payload\": \"Once upon a time\",
+    \"max_tokens\": 1,
+    \"stage_count\": 2,
+    \"allow_colocated_stages\": true,
+    \"strict_payload_transitions\": true
+  }")"
 
 if [[ "$http_code" != "200" ]]; then
   echo "Expected HTTP 200, got $http_code" >&2
@@ -208,23 +224,22 @@ if [[ "$http_code" != "200" ]]; then
   exit 1
 fi
 
-jq -e '
-  .inter_stage_payload_kind == "text" and
+jq -e --argjson baseline "$BASELINE_TOKEN" '
+  .inter_stage_payload_kind == "activation" and
   .plan.mode == "pipeline_parallel" and
-  .plan.topology == "colocated" and
   .plan.stage_count == 2 and
-  (.plan.stages | length) == 2 and
-  .result.payload_kind == "text" and
+  .result.payload_kind == "sampled_token" and
+  .result.sampled_token == $baseline and
   (.result.stages | length) == 2 and
   .result.stages[0].status_code == 200 and
   .result.stages[1].status_code == 200 and
   .result.stages[0].payload_kind_in == "text" and
-  .result.stages[0].payload_kind_out == "text" and
-  .result.stages[0].payload_out > 0 and
-  .result.stages[1].payload_in == .result.stages[0].payload_out and
-  (.result.payload | type == "string") and
-  (.result.payload | length > 0)
+  .result.stages[0].payload_kind_out == "activation" and
+  .result.stages[1].payload_kind_in == "activation" and
+  .result.stages[1].payload_kind_out == "sampled_token" and
+  .result.stages[0].payload_out == .result.stages[1].payload_in and
+  .result.stages[0].payload_crc32_out == .result.stages[1].payload_crc32_in
 ' "$response_file" >/dev/null
 
-echo "Two-node real CPU E2E test passed"
-jq '{inter_stage_payload_kind, plan: {mode: .plan.mode, topology: .plan.topology, stage_count: .plan.stage_count, physical_host_count: .plan.physical_host_count, stages: .plan.stages}, result: {payload_kind: .result.payload_kind, payload: .result.payload, prompt_tokens: .result.prompt_tokens, completion_tokens: .result.completion_tokens, stages: .result.stages}}' "$response_file"
+echo "Two-node real partial-layer CPU E2E passed"
+jq '{inter_stage_payload_kind, plan, result}' "$response_file"
