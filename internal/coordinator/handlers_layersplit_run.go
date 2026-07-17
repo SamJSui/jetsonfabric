@@ -13,13 +13,12 @@ import (
 )
 
 type layerSplitRunRequest struct {
-	RequestID                string `json:"request_id,omitempty"`
-	Model                    string `json:"model"`
-	Payload                  string `json:"payload"`
-	MaxTokens                int    `json:"max_tokens,omitempty"`
-	StageCount               *int   `json:"stage_count,omitempty"`
-	AllowColocatedStages     bool   `json:"allow_colocated_stages,omitempty"`
-	StrictPayloadTransitions bool   `json:"strict_payload_transitions,omitempty"`
+	RequestID            string `json:"request_id,omitempty"`
+	Model                string `json:"model"`
+	Payload              string `json:"payload"`
+	MaxTokens            int    `json:"max_tokens,omitempty"`
+	StageCount           *int   `json:"stage_count,omitempty"`
+	AllowColocatedStages bool   `json:"allow_colocated_stages,omitempty"`
 }
 
 type layerSplitRunResponse struct {
@@ -88,22 +87,13 @@ func (s *Server) handleLayerSplitRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	executor := stageexec.New(stageexec.Config{})
-	executionRequest := stageexec.Request{
-		RequestID:                runReq.RequestID,
-		Model:                    model.ID,
-		Payload:                  runReq.Payload,
-		MaxTokens:                runReq.MaxTokens,
-		Plan:                     plan,
-		StrictPayloadTransitions: runReq.StrictPayloadTransitions,
-	}
-	var result stageexec.Result
-	var err error
-	if runReq.StrictPayloadTransitions {
-		result, err = executor.Generate(r.Context(), executionRequest)
-	} else {
-		result, err = executor.Execute(r.Context(), executionRequest)
-	}
+	result, err := stageexec.New(stageexec.Config{}).Generate(r.Context(), stageexec.Request{
+		RequestID: runReq.RequestID,
+		Model:     model.ID,
+		Payload:   runReq.Payload,
+		MaxTokens: runReq.MaxTokens,
+		Plan:      plan,
+	})
 	if err != nil {
 		writeLayerSplitRunError(w, http.StatusBadGateway, errorPipelineStageFailed, err.Error(), &plan, &result)
 		return
