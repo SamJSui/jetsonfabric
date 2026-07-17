@@ -49,7 +49,7 @@ func (e *Executor) Generate(ctx context.Context, req Request) (result Result, er
 	prefillReq.Data = nil
 	prefillReq.MaxTokens = maxTokens
 
-	pass, err := e.Execute(ctx, prefillReq)
+	pass, err := e.RunPipelinePass(ctx, prefillReq)
 	if err != nil {
 		return generationResult(rootRequestID, sessionID, req.Model, pass), err
 	}
@@ -73,7 +73,7 @@ func (e *Executor) Generate(ctx context.Context, req Request) (result Result, er
 			MaxTokens:  maxTokens,
 			Plan:       req.Plan,
 		}
-		pass, err = e.Execute(ctx, decodeReq)
+		pass, err = e.RunPipelinePass(ctx, decodeReq)
 		if err != nil {
 			return result, err
 		}
