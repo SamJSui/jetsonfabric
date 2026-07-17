@@ -1,8 +1,8 @@
 # Runtime Stage Interface
 
 The runtime stage interface is the engine-neutral boundary between JetsonFabric's
-wire protocol and an inference-engine implementation. Engine adapters no longer
-receive or return `protocol::StageRequest` or `protocol::StageResponse` values.
+wire protocol and an inference-engine implementation. Engine adapters do not
+receive or return HTTP or Stagewire objects.
 
 ## Boundary
 
@@ -17,65 +17,83 @@ stagewire frame
   -> stagewire frame
 ```
 
-`runtime/protocol` owns framing and serialized metadata. `runtime/inference` owns
-typed execution semantics. `pipeline_parallel::StageWorker` is the adapter between
-those two boundaries.
+`runtime/protocol` owns serialized metadata. `runtime/inference` owns typed
+execution semantics. `StageWorker` adapts between the two.
 
-## Typed input
+## Identity and lifecycle
 
-`inference::StageInput` contains:
+One generation has three levels of identity:
 
-- session, request, and model identity;
-- `Phase::Prefill` or `Phase::Decode`;
-- monotonic decode step;
-- count-based stage position;
-- assigned transformer layer range;
-- a typed payload;
-- generation limits such as `max_tokens`.
+```text
+chat/request ID
+  -> one user-facing completion
 
-A payload uses `PayloadKind::Text`, `Tokens`, `Activation`, or `SampledToken`.
-Text owns UTF-8 bytes. Tensor payloads own dtype, shape, byte order, layout, and
-raw bytes.
+session ID
+  -> one persistent generation state shared by all stages
 
-The execution interface intentionally excludes HTTP status, media type, frame
-version, CRC32, and node-routing information. Those are transport concerns.
+stage operation request ID
+  -> one prefill/decode call to one stage
+```
 
-## Typed output and errors
+The coordinator generates a server-owned session ID. Prefill and every decode
+step retain that session ID while receiving distinct request IDs for tracing.
+The session remains bound to one immutable model and stage plan until cleanup.
 
-`inference::StageOutput` contains only the produced typed payload and engine token
-counts. `inference::ExecutionResult` separates invalid engine input from an engine
-execution failure. `StageWorker` maps those classes to the current HTTP-facing
-status and constructs the wire response.
+Each llama.cpp stage stores a context keyed by session ID. Successful operations
+refresh its last-used time. Explicit cleanup removes it immediately; a local
+five-minute idle TTL reaps it if the coordinator or network disappears before
+cleanup completes.
 
-The worker measures latency and derives byte counts. Engines do not construct
-wire responses or stage traces.
+## Typed payload transitions
+
+Payload-transition validation is mandatory for pipeline execution; there is no
+public flag that disables it.
+
+```text
+prefill first:        text/tokens -> activation
+prefill intermediate: activation  -> activation
+prefill final:        activation  -> sampled_token
+
+decode first:         sampled_token -> activation
+decode intermediate:  activation    -> activation
+decode final:         activation    -> sampled_token
+```
+
+Activations are raw little-endian row-major F32 tensors. Sampled tokens are one
+little-endian 32-bit token ID. Logits and KV state remain inside the engine.
 
 ## Current executors
 
-The synthetic executor implements the target semantic transitions:
+The synthetic executor validates the same semantic transitions without a real
+model.
 
-```text
-first stage:        text/tokens or sampled token -> activation
-intermediate stage: activation -> activation
-final stage:        activation -> sampled token
-```
+The active llama.cpp pipeline executor:
 
-The llama.cpp full-model executor is an explicit compatibility adapter. It accepts
-prefill text and returns text until a real partial-layer adapter can produce and
-consume activation tensors. That compatibility behavior is isolated behind the
-same typed interface rather than leaking wire structs into the engine adapter.
+- tokenizes only on the first stage;
+- executes the configured `[layer_start, layer_end)` range;
+- exports hidden activations from non-final stages;
+- imports activations on downstream stages;
+- keeps logits and greedy sampling on the final stage;
+- preserves stage-local llama.cpp contexts across decode steps.
 
-## Next engine milestone
+A full-model llama.cpp executor remains only for single-stage compatibility. It
+is not used by a multi-stage pipeline route.
 
-A partial-layer engine adapter can now implement the same interface without
-changing Stagewire, StageWorker, runtime bridging, or coordinator transport:
+## Public API path
 
-```text
-StageInput(tokens or sampled_token)
-  -> execute assigned layer range
-  -> StageOutput(activation)
+`POST /v1/chat/completions` is coordinator-owned. Any JetsonFabric node forwards
+that public request to the elected coordinator, which plans the ordered stages,
+drives prefill and decode, and returns an OpenAI-style response.
 
-StageInput(activation)
-  -> execute assigned layer range
-  -> StageOutput(activation or sampled_token)
-```
+`POST /v1/layer-split/run` remains a diagnostic endpoint. Both endpoints use the
+same mandatory typed generation path.
+
+## Current limitations
+
+- Non-streaming chat completions only.
+- Greedy sampling only.
+- Llama and Qwen2-family partial-layer graphs only.
+- F32 inter-stage activations only.
+- Each runtime still loads the complete GGUF even though it executes one range.
+- Exact runtime/model artifact identity and physical CUDA attestation remain to
+  be added before the two-Jetson acceptance run.
