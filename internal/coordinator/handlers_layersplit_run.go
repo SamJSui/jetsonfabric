@@ -23,6 +23,7 @@ type layerSplitRunRequest struct {
 
 type layerSplitRunResponse struct {
 	InterStagePayloadKind stagewire.PayloadKind    `json:"inter_stage_payload_kind"`
+	RuntimeIdentity       pipelineRuntimeIdentity  `json:"runtime_identity"`
 	Plan                  clusterplan.RoutePreview `json:"plan"`
 	Result                stageexec.Result         `json:"result"`
 }
@@ -74,8 +75,23 @@ func (s *Server) handleLayerSplitRun(w http.ResponseWriter, r *http.Request) {
 	if runReq.StageCount != nil {
 		policy.StageCount = *runReq.StageCount
 	}
+	requiredStages := policy.StageCount
+	if requiredStages <= 0 {
+		requiredStages = 2
+	}
+	members, identity, err := selectPipelineRuntimeMembers(
+		model,
+		s.memberSource.List(),
+		s.now(),
+		s.memberStaleAfter,
+		requiredStages,
+	)
+	if err != nil {
+		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, err.Error(), nil, nil)
+		return
+	}
 	plan := clusterplan.Preview(clusterplan.Request{
-		Model: model, Members: s.memberSource.List(), Now: s.now(),
+		Model: model, Members: members, Now: s.now(),
 		StaleAfter: s.memberStaleAfter, Policy: policy,
 	})
 	if !plan.Valid {
@@ -98,12 +114,13 @@ func (s *Server) handleLayerSplitRun(w http.ResponseWriter, r *http.Request) {
 		writeLayerSplitRunError(w, http.StatusBadGateway, errorPipelineStageFailed, err.Error(), &plan, &result)
 		return
 	}
-	writeJSON(w, http.StatusOK, newLayerSplitRunResponse(plan, result))
+	writeJSON(w, http.StatusOK, newLayerSplitRunResponse(identity, plan, result))
 }
 
-func newLayerSplitRunResponse(plan clusterplan.RoutePreview, result stageexec.Result) layerSplitRunResponse {
+func newLayerSplitRunResponse(identity pipelineRuntimeIdentity, plan clusterplan.RoutePreview, result stageexec.Result) layerSplitRunResponse {
 	return layerSplitRunResponse{
 		InterStagePayloadKind: interStagePayloadKind(result),
+		RuntimeIdentity:       identity,
 		Plan:                  plan,
 		Result:                result,
 	}
