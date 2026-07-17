@@ -3,11 +3,13 @@
 #include "adapters/llama_cpp_stage_adapter.hpp"
 #include "inference/stage.hpp"
 
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -87,6 +89,35 @@ void print_token_ids(const std::vector<std::int32_t>& token_ids) {
     std::cout << "]\n";
 }
 
+void verify_idle_session_expiry(const std::shared_ptr<LlamaCppModel>& model, int split) {
+    LlamaCppStageAdapter expiring_stage(LlamaCppStageConfig{
+        .model = model,
+        .ctx_size = 256,
+        .threads = 2,
+        .position = {.index = 0, .count = 2},
+        .layers = {.start = 0, .end = split},
+        .session_idle_ttl = std::chrono::milliseconds(30),
+        .session_reap_interval = std::chrono::milliseconds(5),
+    });
+    const std::string session = "expiring-session";
+    ExecutionResult prefill = expiring_stage.execute(input_for(
+        session, "expiring-prefill", Phase::Prefill, 0,
+        {.index = 0, .count = 2}, {.start = 0, .end = split}, text_payload("TTL test")
+    ));
+    require_success(prefill, "expiring stage prefill");
+    if (expiring_stage.session_count() != 1U) {
+        throw std::runtime_error("expiring stage did not retain its new session");
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (expiring_stage.session_count() != 0U && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    if (expiring_stage.session_count() != 0U) {
+        throw std::runtime_error("idle stage session was not reaped after its TTL");
+    }
+}
+
 int run_test(const std::shared_ptr<LlamaCppModel>& model) {
     if (model->n_layer() < 2) {
         throw std::runtime_error("partial-layer test requires at least two transformer layers");
@@ -162,6 +193,8 @@ int run_test(const std::shared_ptr<LlamaCppModel>& model) {
     if (stage0.session_count() != 0U || stage1.session_count() != 0U) {
         throw std::runtime_error("stage session cleanup failed");
     }
+
+    verify_idle_session_expiry(model, split);
 
     std::cout << "llama.cpp split-stage equivalence passed: architecture=" << model->architecture()
               << " layers=" << model->n_layer() << " split=" << split
