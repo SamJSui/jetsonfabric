@@ -67,8 +67,7 @@ jq -n \
     payload: $payload,
     max_tokens: $max_tokens,
     stage_count: $stage_count,
-    allow_colocated_stages: $allow_colocated,
-    strict_payload_transitions: true
+    allow_colocated_stages: $allow_colocated
   }' >"$request_file"
 
 http_code="$(curl -sS -o "$response_file" -w '%{http_code}' \
@@ -126,6 +125,7 @@ jq '{
     phase, decode_step, stage_index, node_name,
     payload_kind_in, payload_kind_out,
     payload_in, payload_out,
-    payload_crc32_in, payload_crc32_out
+    payload_crc32_in, payload_crc32_out,
+    latency_ms
   }]
 }' "$response_file"
