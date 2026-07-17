@@ -234,8 +234,7 @@ http_code="$(curl -sS -o "$response_file" -w '%{http_code}' \
     \"payload\": \"Once upon a time\",
     \"max_tokens\": 2,
     \"stage_count\": 2,
-    \"allow_colocated_stages\": true,
-    \"strict_payload_transitions\": true
+    \"allow_colocated_stages\": true
   }")"
 
 if [[ "$http_code" != "200" ]]; then
@@ -251,6 +250,7 @@ jq -e --argjson baseline "$BASELINE_TOKENS" '
   .result.payload_kind == "sampled_token" and
   .result.sampled_tokens == $baseline and
   .result.sampled_token == $baseline[1] and
+  .result.session_id != "" and
   (.result.stages | length) == 4 and
   .result.stages[0].status_code == 200 and
   .result.stages[1].status_code == 200 and
@@ -278,5 +278,37 @@ jq -e --argjson baseline "$BASELINE_TOKENS" '
   .result.stages[2].payload_crc32_out == .result.stages[3].payload_crc32_in
 ' "$response_file" >/dev/null
 
+chat_response_file="$WORK_DIR/chat-response.json"
+chat_http_code="$(curl -sS -o "$chat_response_file" -w '%{http_code}' \
+  -X POST "http://127.0.0.1:$NODE1_PORT/v1/chat/completions" \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"model\": \"$MODEL_ID\",
+    \"messages\": [{\"role\": \"user\", \"content\": \"Once upon a time\"}],
+    \"max_tokens\": 1,
+    \"jetsonfabric\": {
+      \"stage_count\": 2,
+      \"allow_colocated_stages\": true
+    }
+  }")"
+if [[ "$chat_http_code" != "200" ]]; then
+  echo "Expected OpenAI chat HTTP 200, got $chat_http_code" >&2
+  cat "$chat_response_file" >&2
+  exit 1
+fi
+jq -e --arg model "$MODEL_ID" '
+  .object == "chat.completion" and
+  .model == $model and
+  (.id | startswith("chatcmpl-")) and
+  (.choices | length) == 1 and
+  .choices[0].message.role == "assistant" and
+  (.choices[0].message.content | type == "string") and
+  (.choices[0].finish_reason == "length" or .choices[0].finish_reason == "stop") and
+  .usage.completion_tokens >= 0 and
+  .usage.total_tokens == (.usage.prompt_tokens + .usage.completion_tokens)
+' "$chat_response_file" >/dev/null
+
 echo "Two-node real partial-layer prefill/decode CPU E2E passed"
+echo "Distributed OpenAI-compatible chat completion passed"
 jq '{inter_stage_payload_kind, plan, result}' "$response_file"
+jq '{id, object, model, choices, usage}' "$chat_response_file"
