@@ -79,5 +79,6 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc(api.RouteModels, s.handleModels)
 	mux.HandleFunc(api.RoutePreview, s.handleRoutePreview)
 	mux.HandleFunc(api.RouteLayerSplitRun, s.handleLayerSplitRun)
+	mux.HandleFunc(api.RouteChatCompletions, s.handleChatCompletions)
 	return mux
 }
