@@ -44,8 +44,7 @@ func TestLayerSplitRunReportsActivationHandoff(t *testing.T) {
 		"payload":"prompt",
 		"max_tokens":1,
 		"stage_count":2,
-		"allow_colocated_stages":true,
-		"strict_payload_transitions":true
+		"allow_colocated_stages":true
 	}`))
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
@@ -58,6 +57,9 @@ func TestLayerSplitRunReportsActivationHandoff(t *testing.T) {
 	}
 	if decoded.InterStagePayloadKind != stagewire.PayloadKindActivation || decoded.Result.PayloadKind != stagewire.PayloadKindSampledToken || decoded.Result.SampledToken == nil {
 		t.Fatalf("unexpected response: %+v", decoded)
+	}
+	if decoded.Result.RequestID != "run-1" || decoded.Result.SessionID == "" {
+		t.Fatalf("unexpected result IDs: %+v", decoded.Result)
 	}
 	if decoded.Result.Stages[0].PayloadCRC32Out != decoded.Result.Stages[1].PayloadCRC32In {
 		t.Fatalf("checksum changed across nodes: %+v", decoded.Result.Stages)
