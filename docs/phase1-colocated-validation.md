@@ -40,8 +40,8 @@ The script:
 2. hashes the GGUF with SHA-256;
 3. derives the real model layer count;
 4. starts two logical nodes on one host;
-5. confirms both advertise the same engine, model ID, artifact hash, backend,
-   mode, and complementary stage assignments;
+5. confirms both advertise the same engine, model ID, artifact hash, execution
+   mode, and complementary stage assignments; it also records each backend;
 6. compares two distributed greedy tokens with a one-runtime baseline;
 7. verifies activation byte and CRC continuity for prefill and decode;
 8. sends an ordinary `POST /v1/chat/completions` request to the follower node;
@@ -76,19 +76,19 @@ The JSON report contains:
 Phase 1 is complete when the report says:
 
 ```text
-topology                 = colocated
-stage_count              = 2
-logical_node_count       = 2
-physical_host_count      = 1
-tokens_match             = true
+topology                  = colocated
+stage_count               = 2
+logical_node_count        = 2
+physical_host_count       = 1
+tokens_match              = true
 activation_crc_continuity = true
 ```
 
 and both members advertise the same non-empty `runtime_model_sha256`.
 
-## Identity contract
+## Compatibility and placement metadata
 
-Every supervised node now advertises:
+Every supervised node advertises:
 
 ```text
 runtime_engine
@@ -102,9 +102,14 @@ runtime_layer_start
 runtime_layer_end
 ```
 
-The coordinator groups candidates by this identity and refuses to form a
-pipeline unless enough fresh runtimes match exactly. The C++ `StageWorker` also
-rejects a request whose `model_id` differs from the model loaded by that runtime.
+The coordinator currently groups candidates for correctness by engine adapter,
+model ID, exact artifact SHA-256, and pipeline execution mode. Compute backend is
+still advertised, but CPU versus CUDA is placement and telemetry metadata rather
+than part of activation compatibility.
+
+The C++ `StageWorker` independently rejects a request whose `model_id`, node
+name, stage position, or layer range differs from that runtime's configured
+assignment.
 
 ## What Phase 1 does not prove
 
@@ -114,6 +119,7 @@ Phase 1 does not prove:
 - LAN activation transfer;
 - CUDA was compiled and actually used;
 - reduced per-node model memory;
+- dynamic model loading or deployment rebalancing;
 - pipeline overlap or throughput microbatching.
 
 Those are intentionally left for the physical and optimization phases.
