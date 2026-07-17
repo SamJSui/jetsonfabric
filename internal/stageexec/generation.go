@@ -16,28 +16,17 @@ import (
 const sessionCleanupTimeout = 10 * time.Second
 
 // Generate drives one prefill pass followed by decode passes over the same
-// immutable plan and session ID. Every runtime retains its own stage-local model
-// state between passes. The session is closed on every stage before Generate
-// returns, including failure and cancellation paths.
+// immutable plan and server-owned session ID. Each pass and stage call receives
+// its own request ID for tracing. The session is closed on every stage before
+// Generate returns, including failure and cancellation paths.
 func (e *Executor) Generate(ctx context.Context, req Request) (result Result, err error) {
 	if e == nil {
 		e = New(Config{})
 	}
+	rootRequestID := normalizeOrNewID(req.RequestID, "request")
+	sessionID := normalizeOrNewID(req.SessionID, "session")
 	maxTokens := normalizeGenerationMaxTokens(req.MaxTokens)
 
-	prefillReq := req
-	prefillReq.Phase = inference.PhasePrefill
-	prefillReq.DecodeStep = 0
-	prefillReq.Kind = stagewire.PayloadKindText
-	prefillReq.Data = nil
-	prefillReq.StrictPayloadTransitions = true
-	prefillReq.MaxTokens = maxTokens
-
-	pass, err := e.Execute(ctx, prefillReq)
-	sessionID := pass.RequestID
-	if sessionID == "" {
-		sessionID = strings.TrimSpace(prefillReq.RequestID)
-	}
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), sessionCleanupTimeout)
 		defer cancel()
@@ -50,10 +39,21 @@ func (e *Executor) Generate(ctx context.Context, req Request) (result Result, er
 			}
 		}
 	}()
+
+	prefillReq := req
+	prefillReq.RequestID = generationPassRequestID(rootRequestID, inference.PhasePrefill, 0)
+	prefillReq.SessionID = sessionID
+	prefillReq.Phase = inference.PhasePrefill
+	prefillReq.DecodeStep = 0
+	prefillReq.Kind = stagewire.PayloadKindText
+	prefillReq.Data = nil
+	prefillReq.MaxTokens = maxTokens
+
+	pass, err := e.Execute(ctx, prefillReq)
 	if err != nil {
-		return pass, err
+		return generationResult(rootRequestID, sessionID, req.Model, pass), err
 	}
-	result = emptyGenerationResult(pass)
+	result = generationResult(rootRequestID, sessionID, req.Model, pass)
 
 	if err := mergeGenerationPass(&result, pass); err != nil {
 		return result, err
@@ -63,15 +63,15 @@ func (e *Executor) Generate(ctx context.Context, req Request) (result Result, er
 		payload := make([]byte, 4)
 		binary.LittleEndian.PutUint32(payload, previous)
 		decodeReq := Request{
-			RequestID:                sessionID,
-			Model:                    req.Model,
-			Data:                     payload,
-			Kind:                     stagewire.PayloadKindSampledToken,
-			Phase:                    inference.PhaseDecode,
-			DecodeStep:               decodeStep,
-			MaxTokens:                maxTokens,
-			Plan:                     req.Plan,
-			StrictPayloadTransitions: true,
+			RequestID:  generationPassRequestID(rootRequestID, inference.PhaseDecode, decodeStep),
+			SessionID:  sessionID,
+			Model:      req.Model,
+			Data:       payload,
+			Kind:       stagewire.PayloadKindSampledToken,
+			Phase:      inference.PhaseDecode,
+			DecodeStep: decodeStep,
+			MaxTokens:  maxTokens,
+			Plan:       req.Plan,
 		}
 		pass, err = e.Execute(ctx, decodeReq)
 		if err != nil {
@@ -89,10 +89,11 @@ func (e *Executor) Generate(ctx context.Context, req Request) (result Result, er
 	return result, nil
 }
 
-func emptyGenerationResult(pass Result) Result {
+func generationResult(requestID string, sessionID string, model string, pass Result) Result {
 	return Result{
-		RequestID: pass.RequestID,
-		Model:     pass.Model,
+		RequestID: requestID,
+		SessionID: sessionID,
+		Model:     model,
 		Stages:    make([]StageTrace, 0, len(pass.Stages)),
 	}
 }
