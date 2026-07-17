@@ -1,100 +1,31 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
-  <title id="title">Current JetsonFabric Node Component View</title>
-  <desc id="desc">Current architecture: every jetsonfabric-node owns identity, membership, discovery, election, facade routing, runtime bridging, and a node-local runtime worker.</desc>
-  <defs>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
-    </marker>
-    <style>
-      .title { font: 700 26px system-ui, -apple-system, Segoe UI, sans-serif; fill: #0f172a; }
-      .subtitle { font: 14px system-ui, -apple-system, Segoe UI, sans-serif; fill: #475569; }
-      .box { fill: #f8fafc; stroke: #334155; stroke-width: 2; rx: 14; }
-      .node { fill: #ecfeff; stroke: #0891b2; stroke-width: 3; rx: 20; }
-      .runtime { fill: #fef3c7; stroke: #d97706; stroke-width: 2; rx: 14; }
-      .future { fill: #f5f3ff; stroke: #7c3aed; stroke-width: 2; rx: 14; }
-      .label { font: 700 15px system-ui, -apple-system, Segoe UI,sans-serif; fill: #0f172a; }
-      .small { font: 12px system-ui, -apple-system, Segoe UI, sans-serif; fill: #334155; }
-      .note { font: 12px system-ui, -apple-system, Segoe UI, sans-serif; fill: #64748b; }
-      .line { stroke: #334155; stroke-width: 2; marker-end: url(#arrow); fill: none; }
-      .dash { stroke: #64748b; stroke-width: 2; stroke-dasharray: 6 5; marker-end: url(#arrow); fill: none; }
-    </style>
-  </defs>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 760" role="img" aria-labelledby="title desc">
+  <title id="title">Current JetsonFabric Service Component View</title>
+  <desc id="desc">A client may call any Go node. The elected leader coordinates a pipeline through target node facades and their supervised C++ partial-layer runtimes.</desc>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker><style>.title{font:700 26px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.subtitle{font:14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#475569}.client{fill:#f8fafc;stroke:#334155;stroke-width:2;rx:14}.node{fill:#ecfeff;stroke:#0891b2;stroke-width:3;rx:18}.box{fill:#ffffff;stroke:#334155;stroke-width:1.8;rx:11}.runtime{fill:#fef3c7;stroke:#d97706;stroke-width:2;rx:12}.shared{fill:#f5f3ff;stroke:#7c3aed;stroke-width:2;rx:12}.label{font:700 14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.small{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#334155}.note{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#64748b}.line{stroke:#334155;stroke-width:2;marker-end:url(#arrow);fill:none}.return{stroke:#64748b;stroke-width:2;stroke-dasharray:6 5;marker-end:url(#arrow);fill:none}.activation{stroke:#ea580c;stroke-width:2.4;marker-end:url(#arrow);fill:none}</style></defs>
+  <text x="40" y="42" class="title">Current service component view</text><text x="40" y="68" class="subtitle">Go owns cluster policy and HTTP routing. Each C++ runtime owns one configured model partition and persistent inference sessions.</text>
 
-  <text x="40" y="45" class="title">Current JetsonFabric node component view</text>
-  <text x="40" y="70" class="subtitle">A node is the product unit: local peer cache, leader routing, runtime bridge, and supervised C++ runtime.</text>
+  <rect x="40" y="315" width="155" height="72" class="client"/><text x="117" y="345" text-anchor="middle" class="label">OpenAI client</text><text x="117" y="367" text-anchor="middle" class="small">chat/completions</text>
 
-  <rect x="40" y="125" width="150" height="80" class="box"/>
-  <text x="115" y="158" text-anchor="middle" class="label">Client</text>
-  <text x="115" y="180" text-anchor="middle" class="small">OpenAI-style API</text>
+  <rect x="245" y="100" width="455" height="540" class="node"/><text x="472" y="130" text-anchor="middle" class="label">Go node A — elected coordinator</text>
+  <rect x="280" y="165" width="170" height="70" class="box"/><text x="365" y="193" text-anchor="middle" class="label">Facade Router</text><text x="365" y="214" text-anchor="middle" class="small">public API + stage endpoint</text>
+  <rect x="495" y="165" width="170" height="70" class="box"/><text x="580" y="193" text-anchor="middle" class="label">Coordinator</text><text x="580" y="214" text-anchor="middle" class="small">compatibility + planning</text>
+  <rect x="280" y="285" width="170" height="82" class="shared"/><text x="365" y="313" text-anchor="middle" class="label">Membership / Election</text><text x="365" y="334" text-anchor="middle" class="small">fresh local peer view</text><text x="365" y="351" text-anchor="middle" class="small">deterministic leader</text>
+  <rect x="495" y="275" width="170" height="102" class="shared"/><text x="580" y="303" text-anchor="middle" class="label">clusterplan + stageexec</text><text x="580" y="324" text-anchor="middle" class="small">ordered stage route</text><text x="580" y="341" text-anchor="middle" class="small">prefill/decode loop</text><text x="580" y="358" text-anchor="middle" class="small">stage traces + cleanup</text>
+  <rect x="280" y="430" width="170" height="72" class="box"/><text x="365" y="458" text-anchor="middle" class="label">StageProxy</text><text x="365" y="479" text-anchor="middle" class="small">local binary HTTP bridge</text>
+  <rect x="495" y="420" width="170" height="92" class="runtime"/><text x="580" y="448" text-anchor="middle" class="label">C++ runtime A</text><text x="580" y="469" text-anchor="middle" class="small">model hash H</text><text x="580" y="486" text-anchor="middle" class="small">configured layers [0,14)</text><text x="580" y="503" text-anchor="middle" class="small">activation output</text>
+  <rect x="410" y="555" width="170" height="48" class="box"/><text x="495" y="584" text-anchor="middle" class="label">RuntimeSupervisor</text>
 
-  <rect x="245" y="95" width="620" height="505" class="node"/>
-  <text x="555" y="128" text-anchor="middle" class="label">jetsonfabric-node process</text>
-  <text x="555" y="150" text-anchor="middle" class="small">one logical node; multiple logical nodes may run on one physical host in dev</text>
+  <rect x="800" y="100" width="455" height="540" class="node"/><text x="1027" y="130" text-anchor="middle" class="label">Go node B — follower / stage host</text>
+  <rect x="835" y="165" width="170" height="70" class="box"/><text x="920" y="193" text-anchor="middle" class="label">Facade Router</text><text x="920" y="214" text-anchor="middle" class="small">leader proxy + stage endpoint</text>
+  <rect x="1050" y="165" width="170" height="70" class="box"/><text x="1135" y="193" text-anchor="middle" class="label">Local membership</text><text x="1135" y="214" text-anchor="middle" class="small">discovery snapshot</text>
+  <rect x="835" y="430" width="170" height="72" class="box"/><text x="920" y="458" text-anchor="middle" class="label">StageProxy</text><text x="920" y="479" text-anchor="middle" class="small">local binary HTTP bridge</text>
+  <rect x="1050" y="420" width="170" height="92" class="runtime"/><text x="1135" y="448" text-anchor="middle" class="label">C++ runtime B</text><text x="1135" y="469" text-anchor="middle" class="small">model hash H</text><text x="1135" y="486" text-anchor="middle" class="small">configured layers [14,28)</text><text x="1135" y="503" text-anchor="middle" class="small">logits + token</text>
+  <rect x="965" y="555" width="170" height="48" class="box"/><text x="1050" y="584" text-anchor="middle" class="label">RuntimeSupervisor</text>
 
-  <rect x="280" y="185" width="180" height="82" class="box"/>
-  <text x="370" y="215" text-anchor="middle" class="label">Facade router</text>
-  <text x="370" y="238" text-anchor="middle" class="small">health, cluster, chat</text>
-  <text x="370" y="255" text-anchor="middle" class="small">stage, leader proxy</text>
-
-  <rect x="525" y="185" width="140" height="82" class="box"/>
-  <text x="595" y="215" text-anchor="middle" class="label">Election</text>
-  <text x="595" y="238" text-anchor="middle" class="small">deterministic rank</text>
-  <text x="595" y="255" text-anchor="middle" class="small">from local view</text>
-
-  <rect x="700" y="185" width="130" height="82" class="box"/>
-  <text x="765" y="215" text-anchor="middle" class="label">Coordinator</text>
-  <text x="765" y="238" text-anchor="middle" class="small">models</text>
-  <text x="765" y="255" text-anchor="middle" class="small">route preview</text>
-
-  <rect x="280" y="325" width="180" height="92" class="box"/>
-  <text x="370" y="355" text-anchor="middle" class="label">Membership.Store</text>
-  <text x="370" y="378" text-anchor="middle" class="small">local peer cache</text>
-  <text x="370" y="395" text-anchor="middle" class="small">not consensus</text>
-
-  <rect x="525" y="325" width="140" height="92" class="box"/>
-  <text x="595" y="355" text-anchor="middle" class="label">Discovery</text>
-  <text x="595" y="378" text-anchor="middle" class="small">mDNS / static</text>
-  <text x="595" y="395" text-anchor="middle" class="small">announce hydrate</text>
-
-  <rect x="700" y="325" width="130" height="92" class="box"/>
-  <text x="765" y="355" text-anchor="middle" class="label">Runtime bridge</text>
-  <text x="765" y="378" text-anchor="middle" class="small">chat adapter</text>
-  <text x="765" y="395" text-anchor="middle" class="small">stage proxy</text>
-
-  <rect x="430" y="475" width="185" height="72" class="box"/>
-  <text x="522" y="505" text-anchor="middle" class="label">Runtime supervisor</text>
-  <text x="522" y="528" text-anchor="middle" class="small">starts / stops worker</text>
-
-  <rect x="675" y="468" width="155" height="86" class="runtime"/>
-  <text x="752" y="498" text-anchor="middle" class="label">C++ runtime</text>
-  <text x="752" y="521" text-anchor="middle" class="small">llama.cpp adapter</text>
-  <text x="752" y="538" text-anchor="middle" class="small">full-model now</text>
-
-  <rect x="930" y="155" width="210" height="100" class="box"/>
-  <text x="1035" y="188" text-anchor="middle" class="label">Peer node</text>
-  <text x="1035" y="211" text-anchor="middle" class="small">same node process</text>
-  <text x="1035" y="228" text-anchor="middle" class="small">own local store/runtime</text>
-
-  <rect x="930" y="335" width="210" height="112" class="future"/>
-  <text x="1035" y="368" text-anchor="middle" class="label">Cluster planning</text>
-  <text x="1035" y="391" text-anchor="middle" class="small">fresh members</text>
-  <text x="1035" y="408" text-anchor="middle" class="small">snapshot per request</text>
-  <text x="1035" y="425" text-anchor="middle" class="small">stage plan</text>
-
-  <path d="M190 165 H280" class="line"/>
-  <path d="M460 226 H525" class="line"/>
-  <path d="M595 267 V325" class="line"/>
-  <path d="M525 371 H460" class="line"/>
-  <path d="M665 371 H700" class="line"/>
-  <path d="M765 417 V468" class="line"/>
-  <path d="M615 510 H675" class="line"/>
-  <path d="M830 226 H930" class="dash"/>
-  <path d="M595 417 C620 455, 655 470, 700 490" class="dash"/>
-  <path d="M865 390 H930" class="dash"/>
-
-  <text x="210" y="153" class="note">request</text>
-  <text x="468" y="214" class="note">who leads?</text>
-  <text x="875" y="210" class="note">proxy to leader.APIURL</text>
-  <text x="880" y="376" class="note">planning</text>
-  <text x="675" y="452" class="note">local only</text>
+  <path d="M195 351 H280" class="line"/><text x="205" y="338" class="note">request to any node</text>
+  <path d="M450 200 H495" class="line"/><path d="M580 235 V275" class="line"/><path d="M365 367 V430" class="return"/><path d="M450 466 H495" class="line"/><path d="M495 555 C455 535,400 515,365 502" class="return"/>
+  <path d="M665 326 C745 290,770 225,835 200" class="line"/><text x="706" y="250" class="note">peer stage HTTP via node APIURL</text>
+  <path d="M920 235 V430" class="line"/><path d="M1005 466 H1050" class="line"/><path d="M1050 555 C1010 535,955 515,920 502" class="return"/>
+  <path d="M580 512 C700 660,1010 660,1135 512" class="activation"/><text x="857" y="683" text-anchor="middle" class="note">Current activation handoff is orchestrated by Go stageexec through node APIs</text>
+  <path d="M835 180 C760 115,690 115,665 180" class="return"/><text x="750" y="105" class="note">follower public requests proxy to leader</text>
 </svg>
