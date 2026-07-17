@@ -10,15 +10,15 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/membership"
 )
 
-// pipelineRuntimeIdentity is the immutable identity shared by every runtime in
-// one pipeline. Friendly model names are not enough: the artifact digest proves
-// that all stages opened the same bytes.
+// pipelineRuntimeIdentity contains the facts that must agree for runtimes to
+// exchange model activations correctly. Compute backend is intentionally not
+// part of this identity: CPU and CUDA are placement/telemetry concerns as long
+// as both runtimes implement the same execution and activation contract.
 type pipelineRuntimeIdentity struct {
-	Engine         cluster.Engine         `json:"engine"`
-	ModelID        string                 `json:"model_id"`
-	ModelSHA256    string                 `json:"model_sha256"`
-	ComputeBackend cluster.ComputeBackend `json:"compute_backend"`
-	ExecutionMode  cluster.ExecutionMode  `json:"execution_mode"`
+	Engine        cluster.Engine        `json:"engine"`
+	ModelID       string                `json:"model_id"`
+	ModelSHA256   string                `json:"model_sha256"`
+	ExecutionMode cluster.ExecutionMode `json:"execution_mode"`
 }
 
 func (i pipelineRuntimeIdentity) key() string {
@@ -26,7 +26,6 @@ func (i pipelineRuntimeIdentity) key() string {
 		string(i.Engine),
 		i.ModelID,
 		i.ModelSHA256,
-		string(i.ComputeBackend),
 		string(i.ExecutionMode),
 	}, "|")
 }
@@ -75,7 +74,7 @@ func selectPipelineRuntimeMembers(
 	}
 	if selectedKey == "" {
 		return nil, pipelineRuntimeIdentity{}, fmt.Errorf(
-			"need %d fresh pipeline runtimes with matching engine, model artifact, compute backend, and execution mode",
+			"need %d fresh pipeline runtimes with matching engine, model artifact, and execution mode",
 			requiredStages,
 		)
 	}
@@ -85,19 +84,15 @@ func selectPipelineRuntimeMembers(
 func runtimeIdentityForModel(member membership.Member, model cluster.ModelProfile) (pipelineRuntimeIdentity, bool) {
 	caps := member.Capabilities
 	identity := pipelineRuntimeIdentity{
-		Engine:         cluster.Engine(capabilityString(caps, cluster.CapabilityRuntimeEngine)),
-		ModelID:        capabilityString(caps, cluster.CapabilityRuntimeModelID),
-		ModelSHA256:    strings.ToLower(capabilityString(caps, cluster.CapabilityRuntimeModelSHA256)),
-		ComputeBackend: cluster.ComputeBackend(capabilityString(caps, cluster.CapabilityRuntimeComputeBackend)),
-		ExecutionMode:  cluster.ExecutionMode(capabilityString(caps, cluster.CapabilityRuntimeExecutionMode)),
+		Engine:        cluster.Engine(capabilityString(caps, cluster.CapabilityRuntimeEngine)),
+		ModelID:       capabilityString(caps, cluster.CapabilityRuntimeModelID),
+		ModelSHA256:   strings.ToLower(capabilityString(caps, cluster.CapabilityRuntimeModelSHA256)),
+		ExecutionMode: cluster.ExecutionMode(capabilityString(caps, cluster.CapabilityRuntimeExecutionMode)),
 	}
 	if identity.ModelID != model.ID || identity.ModelSHA256 == "" {
 		return pipelineRuntimeIdentity{}, false
 	}
 	if identity.ExecutionMode != cluster.ExecutionModePipelineParallel {
-		return pipelineRuntimeIdentity{}, false
-	}
-	if identity.ComputeBackend != cluster.ComputeBackendCPU && identity.ComputeBackend != cluster.ComputeBackendCUDA {
 		return pipelineRuntimeIdentity{}, false
 	}
 	if !modelSupportsEngine(model, identity.Engine) {
