@@ -14,7 +14,7 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/stagewire"
 )
 
-func TestExecutorPassesBinaryPayloadBetweenStages(t *testing.T) {
+func TestRunPipelinePassPassesBinaryPayloadBetweenStages(t *testing.T) {
 	activation := make([]byte, 4*16*4)
 	for i := range activation {
 		activation[i] = byte((i * 19) % 251)
@@ -47,12 +47,12 @@ func TestExecutorPassesBinaryPayloadBetweenStages(t *testing.T) {
 	})
 	defer stage1.Close()
 
-	result, err := New(Config{}).Execute(context.Background(), Request{
+	result, err := New(Config{}).RunPipelinePass(context.Background(), Request{
 		RequestID: "request-1", SessionID: "session-1", Model: "model", Payload: "prompt",
 		Plan: testPlan(stage0.URL, stage1.URL),
 	})
 	if err != nil {
-		t.Fatalf("execute: %v", err)
+		t.Fatalf("run pipeline pass: %v", err)
 	}
 	if result.RequestID != "request-1" || result.SessionID != "session-1" {
 		t.Fatalf("unexpected result IDs: %+v", result)
@@ -71,7 +71,7 @@ func TestExecutorPassesBinaryPayloadBetweenStages(t *testing.T) {
 	}
 }
 
-func TestExecutorRejectsInvalidTransition(t *testing.T) {
+func TestRunPipelinePassRejectsInvalidTransition(t *testing.T) {
 	stage0 := newFrameServer(t, func(req StageRequest) StageResponse {
 		return StageResponse{Metadata: responseMetadata(req, stagewire.PayloadKindText), Payload: []byte("wrong")}
 	})
@@ -82,7 +82,7 @@ func TestExecutorRejectsInvalidTransition(t *testing.T) {
 	})
 	defer stage1.Close()
 
-	_, err := New(Config{}).Execute(context.Background(), Request{
+	_, err := New(Config{}).RunPipelinePass(context.Background(), Request{
 		RequestID: "request-1", SessionID: "session-1", Model: "model", Payload: "prompt",
 		Plan: testPlan(stage0.URL, stage1.URL),
 	})
@@ -91,7 +91,7 @@ func TestExecutorRejectsInvalidTransition(t *testing.T) {
 	}
 }
 
-func TestExecutorStopsAfterJSONFailure(t *testing.T) {
+func TestRunPipelinePassStopsAfterJSONFailure(t *testing.T) {
 	stage0 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -102,7 +102,7 @@ func TestExecutorStopsAfterJSONFailure(t *testing.T) {
 	stage1 := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { stage1Called = true }))
 	defer stage1.Close()
 
-	result, err := New(Config{}).Execute(context.Background(), Request{
+	result, err := New(Config{}).RunPipelinePass(context.Background(), Request{
 		RequestID: "request-1", SessionID: "session-1", Model: "model", Payload: "prompt", Plan: testPlan(stage0.URL, stage1.URL),
 	})
 	if err == nil || stage1Called {
