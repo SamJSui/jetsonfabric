@@ -71,7 +71,11 @@ jobs:
           key: ci-runtime-${{ runner.os }}-${{ env.CI_LLAMA_CPP_COMMIT }}-${{ hashFiles('runtime/CMakeLists.txt', 'runtime/**/*.cpp', 'runtime/**/*.h', 'runtime/**/*.hpp', 'runtime/patches/**', 'scripts/ci/**') }}
 
       - name: Run two-node real CPU E2E
-        run: bash scripts/ci/smoke-real-runtime-cpu.sh
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p .ci-logs/real-runtime
+          bash scripts/ci/smoke-real-runtime-cpu.sh 2>&1 | tee .ci-logs/real-runtime/step.log
 
       - name: Run native runtime unit tests
         run: ctest --test-dir "$CI_RUNTIME_BUILD_DIR" --output-on-failure
@@ -85,5 +89,5 @@ jobs:
         with:
           name: ci-diagnostics-${{ github.run_id }}
           path: .ci-logs
-          if-no-files-found: ignore
+          if-no-files-found: warn
           retention-days: 7
