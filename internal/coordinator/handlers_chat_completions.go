@@ -112,8 +112,23 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			policy.AllowColocatedStages = true
 		}
 	}
+	requiredStages := policy.StageCount
+	if requiredStages <= 0 {
+		requiredStages = 2
+	}
+	members, identity, err := selectPipelineRuntimeMembers(
+		model,
+		s.memberSource.List(),
+		s.now(),
+		s.memberStaleAfter,
+		requiredStages,
+	)
+	if err != nil {
+		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "runtime_identity_unavailable", nil, err.Error())
+		return
+	}
 	plan := clusterplan.Preview(clusterplan.Request{
-		Model: model, Members: s.memberSource.List(), Now: s.now(),
+		Model: model, Members: members, Now: s.now(),
 		StaleAfter: s.memberStaleAfter, Policy: policy,
 	})
 	if !plan.Valid || plan.Mode != cluster.ExecutionModePipelineParallel || plan.StageCount < 2 {
@@ -136,6 +151,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("X-JetsonFabric-Session-ID", result.SessionID)
 	w.Header().Set("X-JetsonFabric-Topology", string(plan.Topology))
+	w.Header().Set("X-JetsonFabric-Model-SHA256", identity.ModelSHA256)
 	writeJSON(w, http.StatusOK, chatCompletionResponse{
 		ID:      requestID,
 		Object:  "chat.completion",
