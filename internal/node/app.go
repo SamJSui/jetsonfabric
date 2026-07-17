@@ -9,7 +9,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/SamJSui/jetsonfabric/internal/api"
 	"github.com/SamJSui/jetsonfabric/internal/benchmarks"
 	"github.com/SamJSui/jetsonfabric/internal/coordinator"
 	"github.com/SamJSui/jetsonfabric/internal/discovery"
@@ -102,24 +101,9 @@ func (a *App) stageRunner() (http.Handler, error) {
 }
 
 func (a *App) publicRouter(coordinatorRouter http.Handler) (http.Handler, error) {
-	chatProxy, err := a.chatProxy()
-	if err != nil {
-		return nil, err
-	}
-	mux := http.NewServeMux()
-	mux.Handle(api.PathChatCompletions, chatProxy)
-	mux.Handle("/", coordinatorRouter)
-	return mux, nil
-}
-
-func (a *App) chatProxy() (http.Handler, error) {
-	return runtimebridge.NewChatProxy(runtimebridge.ChatProxyConfig{
-		RuntimeURL: a.cfg.RuntimeURL,
-		NodeName:   a.cfg.NodeName,
-		Model:      a.cfg.Model,
-		LayerStart: 0,
-		LayerEnd:   28,
-	})
+	// All public APIs, including /v1/chat/completions, are coordinator-owned.
+	// Followers proxy them to the elected leader through the facade router.
+	return coordinatorRouter, nil
 }
 
 func (a *App) configureDiscovery() {
