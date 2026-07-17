@@ -9,10 +9,10 @@ import (
 	"strings"
 )
 
-// modelArtifactSHA256 computes the identity used to prove that every pipeline
-// stage loaded the same model artifact. It streams the file instead of reading a
-// potentially multi-gigabyte GGUF into memory.
-func modelArtifactSHA256(path string) (string, error) {
+// computeModelArtifactSHA256 computes the identity used to prove that every
+// pipeline stage loaded the same model artifact. It streams the file instead of
+// reading a potentially multi-gigabyte GGUF into memory.
+func computeModelArtifactSHA256(path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", fmt.Errorf("model path is required to compute artifact identity")
