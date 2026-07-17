@@ -8,13 +8,13 @@ import (
 	"testing"
 )
 
-func TestModelArtifactSHA256(t *testing.T) {
+func TestComputeModelArtifactSHA256(t *testing.T) {
 	content := []byte("GGUF-test-artifact")
 	path := filepath.Join(t.TempDir(), "model.gguf")
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, err := modelArtifactSHA256(path)
+	got, err := computeModelArtifactSHA256(path)
 	if err != nil {
 		t.Fatalf("hash model: %v", err)
 	}
