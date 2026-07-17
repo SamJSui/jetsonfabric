@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 900" role="img" aria-labelledby="title desc">
+  <title id="title">Safe Pipeline Rebalance Sequence</title>
+  <desc id="desc">A new node joins, a new deployment epoch is prepared, new sessions move to it, and old sessions drain without moving live KV state.</desc>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker><style>.title{font:700 25px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.subtitle{font:14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#475569}.head{fill:#ecfeff;stroke:#0891b2;stroke-width:2;rx:12}.control{fill:#f5f3ff;stroke:#7c3aed;stroke-width:2;rx:12}.runtime{fill:#fef3c7;stroke:#d97706;stroke-width:2;rx:12}.label{font:700 13px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.small{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#334155}.lane{stroke:#94a3b8;stroke-width:1.5;stroke-dasharray:5 6}.msg{stroke:#334155;stroke-width:2;marker-end:url(#arrow);fill:none}.prepare{stroke:#7c3aed;stroke-width:2;stroke-dasharray:6 5;marker-end:url(#arrow);fill:none}.return{stroke:#64748b;stroke-width:2;stroke-dasharray:6 5;marker-end:url(#arrow);fill:none}.epoch1{fill:#fff7ed;stroke:#ea580c;stroke-width:1.6;rx:10}.epoch2{fill:#ecfeff;stroke:#0891b2;stroke-width:1.6;rx:10}.note{fill:#f8fafc;stroke:#cbd5e1;stroke-width:1.4;rx:10}</style></defs>
+  <text x="40" y="42" class="title">Target: safe pipeline rebalance when a node joins</text><text x="40" y="67" class="subtitle">Rebalancing changes deployment for future sessions. It never relocates the KV/context state of an active generation.</text>
+
+  <rect x="40" y="100" width="155" height="50" class="head"/><text x="117" y="130" text-anchor="middle" class="label">Membership</text><line x1="117" y1="150" x2="117" y2="850" class="lane"/>
+  <rect x="250" y="100" width="180" height="50" class="control"/><text x="340" y="130" text-anchor="middle" class="label">PlacementController</text><line x1="340" y1="150" x2="340" y2="850" class="lane"/>
+  <rect x="500" y="100" width="155" height="50" class="runtime"/><text x="577" y="130" text-anchor="middle" class="label">Runtime A</text><line x1="577" y1="150" x2="577" y2="850" class="lane"/>
+  <rect x="720" y="100" width="155" height="50" class="runtime"/><text x="797" y="130" text-anchor="middle" class="label">Runtime B</text><line x1="797" y1="150" x2="797" y2="850" class="lane"/>
+  <rect x="940" y="100" width="155" height="50" class="runtime"/><text x="1017" y="130" text-anchor="middle" class="label">Runtime C</text><line x1="1017" y1="150" x2="1017" y2="850" class="lane"/>
+  <rect x="1150" y="100" width="130" height="50" class="head"/><text x="1215" y="130" text-anchor="middle" class="label">Sessions</text><line x1="1215" y1="150" x2="1215" y2="850" class="lane"/>
+
+  <rect x="470" y="175" width="435" height="62" class="epoch1"/><text x="687" y="201" text-anchor="middle" class="label">Active epoch 1</text><text x="687" y="222" text-anchor="middle" class="small">A=[0,14) → B=[14,28); existing sessions are pinned here</text>
+  <path d="M1017 270 H117" class="msg"/><text x="567" y="259" text-anchor="middle" class="small">node C joins; advertises artifact H and capacity</text>
+  <path d="M117 320 H340" class="msg"/><text x="228" y="309" text-anchor="middle" class="small">fresh membership snapshot</text>
+  <rect x="265" y="345" width="150" height="55" class="note"/><text x="340" y="368" text-anchor="middle" class="small">score candidate plans</text><text x="340" y="386" text-anchor="middle" class="small">benefit must exceed cost</text>
+
+  <path d="M340 440 H577" class="prepare"/><text x="458" y="429" text-anchor="middle" class="small">Prepare epoch 2: [0,10)</text>
+  <path d="M340 485 H797" class="prepare"/><text x="568" y="474" text-anchor="middle" class="small">Prepare epoch 2: [10,19)</text>
+  <path d="M340 530 H1017" class="prepare"/><text x="678" y="519" text-anchor="middle" class="small">Prepare epoch 2: [19,28)</text>
+  <path d="M577 570 H340" class="return"/><path d="M797 600 H340" class="return"/><path d="M1017 630 H340" class="return"/><text x="450" y="620" class="small">Ready(hash, range, memory)</text>
+
+  <rect x="470" y="660" width="625" height="62" class="epoch2"/><text x="782" y="686" text-anchor="middle" class="label">Publish active epoch 2 only after all stages are ready</text><text x="782" y="707" text-anchor="middle" class="small">A=[0,10) → B=[10,19) → C=[19,28)</text>
+  <path d="M340 691 H470" class="msg"/>
+  <path d="M340 750 H1215" class="msg"/><text x="777" y="739" text-anchor="middle" class="small">new sessions choose epoch 2</text>
+  <path d="M1215 790 H577" class="return"/><text x="896" y="779" text-anchor="middle" class="small">epoch 1 sessions continue on A+B until completion</text>
+  <path d="M577 830 H340" class="return"/><path d="M797 850 H340" class="return"/><text x="430" y="846" class="small">epoch 1 drained</text>
+  <rect x="460" y="855" width="650" height="34" class="note"/><text x="785" y="877" text-anchor="middle" class="small">After drain: unload obsolete [0,14) and [14,28) cache entries if no other deployment pins them.</text>
+</svg>
