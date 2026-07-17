@@ -120,7 +120,8 @@ index 4bfebc88..fa5ec6dc 100644
 +++ b/src/models/llama.cpp
 @@ -125,7 +125,7 @@ llama_model_llama::graph<embed>::graph(const llama_model & model, const llm_grap
  
-     ggml_tensor * inp_out_ids = build_inp_out_ids();
+-    ggml_tensor * inp_out_ids = build_inp_out_ids();
++    ggml_tensor * inp_out_ids = cparams.layer_end == (uint32_t) n_layer ? build_inp_out_ids() : nullptr;
  
 -    for (int il = 0; il < n_layer; ++il) {
 +    for (int il = cparams.layer_start; il < (int) cparams.layer_end; ++il) {
@@ -157,7 +158,8 @@ index e9c2ea80..1a627d57 100644
 +++ b/src/models/qwen2.cpp
 @@ -70,7 +70,7 @@ llama_model_qwen2::graph::graph(const llama_model & model, const llm_graph_param
  
-     ggml_tensor * inp_out_ids = build_inp_out_ids();
+-    ggml_tensor * inp_out_ids = build_inp_out_ids();
++    ggml_tensor * inp_out_ids = cparams.layer_end == (uint32_t) n_layer ? build_inp_out_ids() : nullptr;
  
 -    for (int il = 0; il < n_layer; ++il) {
 +    for (int il = cparams.layer_start; il < (int) cparams.layer_end; ++il) {
