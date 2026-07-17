@@ -1,88 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 650" role="img" aria-labelledby="title desc">
-  <title id="title">Model Registry And Runtime Artifact Flow</title>
-  <desc id="desc">Current flow: the Go node loads model metadata and supervises a C++ runtime that loads local GGUF artifacts.</desc>
-  <defs>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
-    </marker>
-    <style>
-      .title { font: 700 26px system-ui, -apple-system, Segoe UI, sans-serif; fill: #0f172a; }
-      .subtitle { font: 14px system-ui, -apple-system, Segoe UI, sans-serif; fill: #475569; }
-      .box { fill: #f8fafc; stroke: #334155; stroke-width: 2; rx: 14; }
-      .go { fill: #ecfeff; stroke: #0891b2; stroke-width: 2; rx: 14; }
-      .runtime { fill: #fef3c7; stroke: #d97706; stroke-width: 2; rx: 14; }
-      .warn { fill: #fff1f2; stroke: #e11d48; stroke-width: 2; rx: 14; }
-      .label { font: 700 15px system-ui, -apple-system, Segoe UI, sans-serif; fill: #0f172a; }
-      .small { font: 12px system-ui, -apple-system, Segoe UI, sans-serif; fill: #334155; }
-      .note { font: 12px system-ui, -apple-system, Segoe UI, sans-serif; fill: #64748b; }
-      .line { stroke: #334155; stroke-width: 2; marker-end: url(#arrow); fill: none; }
-      .dash { stroke: #64748b; stroke-width: 2; stroke-dasharray: 6 5; marker-end: url(#arrow); fill: none; }
-    </style>
-  </defs>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 760" role="img" aria-labelledby="title desc">
+  <title id="title">Target Dynamic Model Artifact and Memory Flow</title>
+  <desc id="desc">Model metadata and local artifacts are separate from in-memory loaded partitions. The runtime ModelManager prepares, pins, drains, and evicts model partitions.</desc>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker><style>.title{font:700 26px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.subtitle{font:14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#475569}.meta{fill:#f5f3ff;stroke:#7c3aed;stroke-width:2;rx:14}.disk{fill:#f8fafc;stroke:#334155;stroke-width:2;rx:14}.runtime{fill:#fef3c7;stroke:#d97706;stroke-width:2;rx:14}.memory{fill:#ecfeff;stroke:#0891b2;stroke-width:2.5;rx:14}.state{fill:#fff7ed;stroke:#ea580c;stroke-width:2;rx:14}.label{font:700 14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.small{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#334155}.note{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#64748b}.line{stroke:#334155;stroke-width:2;marker-end:url(#arrow);fill:none}.dash{stroke:#64748b;stroke-width:2;stroke-dasharray:6 5;marker-end:url(#arrow);fill:none}</style></defs>
+  <text x="40" y="42" class="title">Target: dynamic model artifact and memory flow</text><text x="40" y="68" class="subtitle">A model may exist in the registry and on disk without consuming runtime memory. Loading is driven by a prepared deployment plan.</text>
 
-  <text x="40" y="45" class="title">Model registry and runtime artifact flow</text>
-  <text x="40" y="70" class="subtitle">The Go node plans and records metadata; the C++ runtime owns local model loading and generation.</text>
+  <rect x="45" y="115" width="220" height="120" class="meta"/><text x="155" y="146" text-anchor="middle" class="label">Model Registry</text><text x="70" y="173" class="small">model ID</text><text x="70" y="192" class="small">artifact SHA-256</text><text x="70" y="211" class="small">architecture + layer count</text>
+  <rect x="330" y="115" width="230" height="120" class="disk"/><text x="445" y="146" text-anchor="middle" class="label">Node Artifact Catalog</text><text x="355" y="173" class="small">local GGUF paths</text><text x="355" y="192" class="small">hashes + sizes</text><text x="355" y="211" class="small">present on disk; not loaded</text>
+  <rect x="625" y="105" width="260" height="140" class="meta"/><text x="755" y="136" text-anchor="middle" class="label">DeploymentPlan epoch N</text><text x="650" y="163" class="small">model hash H</text><text x="650" y="182" class="small">node + ordered stage index</text><text x="650" y="201" class="small">assigned range [start,end)</text><text x="650" y="220" class="small">context / precision configuration</text>
+  <rect x="950" y="105" width="285" height="140" class="runtime"/><text x="1092" y="136" text-anchor="middle" class="label">Runtime ModelManager</text><text x="975" y="163" class="small">PrepareDeployment(plan)</text><text x="975" y="182" class="small">validate artifact and memory budget</text><text x="975" y="201" class="small">load missing partition asynchronously</text><text x="975" y="220" class="small">report Ready / Failed</text>
 
-  <rect x="45" y="130" width="210" height="105" class="box"/>
-  <text x="150" y="164" text-anchor="middle" class="label">configs/models*.json</text>
-  <text x="150" y="187" text-anchor="middle" class="small">model IDs</text>
-  <text x="150" y="204" text-anchor="middle" class="small">layer count</text>
-  <text x="150" y="221" text-anchor="middle" class="small">placement modes</text>
+  <rect x="80" y="365" width="230" height="145" class="state"/><text x="195" y="396" text-anchor="middle" class="label">Model entry lifecycle</text><text x="105" y="425" class="small">Absent</text><text x="105" y="444" class="small">Loading</text><text x="105" y="463" class="small">Ready</text><text x="105" y="482" class="small">Draining</text><text x="105" y="501" class="small">Unloaded / Failed</text>
+  <rect x="380" y="340" width="300" height="195" class="memory"/><text x="530" y="371" text-anchor="middle" class="label">In-memory ModelCache</text><text x="405" y="400" class="small">key:</text><text x="430" y="419" class="small">artifact SHA + layer range</text><text x="430" y="438" class="small">+ execution configuration</text><text x="405" y="467" class="small">value:</text><text x="430" y="486" class="small">stage-local weights</text><text x="430" y="505" class="small">engine model handles</text><text x="430" y="524" class="small">reference / session count</text>
+  <rect x="750" y="340" width="235" height="195" class="runtime"/><text x="867" y="371" text-anchor="middle" class="label">SessionManager</text><text x="775" y="400" class="small">CreateSession(epoch, plan)</text><text x="775" y="419" class="small">pin model-cache entry</text><text x="775" y="438" class="small">own stage-local KV/context</text><text x="775" y="467" class="small">decode until complete</text><text x="775" y="486" class="small">release cache reference</text><text x="775" y="505" class="small">TTL abandoned sessions</text>
+  <rect x="1055" y="365" width="205" height="145" class="runtime"/><text x="1157" y="396" text-anchor="middle" class="label">StageExecutor</text><text x="1080" y="425" class="small">prefill</text><text x="1080" y="444" class="small">decode pass</text><text x="1080" y="463" class="small">activation I/O</text><text x="1080" y="482" class="small">final logits/token</text>
 
-  <rect x="330" y="115" width="230" height="135" class="go"/>
-  <text x="445" y="148" text-anchor="middle" class="label">modelregistry</text>
-  <text x="445" y="171" text-anchor="middle" class="small">loads metadata</text>
-  <text x="445" y="188" text-anchor="middle" class="small">does not load weights</text>
-  <text x="445" y="205" text-anchor="middle" class="small">feeds coordinator</text>
-  <text x="445" y="222" text-anchor="middle" class="small">route preview input</text>
+  <rect x="260" y="625" width="800" height="74" class="meta"/><text x="660" y="654" text-anchor="middle" class="label">Eviction rule</text><text x="660" y="678" text-anchor="middle" class="small">A Ready entry may unload only after no active session pins it. Prefer LRU/cost-aware eviction; deployment policy may explicitly keep hot models resident.</text>
 
-  <rect x="650" y="115" width="230" height="135" class="go"/>
-  <text x="765" y="148" text-anchor="middle" class="label">node.Config</text>
-  <text x="765" y="171" text-anchor="middle" class="small">--model</text>
-  <text x="765" y="188" text-anchor="middle" class="small">--model-path</text>
-  <text x="765" y="205" text-anchor="middle" class="small">runtime settings</text>
-  <text x="765" y="222" text-anchor="middle" class="small">supervision args</text>
-
-  <rect x="960" y="130" width="200" height="105" class="runtime"/>
-  <text x="1060" y="164" text-anchor="middle" class="label">local GGUF file</text>
-  <text x="1060" y="187" text-anchor="middle" class="small">models/qwen.gguf</text>
-  <text x="1060" y="204" text-anchor="middle" class="small">node-local artifact</text>
-
-  <rect x="330" y="360" width="230" height="120" class="go"/>
-  <text x="445" y="393" text-anchor="middle" class="label">Coordinator</text>
-  <text x="445" y="416" text-anchor="middle" class="small">model registry</text>
-  <text x="445" y="433" text-anchor="middle" class="small">route endpoints</text>
-  <text x="445" y="450" text-anchor="middle" class="small">benchmark recorder</text>
-
-  <rect x="650" y="345" width="230" height="150" class="go"/>
-  <text x="765" y="378" text-anchor="middle" class="label">Runtime supervisor</text>
-  <text x="765" y="401" text-anchor="middle" class="small">builds runtime args</text>
-  <text x="765" y="418" text-anchor="middle" class="small">starts worker process</text>
-  <text x="765" y="435" text-anchor="middle" class="small">waits for /healthz</text>
-  <text x="765" y="452" text-anchor="middle" class="small">returns runtime URL</text>
-
-  <rect x="960" y="345" width="200" height="150" class="runtime"/>
-  <text x="1060" y="378" text-anchor="middle" class="label">C++ runtime</text>
-  <text x="1060" y="401" text-anchor="middle" class="small">llama.cpp adapter</text>
-  <text x="1060" y="418" text-anchor="middle" class="small">loads model path</text>
-  <text x="1060" y="435" text-anchor="middle" class="small">generates full text</text>
-  <text x="1060" y="452" text-anchor="middle" class="small">partial layers later</text>
-
-  <rect x="45" y="515" width="515" height="70" class="warn"/>
-  <text x="302" y="545" text-anchor="middle" class="label">Remote planning rule</text>
-  <text x="302" y="568" text-anchor="middle" class="small">Peers call member.APIURL + /v1/layer-split/stage, never another node's loopback RuntimeURL.</text>
-
-  <path d="M255 182 H330" class="line"/>
-  <path d="M560 182 H650" class="line"/>
-  <path d="M880 182 H960" class="line"/>
-  <path d="M445 250 V360" class="line"/>
-  <path d="M765 250 V345" class="line"/>
-  <path d="M880 420 H960" class="line"/>
-  <path d="M1060 235 V345" class="dash"/>
-  <path d="M560 550 H690" class="dash"/>
-
-  <text x="275" y="170" class="note">metadata</text>
-  <text x="585" y="170" class="note">selected model</text>
-  <text x="895" y="170" class="note">path</text>
-  <text x="890" y="408" class="note">local HTTP</text>
+  <path d="M265 175 H330" class="line"/><path d="M560 175 H625" class="dash"/><path d="M885 175 H950" class="line"/>
+  <path d="M1092 245 C1000 300,730 320,680 390" class="line"/><path d="M950 205 C780 270,400 300,310 395" class="dash"/>
+  <path d="M310 437 H380" class="line"/><path d="M680 437 H750" class="line"/><path d="M985 437 H1055" class="line"/>
+  <path d="M867 535 C850 585,720 600,660 625" class="dash"/><path d="M530 535 C540 585,610 600,660 625" class="dash"/>
+  <text x="278" y="163" class="note">discover local bytes</text><text x="900" y="163" class="note">prepare</text><text x="702" y="425" class="note">pin</text><text x="1000" y="425" class="note">execute</text>
 </svg>
