@@ -24,6 +24,9 @@ func TestExecutorPassesBinaryPayloadBetweenStages(t *testing.T) {
 		if req.StageIndex != 0 || req.StageCount != 2 || string(req.Payload) != "prompt" {
 			t.Fatalf("unexpected first request: %+v payload=%q", req.Metadata, req.Payload)
 		}
+		if req.SessionID != "session-1" || req.RequestID != "request-1-stage-0" {
+			t.Fatalf("unexpected first IDs: session=%q request=%q", req.SessionID, req.RequestID)
+		}
 		return StageResponse{Metadata: responseMetadata(req, stagewire.PayloadKindActivation), Payload: activation}
 	})
 	defer stage0.Close()
@@ -31,6 +34,9 @@ func TestExecutorPassesBinaryPayloadBetweenStages(t *testing.T) {
 	stage1 := newFrameServer(t, func(req StageRequest) StageResponse {
 		if req.StageIndex != 1 || req.PayloadKind != stagewire.PayloadKindActivation {
 			t.Fatalf("unexpected second request: %+v", req.Metadata)
+		}
+		if req.SessionID != "session-1" || req.RequestID != "request-1-stage-1" {
+			t.Fatalf("unexpected second IDs: session=%q request=%q", req.SessionID, req.RequestID)
 		}
 		if got, want := crc32.ChecksumIEEE(req.Payload), crc32.ChecksumIEEE(activation); got != want {
 			t.Fatalf("activation crc=%08x want=%08x", got, want)
@@ -42,11 +48,14 @@ func TestExecutorPassesBinaryPayloadBetweenStages(t *testing.T) {
 	defer stage1.Close()
 
 	result, err := New(Config{}).Execute(context.Background(), Request{
-		RequestID: "request-1", Model: "model", Payload: "prompt",
-		Plan: testPlan(stage0.URL, stage1.URL), StrictPayloadTransitions: true,
+		RequestID: "request-1", SessionID: "session-1", Model: "model", Payload: "prompt",
+		Plan: testPlan(stage0.URL, stage1.URL),
 	})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
+	}
+	if result.RequestID != "request-1" || result.SessionID != "session-1" {
+		t.Fatalf("unexpected result IDs: %+v", result)
 	}
 	if result.PayloadKind != stagewire.PayloadKindSampledToken || result.SampledToken == nil {
 		t.Fatalf("unexpected result: %+v", result)
@@ -62,31 +71,7 @@ func TestExecutorPassesBinaryPayloadBetweenStages(t *testing.T) {
 	}
 }
 
-func TestExecutorRetainsCompatibilityTextChainWhenStrictValidationDisabled(t *testing.T) {
-	stage0 := newFrameServer(t, func(req StageRequest) StageResponse {
-		return StageResponse{Metadata: responseMetadata(req, stagewire.PayloadKindText), Payload: []byte("handoff")}
-	})
-	defer stage0.Close()
-	stage1 := newFrameServer(t, func(req StageRequest) StageResponse {
-		if string(req.Payload) != "handoff" {
-			t.Fatalf("payload=%q", req.Payload)
-		}
-		return StageResponse{Metadata: responseMetadata(req, stagewire.PayloadKindText), Payload: []byte("final")}
-	})
-	defer stage1.Close()
-
-	result, err := New(Config{}).Execute(context.Background(), Request{
-		RequestID: "request-1", Model: "model", Payload: "prompt", Plan: testPlan(stage0.URL, stage1.URL),
-	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	if result.Payload != "final" || result.PayloadKind != stagewire.PayloadKindText {
-		t.Fatalf("unexpected result: %+v", result)
-	}
-}
-
-func TestExecutorRejectsInvalidStrictTransition(t *testing.T) {
+func TestExecutorRejectsInvalidTransition(t *testing.T) {
 	stage0 := newFrameServer(t, func(req StageRequest) StageResponse {
 		return StageResponse{Metadata: responseMetadata(req, stagewire.PayloadKindText), Payload: []byte("wrong")}
 	})
@@ -98,8 +83,8 @@ func TestExecutorRejectsInvalidStrictTransition(t *testing.T) {
 	defer stage1.Close()
 
 	_, err := New(Config{}).Execute(context.Background(), Request{
-		RequestID: "request-1", Model: "model", Payload: "prompt",
-		Plan: testPlan(stage0.URL, stage1.URL), StrictPayloadTransitions: true,
+		RequestID: "request-1", SessionID: "session-1", Model: "model", Payload: "prompt",
+		Plan: testPlan(stage0.URL, stage1.URL),
 	})
 	if err == nil {
 		t.Fatal("expected payload contract error")
@@ -118,7 +103,7 @@ func TestExecutorStopsAfterJSONFailure(t *testing.T) {
 	defer stage1.Close()
 
 	result, err := New(Config{}).Execute(context.Background(), Request{
-		RequestID: "request-1", Model: "model", Payload: "prompt", Plan: testPlan(stage0.URL, stage1.URL),
+		RequestID: "request-1", SessionID: "session-1", Model: "model", Payload: "prompt", Plan: testPlan(stage0.URL, stage1.URL),
 	})
 	if err == nil || stage1Called {
 		t.Fatalf("result=%+v err=%v called=%v", result, err, stage1Called)
