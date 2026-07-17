@@ -55,7 +55,7 @@ func buildApp(cfg Config) (*App, error) {
 
 	app := newApp(cfg, nodeID)
 	if cfg.ModelPath != "" {
-		app.modelArtifactSHA256, err = modelArtifactSHA256(cfg.ModelPath)
+		app.modelArtifactSHA256, err = computeModelArtifactSHA256(cfg.ModelPath)
 		if err != nil {
 			return nil, fmt.Errorf("compute configured model identity: %w", err)
 		}
@@ -212,19 +212,6 @@ func (a *App) startMDNS(ctx context.Context) {
 		return
 	}
 	log.Printf("JetsonFabric node advertising with mDNS service=%s domain=%s", a.cfg.MDNSService, a.cfg.MDNSDomain)
-}
-
-func (a *App) listen(errCh chan<- error) {
-	log.Printf(
-		"JetsonFabric node listening on http://%s advertised=%s cluster=%s node_id=%s role=%s discovery=%v",
-		a.cfg.Listen,
-		a.cfg.APIURL,
-		a.cfg.ClusterID,
-		a.nodeID,
-		a.cfg.Role,
-		a.cfg.DiscoveryModes,
-	)
-	errCh <- a.server.ListenAndServe()
 }
 
 func (a *App) shutdown(errCh <-chan error) error {
