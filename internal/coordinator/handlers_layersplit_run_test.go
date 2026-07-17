@@ -83,21 +83,41 @@ func TestLayerSplitRunRejectsColocatedPlanByDefault(t *testing.T) {
 }
 
 func TestLayerSplitRunReturnsStageFailure(t *testing.T) {
-	stage0 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "runtime_down", "message": "unavailable"})
+	stage0 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req, err := stagewire.Decode(r.Body)
+		if err != nil {
+			t.Fatalf("decode frame: %v", err)
+		}
+		if req.Operation != stagewire.OperationCloseSession {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "runtime_down", "message": "unavailable"})
+			return
+		}
+		encoded, err := stagewire.Marshal(stagewire.StageResponse{
+			Metadata: responseMetadataForCoordinator(req, stagewire.PayloadKindText),
+		})
+		if err != nil {
+			t.Fatalf("encode close response: %v", err)
+		}
+		w.Header().Set("Content-Type", stagewire.ContentType)
+		_, _ = w.Write(encoded)
 	}))
 	defer stage0.Close()
-	stage1Called := false
-	stage1 := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { stage1Called = true }))
+
+	stage1Executed := false
+	stage1 := newCoordinatorFrameServer(t, func(req stagewire.StageRequest) stagewire.StageResponse {
+		stage1Executed = true
+		return stagewire.StageResponse{Metadata: responseMetadataForCoordinator(req, stagewire.PayloadKindSampledToken)}
+	})
 	defer stage1.Close()
+
 	server := newLayerSplitTestServer(stage0.URL, stage1.URL)
 	request := httptest.NewRequest(http.MethodPost, api.PathLayerSplitRun, strings.NewReader(`{
 		"model":"qwen2.5-coder-1.5b-q4","payload":"prompt","allow_colocated_stages":true
 	}`))
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
-	if response.Code != http.StatusBadGateway || stage1Called {
-		t.Fatalf("status=%d called=%v body=%s", response.Code, stage1Called, response.Body.String())
+	if response.Code != http.StatusBadGateway || stage1Executed {
+		t.Fatalf("status=%d stage1_executed=%v body=%s", response.Code, stage1Executed, response.Body.String())
 	}
 }
 
@@ -132,7 +152,7 @@ func newCoordinatorFrameServer(t *testing.T, run func(stagewire.StageRequest) st
 		}
 		encoded, err := stagewire.Marshal(response)
 		if err != nil {
-			t.Fatalf("encode frame: %v", err)
+			t.Fatalf("encode response: %v", err)
 		}
 		w.Header().Set("Content-Type", stagewire.ContentType)
 		_, _ = w.Write(encoded)
