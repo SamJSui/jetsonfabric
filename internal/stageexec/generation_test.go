@@ -3,6 +3,7 @@ package stageexec
 import (
 	"context"
 	"encoding/binary"
+	"strings"
 	"sync"
 	"testing"
 
@@ -17,8 +18,22 @@ func TestGenerateDrivesDecodeLoopAndClosesSessions(t *testing.T) {
 	}
 	var mutex sync.Mutex
 	closed := map[int]bool{}
+	sessionID := ""
+
+	checkSession := func(req StageRequest) {
+		t.Helper()
+		mutex.Lock()
+		defer mutex.Unlock()
+		if sessionID == "" {
+			sessionID = req.SessionID
+		}
+		if req.SessionID == "" || req.SessionID != sessionID {
+			t.Fatalf("session changed: got=%q want=%q", req.SessionID, sessionID)
+		}
+	}
 
 	stage0 := newFrameServer(t, func(req StageRequest) StageResponse {
+		checkSession(req)
 		if req.Operation == stagewire.OperationCloseSession {
 			mutex.Lock()
 			closed[0] = true
@@ -29,10 +44,10 @@ func TestGenerateDrivesDecodeLoopAndClosesSessions(t *testing.T) {
 			t.Fatalf("unexpected operation: %q", req.Operation)
 		}
 		if req.Phase == inference.PhasePrefill {
-			if req.DecodeStep != 0 || req.PayloadKind != stagewire.PayloadKindText {
+			if req.RequestID != "chatcmpl-1-prefill-0-stage-0" || req.DecodeStep != 0 || req.PayloadKind != stagewire.PayloadKindText {
 				t.Fatalf("unexpected prefill request: %+v", req.Metadata)
 			}
-		} else if req.DecodeStep != 1 || req.PayloadKind != stagewire.PayloadKindSampledToken || binary.LittleEndian.Uint32(req.Payload) != 101 {
+		} else if req.RequestID != "chatcmpl-1-decode-1-stage-0" || req.DecodeStep != 1 || req.PayloadKind != stagewire.PayloadKindSampledToken || binary.LittleEndian.Uint32(req.Payload) != 101 {
 			t.Fatalf("unexpected decode request: %+v payload=%v", req.Metadata, req.Payload)
 		}
 		return StageResponse{Metadata: responseMetadata(req, stagewire.PayloadKindActivation), Payload: activation}
@@ -40,11 +55,15 @@ func TestGenerateDrivesDecodeLoopAndClosesSessions(t *testing.T) {
 	defer stage0.Close()
 
 	stage1 := newFrameServer(t, func(req StageRequest) StageResponse {
+		checkSession(req)
 		if req.Operation == stagewire.OperationCloseSession {
 			mutex.Lock()
 			closed[1] = true
 			mutex.Unlock()
 			return closeSessionResponse(req)
+		}
+		if !strings.HasSuffix(req.RequestID, "-stage-1") {
+			t.Fatalf("stage 1 request ID=%q", req.RequestID)
 		}
 		payload := make([]byte, 4)
 		metadata := responseMetadata(req, stagewire.PayloadKindSampledToken)
@@ -65,7 +84,7 @@ func TestGenerateDrivesDecodeLoopAndClosesSessions(t *testing.T) {
 	defer stage1.Close()
 
 	result, err := New(Config{}).Generate(context.Background(), Request{
-		RequestID: "generation-1",
+		RequestID: "chatcmpl-1",
 		Model:     "model",
 		Payload:   "prompt",
 		MaxTokens: 4,
@@ -73,6 +92,9 @@ func TestGenerateDrivesDecodeLoopAndClosesSessions(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("generate: %v", err)
+	}
+	if result.RequestID != "chatcmpl-1" || result.SessionID == "" || result.SessionID != sessionID {
+		t.Fatalf("unexpected result IDs: %+v", result)
 	}
 	if result.GeneratedText != "AB" || result.FinishReason != "stop" || !result.EndOfGeneration {
 		t.Fatalf("unexpected generation result: %+v", result)
