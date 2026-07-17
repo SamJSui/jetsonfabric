@@ -17,7 +17,7 @@
 
   <rect x="195" y="485" width="180" height="72" class="pkg"/><text x="285" y="513" text-anchor="middle" class="label">modelregistry</text><text x="285" y="533" text-anchor="middle" class="small">model metadata</text>
   <rect x="420" y="475" width="180" height="92" class="policy"/><text x="510" y="503" text-anchor="middle" class="label">clusterplan</text><text x="510" y="523" text-anchor="middle" class="small">ordered stages</text><text x="510" y="540" text-anchor="middle" class="small">ranges + topology</text>
-  <rect x="645" y="465" width="190" height="112" class="policy"/><text x="740" y="493" text-anchor="middle" class="label">stageexec</text><text x="740" y="513" text-anchor="middle" class="small">Generate completion</text><text x="740" y="530" text-anchor="middle" class="small">Execute one pass</text><text x="740" y="547" text-anchor="middle" class="small">callStage transport</text>
+  <rect x="645" y="465" width="190" height="112" class="policy"/><text x="740" y="493" text-anchor="middle" class="label">stageexec</text><text x="740" y="513" text-anchor="middle" class="small">Generate completion</text><text x="740" y="530" text-anchor="middle" class="small">RunPipelinePass</text><text x="740" y="547" text-anchor="middle" class="small">callStage transport</text>
   <rect x="880" y="485" width="165" height="72" class="mechanism"/><text x="962" y="513" text-anchor="middle" class="label">stagewire</text><text x="962" y="533" text-anchor="middle" class="small">binary frames</text>
   <rect x="1090" y="485" width="165" height="72" class="mechanism"/><text x="1172" y="513" text-anchor="middle" class="label">inference</text><text x="1172" y="533" text-anchor="middle" class="small">phase/payload contracts</text>
 
