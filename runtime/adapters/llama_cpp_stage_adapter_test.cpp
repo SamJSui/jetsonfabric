@@ -76,6 +76,17 @@ void require_success(const ExecutionResult& result, const char* step) {
     }
 }
 
+void print_token_ids(const std::vector<std::int32_t>& token_ids) {
+    std::cout << '[';
+    for (std::size_t index = 0; index < token_ids.size(); ++index) {
+        if (index != 0U) {
+            std::cout << ',';
+        }
+        std::cout << token_ids[index];
+    }
+    std::cout << "]\n";
+}
+
 int run_test(const std::shared_ptr<LlamaCppModel>& model) {
     if (model->n_layer() < 2) {
         throw std::runtime_error("partial-layer test requires at least two transformer layers");
@@ -85,8 +96,8 @@ int run_test(const std::shared_ptr<LlamaCppModel>& model) {
 
     LlamaCppAdapter baseline(model, 256, 2);
     const auto baseline_response = baseline.generate({.prompt = prompt, .max_tokens = 2});
-    if (baseline_response.token_ids.empty()) {
-        throw std::runtime_error("baseline did not generate a token");
+    if (baseline_response.token_ids.size() < 2U) {
+        throw std::runtime_error("baseline must generate two tokens to validate persistent decode");
     }
 
     LlamaCppStageAdapter stage0(LlamaCppStageConfig{
@@ -127,22 +138,20 @@ int run_test(const std::shared_ptr<LlamaCppModel>& model) {
         throw std::runtime_error("split prefill token does not match full-model greedy baseline");
     }
 
-    if (baseline_response.token_ids.size() >= 2U) {
-        ExecutionResult decode_activation = stage0.execute(input_for(
-            session, "decode-0", Phase::Decode, 1,
-            {.index = 0, .count = 2}, {.start = 0, .end = split}, first_token.output.payload
-        ));
-        require_success(decode_activation, "stage 0 decode");
+    ExecutionResult decode_activation = stage0.execute(input_for(
+        session, "decode-0", Phase::Decode, 1,
+        {.index = 0, .count = 2}, {.start = 0, .end = split}, first_token.output.payload
+    ));
+    require_success(decode_activation, "stage 0 decode");
 
-        ExecutionResult second_token = stage1.execute(input_for(
-            session, "decode-1", Phase::Decode, 1,
-            {.index = 1, .count = 2}, {.start = split, .end = model->n_layer()},
-            decode_activation.output.payload
-        ));
-        require_success(second_token, "stage 1 decode");
-        if (sampled_token(second_token.output.payload) != baseline_response.token_ids[1]) {
-            throw std::runtime_error("split decode token does not match full-model greedy baseline");
-        }
+    ExecutionResult second_token = stage1.execute(input_for(
+        session, "decode-1", Phase::Decode, 1,
+        {.index = 1, .count = 2}, {.start = split, .end = model->n_layer()},
+        decode_activation.output.payload
+    ));
+    require_success(second_token, "stage 1 decode");
+    if (sampled_token(second_token.output.payload) != baseline_response.token_ids[1]) {
+        throw std::runtime_error("split decode token does not match full-model greedy baseline");
     }
 
     if (stage0.session_count() != 1U || stage1.session_count() != 1U) {
@@ -156,7 +165,7 @@ int run_test(const std::shared_ptr<LlamaCppModel>& model) {
 
     std::cout << "llama.cpp split-stage equivalence passed: architecture=" << model->architecture()
               << " layers=" << model->n_layer() << " split=" << split
-              << " first_token=" << baseline_response.token_ids[0] << '\n';
+              << " tokens=" << baseline_response.token_ids[0] << ',' << baseline_response.token_ids[1] << '\n';
     return 0;
 }
 
@@ -180,6 +189,15 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("baseline did not generate a token");
             }
             std::cout << response.token_ids[0] << '\n';
+            return 0;
+        }
+        if (argc == 2 && std::string(argv[1]) == "--baseline-tokens") {
+            LlamaCppAdapter baseline(model, 256, 2);
+            const auto response = baseline.generate({.prompt = "Once upon a time", .max_tokens = 2});
+            if (response.token_ids.size() < 2U) {
+                throw std::runtime_error("baseline did not generate two tokens");
+            }
+            print_token_ids(response.token_ids);
             return 0;
         }
         return run_test(model);
