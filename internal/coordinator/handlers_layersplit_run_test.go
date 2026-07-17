@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/api"
+	"github.com/SamJSui/jetsonfabric/internal/cluster"
 	"github.com/SamJSui/jetsonfabric/internal/membership"
 	"github.com/SamJSui/jetsonfabric/internal/stagewire"
 )
@@ -57,6 +58,9 @@ func TestLayerSplitRunReportsActivationHandoff(t *testing.T) {
 	}
 	if decoded.InterStagePayloadKind != stagewire.PayloadKindActivation || decoded.Result.PayloadKind != stagewire.PayloadKindSampledToken || decoded.Result.SampledToken == nil {
 		t.Fatalf("unexpected response: %+v", decoded)
+	}
+	if decoded.RuntimeIdentity.ModelSHA256 != coordinatorTestModelSHA256 {
+		t.Fatalf("runtime identity was not returned: %+v", decoded.RuntimeIdentity)
 	}
 	if decoded.Result.RequestID != "run-1" || decoded.Result.SessionID == "" {
 		t.Fatalf("unexpected result IDs: %+v", decoded.Result)
@@ -118,6 +122,30 @@ func TestLayerSplitRunReturnsStageFailure(t *testing.T) {
 	server.Router().ServeHTTP(response, request)
 	if response.Code != http.StatusBadGateway || stage1Executed {
 		t.Fatalf("status=%d stage1_executed=%v body=%s", response.Code, stage1Executed, response.Body.String())
+	}
+}
+
+func TestLayerSplitRunRejectsMismatchedArtifacts(t *testing.T) {
+	stage0 := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("unexpected stage call") }))
+	defer stage0.Close()
+	stage1 := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("unexpected stage call") }))
+	defer stage1.Close()
+	members := membershipMembersForRun{
+		{nodeID: "node-a", apiURL: stage0.URL, modelSHA256: strings.Repeat("a", 64)},
+		{nodeID: "node-b", apiURL: stage1.URL, modelSHA256: strings.Repeat("b", 64)},
+	}.members()
+	server := NewServer(
+		coordinatorTestRegistry(),
+		WithMembershipSource(staticMemberSource{members: members}, time.Minute),
+		WithClock(func() time.Time { return coordinatorTestNow() }),
+	)
+	request := httptest.NewRequest(http.MethodPost, api.PathLayerSplitRun, strings.NewReader(`{
+		"model":"qwen2.5-coder-1.5b-q4","payload":"prompt","stage_count":2,"allow_colocated_stages":true
+	}`))
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "matching engine, model artifact") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 
@@ -196,9 +224,12 @@ func newLayerSplitTestServer(stage0URL, stage1URL string) *Server {
 	)
 }
 
+const coordinatorTestModelSHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 type membershipMemberForRun struct {
-	nodeID string
-	apiURL string
+	nodeID      string
+	apiURL      string
+	modelSHA256 string
 }
 
 type membershipMembersForRun []membershipMemberForRun
@@ -206,7 +237,17 @@ type membershipMembersForRun []membershipMemberForRun
 func (items membershipMembersForRun) members() []membership.Member {
 	members := make([]membership.Member, 0, len(items))
 	for _, item := range items {
-		members = append(members, coordinatorTestMember(item.nodeID, "dopey", item.apiURL, "http://127.0.0.1:9090"))
+		member := coordinatorTestMember(item.nodeID, "dopey", item.apiURL, "http://127.0.0.1:9090")
+		modelSHA256 := item.modelSHA256
+		if modelSHA256 == "" {
+			modelSHA256 = coordinatorTestModelSHA256
+		}
+		member.Capabilities[cluster.CapabilityRuntimeEngine] = string(cluster.EngineLlamaCPP)
+		member.Capabilities[cluster.CapabilityRuntimeModelID] = "qwen2.5-coder-1.5b-q4"
+		member.Capabilities[cluster.CapabilityRuntimeModelSHA256] = modelSHA256
+		member.Capabilities[cluster.CapabilityRuntimeComputeBackend] = string(cluster.ComputeBackendCPU)
+		member.Capabilities[cluster.CapabilityRuntimeExecutionMode] = string(cluster.ExecutionModePipelineParallel)
+		members = append(members, member)
 	}
 	return members
 }
