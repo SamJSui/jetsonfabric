@@ -114,9 +114,13 @@ if ! CI_MODEL_PATH="$MODEL_PATH" "$STAGE_TEST_BIN" >"$LOG_DIR/llama-stage-equiva
   exit 1
 fi
 LAYER_COUNT="$(CI_MODEL_PATH="$MODEL_PATH" "$STAGE_TEST_BIN" --print-layer-count)"
-BASELINE_TOKEN="$(CI_MODEL_PATH="$MODEL_PATH" "$STAGE_TEST_BIN" --baseline-token)"
+BASELINE_TOKENS="$(CI_MODEL_PATH="$MODEL_PATH" "$STAGE_TEST_BIN" --baseline-tokens)"
 if [[ ! "$LAYER_COUNT" =~ ^[0-9]+$ || "$LAYER_COUNT" -lt 2 ]]; then
   echo "Invalid model layer count: $LAYER_COUNT" >&2
+  exit 1
+fi
+if ! jq -e 'type == "array" and length == 2 and all(.[]; type == "number")' <<<"$BASELINE_TOKENS" >/dev/null; then
+  echo "Invalid two-token baseline: $BASELINE_TOKENS" >&2
   exit 1
 fi
 SPLIT_LAYER=$((LAYER_COUNT / 2))
@@ -228,7 +232,7 @@ http_code="$(curl -sS -o "$response_file" -w '%{http_code}' \
     \"request_id\": \"ci-real-runtime-e2e\",
     \"model\": \"$MODEL_ID\",
     \"payload\": \"Once upon a time\",
-    \"max_tokens\": 1,
+    \"max_tokens\": 2,
     \"stage_count\": 2,
     \"allow_colocated_stages\": true,
     \"strict_payload_transitions\": true
@@ -240,22 +244,39 @@ if [[ "$http_code" != "200" ]]; then
   exit 1
 fi
 
-jq -e --argjson baseline "$BASELINE_TOKEN" '
+jq -e --argjson baseline "$BASELINE_TOKENS" '
   .inter_stage_payload_kind == "activation" and
   .plan.mode == "pipeline_parallel" and
   .plan.stage_count == 2 and
   .result.payload_kind == "sampled_token" and
-  .result.sampled_token == $baseline and
-  (.result.stages | length) == 2 and
+  .result.sampled_tokens == $baseline and
+  .result.sampled_token == $baseline[1] and
+  (.result.stages | length) == 4 and
   .result.stages[0].status_code == 200 and
   .result.stages[1].status_code == 200 and
+  .result.stages[2].status_code == 200 and
+  .result.stages[3].status_code == 200 and
+  .result.stages[0].phase == "prefill" and
+  .result.stages[0].decode_step == 0 and
   .result.stages[0].payload_kind_in == "text" and
   .result.stages[0].payload_kind_out == "activation" and
+  .result.stages[1].phase == "prefill" and
+  .result.stages[1].decode_step == 0 and
   .result.stages[1].payload_kind_in == "activation" and
   .result.stages[1].payload_kind_out == "sampled_token" and
+  .result.stages[2].phase == "decode" and
+  .result.stages[2].decode_step == 1 and
+  .result.stages[2].payload_kind_in == "sampled_token" and
+  .result.stages[2].payload_kind_out == "activation" and
+  .result.stages[3].phase == "decode" and
+  .result.stages[3].decode_step == 1 and
+  .result.stages[3].payload_kind_in == "activation" and
+  .result.stages[3].payload_kind_out == "sampled_token" and
   .result.stages[0].payload_out == .result.stages[1].payload_in and
-  .result.stages[0].payload_crc32_out == .result.stages[1].payload_crc32_in
+  .result.stages[0].payload_crc32_out == .result.stages[1].payload_crc32_in and
+  .result.stages[2].payload_out == .result.stages[3].payload_in and
+  .result.stages[2].payload_crc32_out == .result.stages[3].payload_crc32_in
 ' "$response_file" >/dev/null
 
-echo "Two-node real partial-layer CPU E2E passed"
+echo "Two-node real partial-layer prefill/decode CPU E2E passed"
 jq '{inter_stage_payload_kind, plan, result}' "$response_file"
