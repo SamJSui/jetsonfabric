@@ -4,12 +4,14 @@
 #include "llama.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -22,6 +24,7 @@ void free_context(llama_context* context) {
 }
 
 using ContextPtr = std::unique_ptr<llama_context, decltype(&free_context)>;
+using SessionClock = std::chrono::steady_clock;
 
 struct BatchOwner {
     llama_batch batch{};
@@ -128,6 +131,7 @@ struct LlamaCppStageAdapter::Impl {
         ContextPtr context{nullptr, free_context};
         int next_position = 0;
         int expected_decode_step = 1;
+        SessionClock::time_point last_used = SessionClock::now();
     };
 
     explicit Impl(LlamaCppStageConfig config_in)
@@ -155,6 +159,15 @@ struct LlamaCppStageAdapter::Impl {
                 config.model->architecture()
             );
         }
+        if (config.session_idle_ttl <= std::chrono::milliseconds::zero()) {
+            throw std::invalid_argument("session idle TTL must be greater than zero");
+        }
+        if (config.session_reap_interval <= std::chrono::milliseconds::zero()) {
+            throw std::invalid_argument("session reap interval must be greater than zero");
+        }
+        reaper = std::jthread([this](std::stop_token stop_token) {
+            reap_sessions(stop_token);
+        });
     }
 
     ContextPtr create_context() const {
@@ -283,9 +296,31 @@ struct LlamaCppStageAdapter::Impl {
         return inference::ExecutionResult::success(std::move(output));
     }
 
+    void prune_expired_sessions_locked(SessionClock::time_point now) {
+        for (auto found = sessions.begin(); found != sessions.end();) {
+            if (now - found->second.last_used >= config.session_idle_ttl) {
+                found = sessions.erase(found);
+            } else {
+                ++found;
+            }
+        }
+    }
+
+    void reap_sessions(std::stop_token stop_token) {
+        while (!stop_token.stop_requested()) {
+            std::this_thread::sleep_for(config.session_reap_interval);
+            if (stop_token.stop_requested()) {
+                return;
+            }
+            std::lock_guard<std::mutex> lock(mutex);
+            prune_expired_sessions_locked(SessionClock::now());
+        }
+    }
+
     inference::ExecutionResult execute(const inference::StageInput& input) {
         std::lock_guard<std::mutex> lock(mutex);
         try {
+            prune_expired_sessions_locked(SessionClock::now());
             if (input.position.index != config.position.index || input.position.count != config.position.count ||
                 input.layers.start != config.layers.start || input.layers.end != config.layers.end) {
                 return inference::ExecutionResult::invalid_input(
@@ -305,6 +340,7 @@ struct LlamaCppStageAdapter::Impl {
                 session.context = create_context();
                 inference::ExecutionResult result = run(session, input, true);
                 if (result.ok) {
+                    session.last_used = SessionClock::now();
                     sessions.emplace(input.session_id, std::move(session));
                 }
                 return result;
@@ -314,7 +350,7 @@ struct LlamaCppStageAdapter::Impl {
             if (found == sessions.end()) {
                 return inference::ExecutionResult::invalid_input(
                     "stage_session_not_found",
-                    "decode requires an existing prefill session"
+                    "decode requires an existing non-expired prefill session"
                 );
             }
             Session& session = found->second;
@@ -327,6 +363,7 @@ struct LlamaCppStageAdapter::Impl {
             inference::ExecutionResult result = run(session, input, false);
             if (result.ok) {
                 session.expected_decode_step += 1;
+                session.last_used = SessionClock::now();
             }
             return result;
         } catch (const std::invalid_argument& error) {
@@ -339,6 +376,7 @@ struct LlamaCppStageAdapter::Impl {
     LlamaCppStageConfig config;
     std::mutex mutex;
     std::unordered_map<std::string, Session> sessions;
+    std::jthread reaper;
 };
 
 LlamaCppStageAdapter::LlamaCppStageAdapter(LlamaCppStageConfig config)
@@ -357,6 +395,7 @@ void LlamaCppStageAdapter::close_session(const std::string& session_id) const {
 
 std::size_t LlamaCppStageAdapter::session_count() const {
     std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->prune_expired_sessions_locked(SessionClock::now());
     return impl_->sessions.size();
 }
 
