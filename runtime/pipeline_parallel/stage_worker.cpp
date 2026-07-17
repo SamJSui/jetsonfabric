@@ -116,10 +116,12 @@ protocol::StageResponse close_response(const protocol::StageRequest& request, in
 
 StageWorker::StageWorker(
     std::string node_name,
+    std::string model_id,
     StageAssignment assignment,
     const LayerExecutor& layer_executor
 )
     : node_name_(std::move(node_name)),
+      model_id_(std::move(model_id)),
       assignment_(assignment),
       layer_executor_(layer_executor) {}
 
@@ -201,6 +203,9 @@ std::string StageWorker::validate_request(const protocol::StageRequest& request)
     }
     if (request.model_id.empty()) {
         return "model_id is required";
+    }
+    if (request.model_id != model_id_) {
+        return "request model_id " + request.model_id + " does not match runtime model_id " + model_id_;
     }
     if (request.stage_index != assignment_.stage_index) {
         std::ostringstream message;
