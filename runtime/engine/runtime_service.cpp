@@ -52,7 +52,7 @@ protocol::StageResponse stage_error_response(
 RuntimeService::RuntimeService(Config config)
     : config_(std::move(config)),
       engine_parts_(build_inference_engine_parts(config_)),
-      stage_worker_(config_.node_name, config_.stage_assignment, *engine_parts_.layer_executor) {}
+      stage_worker_(config_.node_name, config_.model, config_.stage_assignment, *engine_parts_.layer_executor) {}
 
 std::string RuntimeService::runtime_name() const {
     return "jetsonfabric-runtime-worker";
