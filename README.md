@@ -2,83 +2,78 @@
 
 Distributed LLM inference at the edge for Jetson-class devices.
 
-JetsonFabric is a peer-discovered node fabric. Every machine runs the same Go
-process, `jetsonfabric-node`. A node owns identity, membership, discovery,
-election, planning, API routing, and supervision of a node-local C++ runtime
-worker.
+JetsonFabric is a peer-discovered fabric. Every machine runs the same Go process,
+`jetsonfabric-node`. A node owns identity, discovery, membership, coordinator
+election, placement planning, public API routing, and supervision of a node-local
+C++ runtime worker.
 
-The runtime worker is a JetsonFabric-owned host process. It loads an inference
-engine adapter such as `llama.cpp`; future adapters may target TensorRT-LLM or
-other engines. The runtime itself is not an inference engine.
+The runtime worker hosts an inference-engine adapter such as `llama.cpp`. The
+runtime is JetsonFabric infrastructure; llama.cpp is the initial engine.
 
-## Architecture
+## Current architecture
 
 ```text
-client
+OpenAI-compatible client
   -> any jetsonfabric-node
-  -> elected coordinator plans ordered stages
-  -> each target node forwards work to its local runtime worker
-  -> runtime worker invokes its configured inference engine
+  -> elected coordinator
+  -> ordered stage plan
+  -> target node facade
+  -> node-local jetsonfabric-runtime-worker
+  -> assigned llama.cpp layer range
+  -> activation sent to the next stage
+  -> final sampled token
 ```
 
-Main packages:
+The main packages are:
 
-- `cmd/jetsonfabric-node`: the product process run on every machine.
 - `internal/discovery`: static and mDNS peer discovery.
-- `internal/membership`: local fresh-member cache.
+- `internal/membership`: fresh local member views.
 - `internal/election`: deterministic coordinator election.
-- `internal/facade`: any-node API and follower proxying.
-- `internal/coordinator`: model registry and route/run handlers.
-- `internal/clusterplan`: count-agnostic stage planning and layer arithmetic.
-- `internal/stagewire`: shared stage request/response wire contract.
-- `internal/stageexec`: ordered inter-stage execution.
-- `internal/runtimebridge`: node-to-runtime adaptation and proxying.
+- `internal/facade`: any-node API and follower forwarding.
+- `internal/coordinator`: OpenAI API, model registry, and planning handlers.
+- `internal/clusterplan`: topology selection and layer-range arithmetic.
+- `internal/stageexec`: prefill, decode, cleanup, and stage traces.
+- `internal/stagewire`: binary inter-stage framing.
+- `internal/runtimebridge`: Go node to local C++ runtime proxying.
 - `runtime/`: C++ runtime worker and engine adapters.
 
-## Terminology
+## What works now
 
-### Runtime and engine
-
-```text
-runtime process: jetsonfabric-runtime-worker
-engine:          llama.cpp
-compute backend: cpu or cuda
-```
-
-The runtime worker hosts the engine. Model profiles therefore list actual
-inference engines only.
-
-### Execution mode
-
-Execution mode describes how inference work is distributed:
-
-- `data_parallel`: each replica owns a complete model.
-- `pipeline_parallel`: ordered transformer layer ranges are assigned to stages.
-- `tensor_parallel`: tensor operations are partitioned across devices or nodes.
-
-### Stage arithmetic
-
-Stage position is represented only by `stage_index` and `stage_count`.
+The branch implements real sequential pipeline-parallel inference:
 
 ```text
-is_first = stage_index == 0
-is_last  = stage_index == stage_count - 1
+prefill
+  prompt
+    -> stage 0 assigned layers
+    -> F32 activation
+    -> stage 1 assigned layers
+    -> sampled token 1
+
+decode
+  token 1
+    -> stage 0 using its persistent context
+    -> F32 activation
+    -> stage 1 using its persistent context
+    -> sampled token 2
 ```
 
-For `stage_count=1`, stage index `0` is both first and last. There is no special
-stage-role string.
+CI uses two real node processes, two supervised C++ runtime workers, two real
+llama.cpp engine instances, and a tiny GGUF model. It requires two split-stage
+greedy tokens to match a one-runtime baseline.
 
-Layer ranges are assigned for any positive stage count. For 28 layers:
+The llama.cpp integration is pinned to commit
+`bf2c86ddc0685f580595954056c2e77ebabfab4f` and carries a narrow patch that:
 
-```text
-stage_count=2: [0:14] [14:28]
-stage_count=3: [0:10] [10:19] [19:28]
-stage_count=4: [0:7]  [7:14] [14:21] [21:28]
-```
+- executes only `[layer_start, layer_end)`;
+- exports hidden activations from non-final ranges;
+- imports activations on downstream ranges;
+- keeps final normalization, logits, and sampling on the last stage.
 
-### Topology
+Initially supported graph architectures are `llama` and `qwen2`.
 
-Route previews report objective topology and counts:
+## Topology
+
+A route reports objective topology:
 
 ```json
 {
@@ -89,112 +84,79 @@ Route previews report objective topology and counts:
 }
 ```
 
-`topology` is either `colocated` or `distributed`. Counts carry the precise
-information; there is no special one-node placement category.
+`colocated` means multiple logical nodes share a physical host. `distributed`
+means the selected stages occupy distinct physical hosts.
 
-### Payload kinds
-
-The shared stage wire contract defines semantic payload kinds:
-
-- `text`: UTF-8 user-facing or compatibility text.
-- `tokens`: tokenizer token IDs.
-- `activation`: hidden-state tensors between transformer partitions.
-- `sampled_token`: the selected next token.
-
-Logits and KV cache remain internal to the inference engine. They are not
-inter-stage wire payload kinds. Tensor metadata uses `dtype` and `shape`; text
-uses `encoding=utf-8` and is not a tensor dtype.
-
-## Current execution milestone
-
-The coordinator and runtime path is fully exercised with two real nodes, two
-real C++ runtime workers, two real `llama.cpp` CPU engine instances, and a real
-GGUF model in CI.
-
-The current inter-stage payload is still `text`:
+For 28 layers:
 
 ```text
-input text
-  -> stage 0 full-model generation
-  -> text handoff
-  -> stage 1 full-model generation
-  -> final text
+stage_count=2: [0:14) [14:28)
+stage_count=3: [0:10) [10:19) [19:28)
+stage_count=4: [0:7)  [7:14) [14:21) [21:28)
 ```
 
-The API reports this directly:
+## Request and session identity
+
+One public completion has:
+
+```text
+chat/request ID
+  -> one user-facing API operation
+
+session ID
+  -> persistent generation state shared by every stage
+
+stage request ID
+  -> one prefill/decode operation on one stage
+```
+
+JetsonFabric generates the session ID. All stages retain it across prefill and
+decode, while every operation gets a distinct request ID for tracing.
+
+The coordinator explicitly closes every stage session when generation ends.
+Each runtime also reaps a session after five idle minutes, protecting memory when
+the coordinator or network disappears before cleanup completes.
+
+## OpenAI-compatible API
+
+Send a non-streaming chat completion to any node:
+
+```sh
+curl http://dopey.local:<port>/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "qwen2.5-coder-1.5b-q4",
+    "messages": [
+      {"role": "user", "content": "Explain CUDA kernels."}
+    ],
+    "max_tokens": 64
+  }' | jq
+```
+
+The follower forwards the request to the elected coordinator. The coordinator
+plans the stages, drives generation, and returns an OpenAI-style
+`chat.completion` response.
+
+For two logical stages on one development host, use the optional JetsonFabric
+extension:
 
 ```json
 {
-  "inter_stage_payload_kind": "text",
-  "plan": {
-    "mode": "pipeline_parallel",
-    "topology": "colocated",
-    "stage_count": 2
-  },
-  "result": {
-    "payload_kind": "text"
+  "model": "qwen2.5-coder-1.5b-q4",
+  "messages": [{"role": "user", "content": "Hello"}],
+  "max_tokens": 16,
+  "jetsonfabric": {
+    "stage_count": 2,
+    "allow_colocated_stages": true
   }
 }
 ```
 
-This validates membership, planning, runtime supervision, node routing, and
-handoff. It is not yet partial transformer execution.
+The extension is unnecessary for a correctly advertised two-Jetson distributed
+route. Streaming, tools, multimodal message parts, and non-greedy sampling are
+not implemented yet.
 
-The next runtime milestone is to change the inter-stage payload to
-`activation` and execute only each stage's assigned layer range:
-
-```text
-text
-  -> tokenizer
-  -> tokens
-  -> stage 0 assigned layers
-  -> activation
-  -> stage 1 assigned layers
-  -> logits (engine-internal)
-  -> sampler
-  -> sampled token / decoded text
-```
-
-Each runtime keeps the KV cache for its assigned layer range local across decode
-steps.
-
-## Build and test
-
-```sh
-make test
-make setup
-make runtime
-make node
-```
-
-CUDA runtime build on Jetson:
-
-```sh
-make runtime-cuda RUNTIME_CUDA_ARCH=87
-```
-
-## Run nodes
-
-Example two-stage configuration:
-
-```sh
-make run-node \
-  NODE_NAME=dopey-stage0 \
-  STAGE_INDEX=0 \
-  STAGE_COUNT=2 \
-  LAYER_START=0 \
-  LAYER_END=14
-
-make run-node \
-  NODE_NAME=beehive-stage1 \
-  STAGE_INDEX=1 \
-  STAGE_COUNT=2 \
-  LAYER_START=14 \
-  LAYER_END=28
-```
-
-Use command-line Make variables after the target so they override values in
-`.env.local`.
+## Diagnostic APIs
 
 Inspect membership:
 
@@ -202,22 +164,16 @@ Inspect membership:
 curl http://dopey.local:<port>/v1/cluster/members | jq
 ```
 
-Preview two stages:
+Preview a route:
 
 ```sh
 curl "http://dopey.local:<port>/v1/routes/preview?model=qwen2.5-coder-1.5b-q4&stage_count=2" | jq
 ```
 
-For colocated local development:
+Run the lower-level diagnostic generation endpoint:
 
 ```sh
-curl "http://127.0.0.1:<port>/v1/routes/preview?model=qwen2.5-coder-1.5b-q4&stage_count=2&allow_colocated_stages=true" | jq
-```
-
-Run the current end-to-end stage path:
-
-```sh
-curl -X POST http://127.0.0.1:<port>/v1/layer-split/run \
+curl http://127.0.0.1:<port>/v1/layer-split/run \
   -H 'Content-Type: application/json' \
   -d '{
     "request_id": "local-run",
@@ -229,45 +185,80 @@ curl -X POST http://127.0.0.1:<port>/v1/layer-split/run \
   }' | jq
 ```
 
-A direct stage request uses count arithmetic and explicit payload semantics:
+Typed payload transitions are mandatory. There is no public flag that disables
+the activation contract.
 
-```json
-{
-  "session_id": "session-1",
-  "request_id": "request-1",
-  "model_id": "qwen2.5-coder-1.5b-q4",
-  "stage_index": 0,
-  "stage_count": 1,
-  "node_name": "dopey",
-  "layer_start": 0,
-  "layer_end": 28,
-  "decode_step": 0,
-  "payload_kind": "text",
-  "encoding": "utf-8",
-  "payload": "hello",
-  "bytes_in": 5,
-  "transport": "http_json",
-  "max_tokens": 8
-}
+## Build and test
+
+```sh
+make test
+make setup
+make runtime
+make node
 ```
 
-## CI
+CUDA runtime build on Jetson Orin:
 
-GitHub Actions runs:
+```sh
+make runtime-cuda RUNTIME_CUDA_ARCH=87
+```
 
-1. `go test ./...`
-2. A two-node real CPU E2E test using a cached tiny GGUF model.
+Example stage configuration:
 
-The E2E validates:
+```sh
+make run-node \
+  NODE_NAME=dopey-stage0 \
+  MODEL_PATH=/models/qwen.gguf \
+  STAGE_INDEX=0 STAGE_COUNT=2 \
+  LAYER_START=0 LAYER_END=14
 
-- two real node processes;
-- two real supervised runtime workers;
-- the hosted `llama.cpp` engine on CPU;
-- membership and advertised assignments;
-- count-agnostic route metadata;
-- both stage HTTP responses;
-- typed text payload handoff;
-- nonempty final generation.
+make run-node \
+  NODE_NAME=beehive-stage1 \
+  MODEL_PATH=/models/qwen.gguf \
+  STAGE_INDEX=1 STAGE_COUNT=2 \
+  LAYER_START=14 LAYER_END=28
+```
 
-Authoritative CUDA, JetPack, ARM64, and physical-network validation belongs on
-self-hosted Jetson runners.
+Use command-line Make variables after the target so they override `.env.local`.
+
+## Model scope
+
+The fabric may contain many model deployments. Initially, one runtime worker
+loads one model artifact. A node can later supervise multiple workers if memory
+allows.
+
+All stages in one pipeline must ultimately prove that they use the same engine,
+model ID, model artifact hash, architecture, layer count, JetsonFabric revision,
+and llama.cpp revision. That exact identity enforcement is the next planning
+hardening milestone.
+
+## Honest limitations
+
+The current implementation partitions **transformer execution**, but every
+runtime still opens the complete GGUF. Therefore:
+
+```text
+compute partitioned: yes
+model-weight memory partitioned: not yet
+```
+
+Two Jetsons can soon prove real topologically distributed compute, but they do
+not yet combine memory to fit a model that cannot fit on either device alone.
+Selective stage-owned weight loading is a later milestone.
+
+The implementation is also sequential: stage 0 runs, then stage 1 runs. It does
+not yet overlap microbatches or concurrent sessions for throughput.
+
+## Remaining physical P0 gates
+
+Before claiming physical topologically distributed CUDA inference:
+
+1. Advertise and enforce exact runtime/model/artifact identity.
+2. Attest that selected runtimes were CUDA-built and actually execute on GPU.
+3. Require baseline token equivalence and activation CRC continuity.
+4. Record per-stage latency, transfer bytes, throughput, memory, utilization,
+   power, temperature, and throttling.
+5. Run the acceptance harness on two distinct physical Jetsons.
+
+See `docs/physical-jetson-validation.md` and
+`docs/llama-cpp-partial-layer.md` for the detailed contracts.
