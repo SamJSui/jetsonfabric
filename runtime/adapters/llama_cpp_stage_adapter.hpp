@@ -3,6 +3,7 @@
 #include "adapters/llama_cpp_model.hpp"
 #include "inference/stage.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -15,11 +16,14 @@ struct LlamaCppStageConfig {
     int threads = 0;
     inference::StagePosition position;
     inference::LayerRange layers;
+    std::chrono::milliseconds session_idle_ttl = std::chrono::minutes(5);
+    std::chrono::milliseconds session_reap_interval = std::chrono::seconds(1);
 };
 
 // Owns persistent llama.cpp contexts keyed by JetsonFabric session ID. Each
 // context executes only the configured transformer-layer range and retains the
-// corresponding llama.cpp memory state across decode steps.
+// corresponding llama.cpp memory state across decode steps. Idle sessions are
+// reaped locally so a coordinator or network failure cannot leak them forever.
 class LlamaCppStageAdapter final {
 public:
     explicit LlamaCppStageAdapter(LlamaCppStageConfig config);
