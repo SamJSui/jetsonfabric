@@ -20,14 +20,15 @@ import (
 )
 
 type App struct {
-	cfg               Config
-	nodeID            string
-	startedAt         time.Time
-	store             *membership.Store
-	discovery         discovery.Source
-	mdnsAdvertiser    *discovery.MDNSAdvertiser
-	server            *http.Server
-	runtimeSupervisor *RuntimeSupervisor
+	cfg                 Config
+	nodeID              string
+	startedAt           time.Time
+	modelArtifactSHA256 string
+	store               *membership.Store
+	discovery           discovery.Source
+	mdnsAdvertiser      *discovery.MDNSAdvertiser
+	server              *http.Server
+	runtimeSupervisor   *RuntimeSupervisor
 }
 
 func New(cfg Config) (*App, error) {
@@ -52,7 +53,17 @@ func buildApp(cfg Config) (*App, error) {
 		return nil, err
 	}
 
-	return newApp(cfg, nodeID), nil
+	app := newApp(cfg, nodeID)
+	if cfg.ModelPath != "" {
+		app.modelArtifactSHA256, err = modelArtifactSHA256(cfg.ModelPath)
+		if err != nil {
+			return nil, fmt.Errorf("compute configured model identity: %w", err)
+		}
+		// newApp publishes an initial local member. Replace it now that the
+		// artifact identity is available.
+		app.store.Upsert(app.selfMember(time.Now().UTC()))
+	}
+	return app, nil
 }
 
 func newApp(cfg Config, nodeID string) *App {
@@ -336,6 +347,7 @@ func (a *App) selfMember(now time.Time) membership.Member {
 		OS:               snapshot.OS,
 		Capabilities:     a.memberCapabilities(snapshot.Capabilities),
 		Metrics:          snapshot.Metrics,
+		Engines:          a.engineEndpoints(),
 		StartedAt:        a.startedAt,
 		LastSeen:         now,
 	}
