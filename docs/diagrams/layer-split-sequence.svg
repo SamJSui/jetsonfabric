@@ -1,22 +1,35 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
-  <title id="title">Sequential Stage Path and Activation Target</title>
-  <desc id="desc">The coordinator builds a count-aware plan, calls stages through peer API URLs, records topology and payload traces, and will later replace text handoff with activations.</desc>
-  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker><style>.title{font:700 25px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.subtitle{font:14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#475569}.head{fill:#ecfeff;stroke:#0891b2;stroke-width:2;rx:12}.stage{fill:#fef3c7;stroke:#d97706;stroke-width:2;rx:12}.future{fill:#f5f3ff;stroke:#7c3aed;stroke-width:2;rx:12}.label{font:700 14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.small{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#334155}.line{stroke:#94a3b8;stroke-width:2;stroke-dasharray:5 6}.msg{stroke:#334155;stroke-width:2;marker-end:url(#arrow);fill:none}.return{stroke:#64748b;stroke-width:2;stroke-dasharray:6 5;marker-end:url(#arrow);fill:none}.note{fill:#f8fafc;stroke:#cbd5e1;stroke-width:1.5;rx:10}</style></defs>
-  <text x="40" y="42" class="title">Sequential stage path and activation target</text><text x="40" y="67" class="subtitle">Text handoff is current; assigned-layer activation handoff is the next runtime milestone.</text>
-  <rect x="45" y="105" width="120" height="50" class="head"/><text x="105" y="136" text-anchor="middle" class="label">Client</text><line x1="105" y1="155" x2="105" y2="700" class="line"/>
-  <rect x="220" y="105" width="150" height="50" class="head"/><text x="295" y="136" text-anchor="middle" class="label">Coordinator</text><line x1="295" y1="155" x2="295" y2="700" class="line"/>
-  <rect x="430" y="105" width="160" height="50" class="future"/><text x="510" y="136" text-anchor="middle" class="label">clusterplan</text><line x1="510" y1="155" x2="510" y2="700" class="line"/>
-  <rect x="650" y="105" width="150" height="50" class="stage"/><text x="725" y="136" text-anchor="middle" class="label">Stage 0 node</text><line x1="725" y1="155" x2="725" y2="700" class="line"/>
-  <rect x="855" y="105" width="150" height="50" class="stage"/><text x="930" y="136" text-anchor="middle" class="label">Stage 1 node</text><line x1="930" y1="155" x2="930" y2="700" class="line"/>
-  <rect x="1060" y="105" width="100" height="50" class="future"/><text x="1110" y="128" text-anchor="middle" class="label">Trace /</text><text x="1110" y="144" text-anchor="middle" class="label">metrics</text><line x1="1110" y1="155" x2="1110" y2="700" class="line"/>
-  <path d="M105 195 H295" class="msg"/><text x="200" y="183" text-anchor="middle" class="small">stage run request</text>
-  <path d="M295 250 H510" class="msg"/><text x="402" y="238" text-anchor="middle" class="small">Preview(snapshot, model, stage_count)</text>
-  <path d="M510 305 H295" class="return"/><text x="402" y="293" text-anchor="middle" class="small">ordered stages + topology counts</text>
-  <path d="M295 360 H725" class="msg"/><text x="510" y="348" text-anchor="middle" class="small">POST stage_index=0 to node APIURL</text>
-  <path d="M725 415 H295" class="return"/><text x="510" y="403" text-anchor="middle" class="small">typed output payload</text>
-  <path d="M295 470 H930" class="msg"/><text x="612" y="458" text-anchor="middle" class="small">POST stage_index=1 with prior payload</text>
-  <path d="M930 525 H295" class="return"/><text x="612" y="513" text-anchor="middle" class="small">final text output</text>
-  <path d="M295 580 H1110" class="msg"/><text x="702" y="568" text-anchor="middle" class="small">record stage_count, topology, payload kinds, timings</text>
-  <path d="M295 635 H105" class="return"/><text x="200" y="623" text-anchor="middle" class="small">response</text>
-  <rect x="420" y="620" width="590" height="72" class="note"/><text x="715" y="648" text-anchor="middle" class="label">Activation target</text><text x="715" y="671" text-anchor="middle" class="small">First stage accepts tokens; intermediate boundaries carry activations; final-stage logits and KV cache remain engine-internal.</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 850" role="img" aria-labelledby="title desc">
+  <title id="title">Target One-Call Distributed Generation Sequence</title>
+  <desc id="desc">The coordinator calls Generate once on a runtime pipeline leader. The runtime owns prefill, repeated decode passes, and direct stage-to-stage activation transport.</desc>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker><style>.title{font:700 25px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.subtitle{font:14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#475569}.head{fill:#ecfeff;stroke:#0891b2;stroke-width:2;rx:12}.runtime{fill:#fef3c7;stroke:#d97706;stroke-width:2;rx:12}.control{fill:#f5f3ff;stroke:#7c3aed;stroke-width:2;rx:12}.label{font:700 13px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.small{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#334155}.lane{stroke:#94a3b8;stroke-width:1.6;stroke-dasharray:5 6}.msg{stroke:#334155;stroke-width:2;marker-end:url(#arrow);fill:none}.data{stroke:#ea580c;stroke-width:2.4;marker-end:url(#arrow);fill:none}.return{stroke:#64748b;stroke-width:2;stroke-dasharray:6 5;marker-end:url(#arrow);fill:none}.loop{fill:#fff7ed;stroke:#ea580c;stroke-width:1.7;rx:12}.note{fill:#f8fafc;stroke:#cbd5e1;stroke-width:1.4;rx:10}</style></defs>
+  <text x="40" y="42" class="title">Target: one external Generate call, many internal forward passes</text><text x="40" y="67" class="subtitle">The API and coordinator invoke a completion once. A runtime pipeline leader owns the token loop and direct stage data plane.</text>
+
+  <rect x="40" y="100" width="120" height="50" class="head"/><text x="100" y="130" text-anchor="middle" class="label">Client</text><line x1="100" y1="150" x2="100" y2="790" class="lane"/>
+  <rect x="220" y="100" width="150" height="50" class="control"/><text x="295" y="130" text-anchor="middle" class="label">Coordinator</text><line x1="295" y1="150" x2="295" y2="790" class="lane"/>
+  <rect x="430" y="100" width="180" height="50" class="runtime"/><text x="520" y="130" text-anchor="middle" class="label">PipelineSessionLeader</text><line x1="520" y1="150" x2="520" y2="790" class="lane"/>
+  <rect x="675" y="100" width="145" height="50" class="runtime"/><text x="747" y="130" text-anchor="middle" class="label">Stage 0 runtime</text><line x1="747" y1="150" x2="747" y2="790" class="lane"/>
+  <rect x="885" y="100" width="145" height="50" class="runtime"/><text x="957" y="130" text-anchor="middle" class="label">Stage 1 runtime</text><line x1="957" y1="150" x2="957" y2="790" class="lane"/>
+  <rect x="1095" y="100" width="145" height="50" class="runtime"/><text x="1167" y="130" text-anchor="middle" class="label">Final runtime</text><line x1="1167" y1="150" x2="1167" y2="790" class="lane"/>
+
+  <path d="M100 190 H295" class="msg"/><text x="197" y="179" text-anchor="middle" class="small">POST /v1/chat/completions</text>
+  <path d="M295 245 H520" class="msg"/><text x="407" y="234" text-anchor="middle" class="small">Generate(plan epoch, prompt, limits)</text>
+  <rect x="455" y="270" width="130" height="42" class="note"/><text x="520" y="296" text-anchor="middle" class="small">create session + pin plan</text>
+
+  <text x="450" y="350" class="label">Prefill pass</text>
+  <path d="M520 375 H747" class="msg"/><text x="633" y="364" text-anchor="middle" class="small">tokens, phase=prefill</text>
+  <path d="M747 420 H957" class="data"/><text x="852" y="409" text-anchor="middle" class="small">activation</text>
+  <path d="M957 465 H1167" class="data"/><text x="1062" y="454" text-anchor="middle" class="small">activation</text>
+  <path d="M1167 510 H520" class="return"/><text x="843" y="499" text-anchor="middle" class="small">sampled token 1</text>
+
+  <rect x="445" y="545" width="755" height="160" class="loop"/><text x="472" y="572" class="label">Loop: one decode forward pass per additional token</text>
+  <path d="M520 605 H747" class="msg"/><text x="633" y="594" text-anchor="middle" class="small">previous token, decode_step=k</text>
+  <path d="M747 635 H957" class="data"/><text x="852" y="624" text-anchor="middle" class="small">1-row activation</text>
+  <path d="M957 665 H1167" class="data"/><text x="1062" y="654" text-anchor="middle" class="small">1-row activation</text>
+  <path d="M1167 690 H520" class="return"/><text x="843" y="679" text-anchor="middle" class="small">next token; repeat until stop / max tokens</text>
+
+  <rect x="455" y="730" width="130" height="42" class="note"/><text x="520" y="756" text-anchor="middle" class="small">close session + release pins</text>
+  <path d="M520 785 H295" class="return"/><text x="407" y="774" text-anchor="middle" class="small">one completed generation result</text>
+  <path d="M295 820 H100" class="return"/><text x="197" y="809" text-anchor="middle" class="small">OpenAI response</text>
+
+  <text x="40" y="740" class="small">Public call count: 1 Generate</text><text x="40" y="762" class="small">Internal execution count: 1 prefill + N decode passes</text><text x="40" y="784" class="small">Each pass traverses every stage exactly once.</text>
 </svg>
