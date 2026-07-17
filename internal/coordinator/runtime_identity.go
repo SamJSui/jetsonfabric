@@ -14,11 +14,11 @@ import (
 // one pipeline. Friendly model names are not enough: the artifact digest proves
 // that all stages opened the same bytes.
 type pipelineRuntimeIdentity struct {
-	Engine         cluster.Engine
-	ModelID        string
-	ModelSHA256    string
-	ComputeBackend cluster.ComputeBackend
-	ExecutionMode  cluster.ExecutionMode
+	Engine         cluster.Engine         `json:"engine"`
+	ModelID        string                 `json:"model_id"`
+	ModelSHA256    string                 `json:"model_sha256"`
+	ComputeBackend cluster.ComputeBackend `json:"compute_backend"`
+	ExecutionMode  cluster.ExecutionMode  `json:"execution_mode"`
 }
 
 func (i pipelineRuntimeIdentity) key() string {
