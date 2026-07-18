@@ -25,7 +25,7 @@ func TestRoutePreviewReportsOneStagePipeline(t *testing.T) {
 		WithMembershipSource(staticMemberSource{members: []membership.Member{member}}, time.Minute),
 		WithClock(func() time.Time { return coordinatorTestNow() }),
 	)
-	request := httptest.NewRequest(http.MethodGet, api.PathRoutePreview+"?model=qwen2.5-coder-1.5b-q4&stage_count=1", nil)
+	request := httptest.NewRequest(http.MethodGet, api.RoutePreview+"?model=qwen2.5-coder-1.5b-q4&stage_count=1", nil)
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
