@@ -13,6 +13,7 @@ RUNTIME_BUILD_JOBS ?= 1
 RUNTIME_CUDA_ARCH ?= 87
 CUDA_NVCC ?= /usr/local/cuda/bin/nvcc
 RUNTIME_BIN ?= $(DIST_DIR)/jetsonfabric-runtime-worker
+NODE_BIN ?= $(DIST_DIR)/jetsonfabric-node
 
 LLAMA_CPP_REPO ?= https://github.com/ggml-org/llama.cpp
 LLAMA_CPP_DIR ?= runtime/third_party/llama.cpp
@@ -52,6 +53,13 @@ STAGE_COUNT ?= 1
 LAYER_START ?= 0
 LAYER_END ?= 28
 
+# Persistent two-stage colocated developer cluster.
+JF_NODE0_PORT ?= 19180
+JF_NODE1_PORT ?= 19181
+DEV_NODE_URL ?= http://127.0.0.1:$(JF_NODE0_PORT)
+DEV_PROMPT ?= Explain JetsonFabric in one sentence.
+DEV_MAX_TOKENS ?= 16
+
 BENCH_URL ?= http://127.0.0.1:52415/v1/chat/completions
 BENCH_REQUEST ?= examples/poc-local-smoke/chat-request.json
 BENCH_COUNT ?= 1
@@ -69,8 +77,11 @@ help:
 	@printf '  make runtime              Build runtime with llama.cpp\n'
 	@printf '  make runtime-cuda         Build runtime with llama.cpp + CUDA\n\n'
 	@printf 'Run:\n'
-	@printf '  make run-node             Run jetsonfabric-node in the foreground\n'
-	@printf '  make run-runtime          Run runtime worker in the foreground\n\n'
+	@printf '  make run-node             Run one jetsonfabric-node in the foreground\n'
+	@printf '  make run-runtime          Run one runtime worker in the foreground\n'
+	@printf '  make dev-up               Run a persistent two-stage colocated cluster\n'
+	@printf '  make dev-status           Inspect the running development cluster\n'
+	@printf '  make dev-chat             Send a chat request to the development cluster\n\n'
 	@printf 'Developer tools:\n'
 	@printf '  make bench                Run benchmark client against node API\n'
 	@printf '  make clean                Remove generated build artifacts\n\n'
@@ -200,6 +211,47 @@ run-runtime:
 		--stage-count "$(STAGE_COUNT)" \
 		--layer-start "$(LAYER_START)" \
 		--layer-end "$(LAYER_END)"
+
+.PHONY: dev-up
+dev-up:
+	@LOCAL_ENV="$(abspath $(LOCAL_ENV))" \
+	MODEL="$(MODEL)" \
+	MODEL_PATH="$(MODEL_PATH)" \
+	RUNTIME_BUILD_DIR="$(RUNTIME_BUILD_DIR)" \
+	RUNTIME_BUILD_JOBS="$(RUNTIME_BUILD_JOBS)" \
+	RUNTIME_CUDA_ARCH="$(RUNTIME_CUDA_ARCH)" \
+	CUDA_NVCC="$(CUDA_NVCC)" \
+	RUNTIME_BIN="$(RUNTIME_BIN)" \
+	NODE_BIN="$(NODE_BIN)" \
+	RUNTIME_COMPUTE_BACKEND="$(RUNTIME_COMPUTE_BACKEND)" \
+	RUNTIME_CTX_SIZE="$(RUNTIME_CTX_SIZE)" \
+	RUNTIME_N_GPU_LAYERS="$(RUNTIME_N_GPU_LAYERS)" \
+	RUNTIME_THREADS="$(RUNTIME_THREADS)" \
+	NODE_CLUSTER_ID="$(NODE_CLUSTER_ID)" \
+	NODE_ENGINE="$(NODE_ENGINE)" \
+	JF_NODE0_PORT="$(JF_NODE0_PORT)" \
+	JF_NODE1_PORT="$(JF_NODE1_PORT)" \
+	bash scripts/local/run-colocated-dev.sh
+
+.PHONY: dev-status
+dev-status:
+	@printf 'Health (%s):\n' "$(DEV_NODE_URL)"
+	@curl -fsS "$(DEV_NODE_URL)/healthz"; printf '\n\n'
+	@printf 'Members:\n'
+	@curl -fsS "$(DEV_NODE_URL)/v1/cluster/members" | jq
+	@printf '\nRoute preview:\n'
+	@curl -fsS "$(DEV_NODE_URL)/v1/routes/preview?model=$(MODEL)&stage_count=2&allow_colocated_stages=true" | jq
+
+.PHONY: dev-chat
+dev-chat:
+	@curl -fsS -X POST "$(DEV_NODE_URL)/v1/chat/completions" \
+		-H 'Content-Type: application/json' \
+		--data-binary "$$(jq -nc \
+			--arg model "$(MODEL)" \
+			--arg prompt "$(DEV_PROMPT)" \
+			--argjson max_tokens "$(DEV_MAX_TOKENS)" \
+			'{model:$$model,messages:[{role:"user",content:$$prompt}],max_tokens:$$max_tokens,jetsonfabric:{stage_count:2,allow_colocated_stages:true}}')" \
+		| jq
 
 .PHONY: print-node-config
 print-node-config:
