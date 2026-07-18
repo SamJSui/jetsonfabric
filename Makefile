@@ -112,6 +112,7 @@ setup:
 		$(GIT) clone --filter=blob:none $(LLAMA_CPP_REPO) $(LLAMA_CPP_DIR); \
 	fi
 	@printf 'preparing llama.cpp commit %s\n' "$(LLAMA_CPP_COMMIT)"
+	@$(GIT) -C $(LLAMA_CPP_DIR) reset --hard
 	@$(GIT) -C $(LLAMA_CPP_DIR) fetch --depth 1 origin $(LLAMA_CPP_COMMIT)
 	@$(GIT) -C $(LLAMA_CPP_DIR) checkout --detach $(LLAMA_CPP_COMMIT)
 	@$(GIT) -C $(LLAMA_CPP_DIR) reset --hard $(LLAMA_CPP_COMMIT)
