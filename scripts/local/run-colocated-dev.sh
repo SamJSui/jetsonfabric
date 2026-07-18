@@ -4,7 +4,9 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LOCAL_ENV="${LOCAL_ENV:-$ROOT_DIR/.env.local}"
 
-if [[ -f "$LOCAL_ENV" ]]; then
+# `make dev-up` already parsed .env.local and passes MODEL_PATH plus the other
+# resolved settings explicitly. Source the file only for direct script usage.
+if [[ -z "${MODEL_PATH:-}" && -f "$LOCAL_ENV" ]]; then
   set -a
   # shellcheck disable=SC1090
   source "$LOCAL_ENV"
@@ -68,7 +70,7 @@ require_command() {
   }
 }
 
-for command in curl jq go cmake head; do
+for command in curl jq go cmake make head seq; do
   require_command "$command"
 done
 
