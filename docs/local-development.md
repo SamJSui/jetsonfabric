@@ -26,6 +26,10 @@ RUNTIME_COMPUTE_BACKEND=cuda
 RUNTIME_MODE=pipeline_parallel
 RUNTIME_CTX_SIZE=4096
 RUNTIME_N_GPU_LAYERS=999
+
+JF_NODE0_PORT=19180
+JF_RUNTIME_PORT=19190
+JF_DEV_WORK_DIR=.cache/jetsonfabric/dev
 ```
 
 `RUNTIME_BUILD_JOBS=1` or `2` is the safest starting point on an 8 GB Jetson.
@@ -55,27 +59,42 @@ make dev-up
 
 `make dev-up`:
 
-1. loads `.env.local` through the Makefile;
-2. builds the selected CUDA or CPU runtime when needed;
-3. builds a native `jetsonfabric-node`;
-4. reads the model's actual transformer-layer count;
-5. starts one Go node and one supervised C++ runtime;
-6. configures one full-range pipeline stage;
-7. waits for health;
-8. sends a real one-token chat request;
-9. prints ready only after inference succeeds;
-10. remains in the foreground until `Ctrl+C`.
+1. acquires an exclusive lock under `.cache/jetsonfabric/dev`;
+2. checks that the fixed node and runtime ports are free;
+3. loads `.env.local` through the Makefile;
+4. builds the selected CUDA or CPU runtime when needed;
+5. builds a native `jetsonfabric-node`;
+6. reads the model's actual transformer-layer count;
+7. starts one Go node and one supervised C++ runtime;
+8. records the node and runtime PIDs;
+9. configures one full-range pipeline stage;
+10. waits for health;
+11. sends a real one-token chat request;
+12. prints ready only after inference succeeds;
+13. remains in the foreground until stopped.
 
-The default node URL is:
+The default endpoints are:
 
 ```text
-http://127.0.0.1:19180
+Node:    http://127.0.0.1:19180
+Runtime: http://127.0.0.1:19190
 ```
 
-Logs are retained while the node is running under:
+Both ports are intentionally static for the normal development profile. A second
+`make dev-up`, an orphaned runtime, or an unrelated process on either port causes
+startup to fail visibly instead of silently selecting another runtime port.
+
+The launcher also holds an exclusive lock. This prevents duplicate launches even
+when a developer overrides the default ports.
+
+Logs and lifecycle files are retained under:
 
 ```text
-.cache/jetsonfabric/dev/logs/
+.cache/jetsonfabric/dev/
+├── dev.lock
+├── node.pid
+├── runtime.pid
+└── logs/
 ```
 
 ## Inspect and use the service
@@ -85,6 +104,9 @@ In another terminal:
 ```bash
 make dev-status
 ```
+
+The status command prints the configured endpoints and recorded PIDs before
+querying health, membership, and the one-stage route preview.
 
 Send a completion:
 
@@ -117,8 +139,30 @@ To reuse already-built binaries:
 JF_SKIP_BUILD=true make dev-up
 ```
 
-Stop the node with `Ctrl+C`. The launcher terminates the Go node, which then stops
-its supervised C++ runtime.
+## Stop or recover the dev processes
+
+A foreground session can still be stopped with `Ctrl+C`.
+
+From another terminal, use the scoped lifecycle command:
+
+```bash
+make dev-kill
+```
+
+`make kill` is an alias for the same target:
+
+```bash
+make kill
+```
+
+The command reads the recorded PID files, verifies that each process matches the
+expected dev node or runtime command line, sends `SIGTERM`, waits for graceful
+shutdown, and uses `SIGKILL` only if necessary. It does not broadly kill every
+JetsonFabric process on the machine.
+
+If PID files are missing or stale, the command searches only for processes using
+the fixed dev ports and the `jf-dev` identity. If either port remains occupied by
+an untracked process, it reports the listener rather than killing it blindly.
 
 ## Unit tests
 
