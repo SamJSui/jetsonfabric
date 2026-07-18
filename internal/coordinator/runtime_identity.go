@@ -38,7 +38,7 @@ func selectPipelineRuntimeMembers(
 	requiredStages int,
 ) ([]membership.Member, pipelineRuntimeIdentity, error) {
 	if requiredStages <= 0 {
-		requiredStages = 2
+		requiredStages = 1
 	}
 	groups := map[string][]membership.Member{}
 	identities := map[string]pipelineRuntimeIdentity{}
