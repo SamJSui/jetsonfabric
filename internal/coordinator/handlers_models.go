@@ -28,7 +28,7 @@ func (s *Server) handleRoutePreview(w http.ResponseWriter, r *http.Request) {
 	if s.memberSource != nil {
 		members = s.memberSource.List()
 	}
-	writeJSON(w, http.StatusOK, clusterplan.Preview(clusterplan.Request{
+	writeJSON(w, http.StatusOK, clusterplan.PreviewPipeline(clusterplan.Request{
 		Model:      model,
 		Members:    members,
 		Now:        s.now(),
