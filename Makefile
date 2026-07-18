@@ -14,6 +14,8 @@ RUNTIME_CUDA_ARCH ?= 87
 CUDA_NVCC ?= /usr/local/cuda/bin/nvcc
 RUNTIME_BIN ?= $(DIST_DIR)/jetsonfabric-runtime-worker
 NODE_BIN ?= $(DIST_DIR)/jetsonfabric-node
+INTEGRATION_BUILD_DIR ?= runtime/build-integration-cpu
+INTEGRATION_RUNTIME_BIN ?= $(DIST_DIR)/jetsonfabric-runtime-worker-integration-cpu
 
 LLAMA_CPP_REPO ?= https://github.com/ggml-org/llama.cpp
 LLAMA_CPP_DIR ?= runtime/third_party/llama.cpp
@@ -72,6 +74,7 @@ help:
 	@printf '  make setup                       Prepare pinned llama.cpp checkout\n\n'
 	@printf 'Build/test:\n'
 	@printf '  make test                        Run Go unit tests\n'
+	@printf '  make test-integration            Run all real-model CPU integrations\n'
 	@printf '  make test-integration-single     Run one-stage real-model CPU integration\n'
 	@printf '  make test-integration-pipeline   Run two-stage colocated CPU integration\n'
 	@printf '  make build                       Build node binaries and runtime\n'
@@ -97,10 +100,16 @@ help:
 test:
 	$(GO) test ./...
 
+.PHONY: test-integration
+test-integration: test-integration-single test-integration-pipeline
+
 .PHONY: test-integration-single
 test-integration-single:
 	@MODEL_PATH="$(MODEL_PATH)" \
 	MODEL_ID="$(MODEL)" \
+	RUNTIME_BUILD_DIR="$(INTEGRATION_BUILD_DIR)" \
+	RUNTIME_BIN="$(INTEGRATION_RUNTIME_BIN)" \
+	NODE_BIN="$(NODE_BIN)" \
 	RUNTIME_BUILD_JOBS="$(RUNTIME_BUILD_JOBS)" \
 	JF_NODE0_PORT="$(JF_NODE0_PORT)" \
 	bash scripts/local/validate-single-node.sh
@@ -109,6 +118,9 @@ test-integration-single:
 test-integration-pipeline:
 	@MODEL_PATH="$(MODEL_PATH)" \
 	MODEL_ID="$(MODEL)" \
+	RUNTIME_BUILD_DIR="$(INTEGRATION_BUILD_DIR)" \
+	RUNTIME_BIN="$(INTEGRATION_RUNTIME_BIN)" \
+	NODE_BIN="$(NODE_BIN)" \
 	RUNTIME_BUILD_JOBS="$(RUNTIME_BUILD_JOBS)" \
 	JF_NODE0_PORT="$(JF_NODE0_PORT)" \
 	JF_NODE1_PORT="$(JF_NODE1_PORT)" \
@@ -303,4 +315,4 @@ bench:
 
 .PHONY: clean
 clean:
-	rm -rf $(DIST_DIR) $(RUNTIME_BUILD_DIR)
+	rm -rf $(DIST_DIR) $(RUNTIME_BUILD_DIR) $(INTEGRATION_BUILD_DIR)
