@@ -64,7 +64,7 @@ func (s *Server) handleLayerSplitRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.memberSource == nil {
-		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, "membership source is required for layer split run", nil, nil)
+		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, "membership source is required for pipeline run", nil, nil)
 		return
 	}
 
@@ -77,7 +77,8 @@ func (s *Server) handleLayerSplitRun(w http.ResponseWriter, r *http.Request) {
 	}
 	requiredStages := policy.StageCount
 	if requiredStages <= 0 {
-		requiredStages = 2
+		requiredStages = 1
+		policy.StageCount = requiredStages
 	}
 	members, identity, err := selectPipelineRuntimeMembers(
 		model,
@@ -90,16 +91,16 @@ func (s *Server) handleLayerSplitRun(w http.ResponseWriter, r *http.Request) {
 		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, err.Error(), nil, nil)
 		return
 	}
-	plan := clusterplan.Preview(clusterplan.Request{
+	plan := clusterplan.PreviewPipeline(clusterplan.Request{
 		Model: model, Members: members, Now: s.now(),
 		StaleAfter: s.memberStaleAfter, Policy: policy,
 	})
 	if !plan.Valid {
-		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, fmt.Sprintf("no valid layer split route: %s", plan.Reason), &plan, nil)
+		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, fmt.Sprintf("no valid pipeline route: %s", plan.Reason), &plan, nil)
 		return
 	}
-	if plan.Mode != cluster.ExecutionModePipelineParallel || plan.StageCount < 2 {
-		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, "layer split run requires a pipeline_parallel plan with at least two stages", &plan, nil)
+	if plan.Mode != cluster.ExecutionModePipelineParallel || plan.StageCount < 1 {
+		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, "pipeline run requires a pipeline_parallel plan with at least one stage", &plan, nil)
 		return
 	}
 
