@@ -89,6 +89,47 @@ void print_token_ids(const std::vector<std::int32_t>& token_ids) {
     std::cout << "]\n";
 }
 
+void verify_single_stage_equivalence(
+    const std::shared_ptr<LlamaCppModel>& model,
+    const std::string& prompt,
+    const std::vector<std::int32_t>& baseline_tokens
+) {
+    LlamaCppStageAdapter stage(LlamaCppStageConfig{
+        .model = model,
+        .ctx_size = 256,
+        .threads = 2,
+        .position = {.index = 0, .count = 1},
+        .layers = {.start = 0, .end = model->n_layer()},
+    });
+
+    const std::string session = "native-single-stage-test";
+    ExecutionResult first_token = stage.execute(input_for(
+        session, "single-prefill", Phase::Prefill, 0,
+        {.index = 0, .count = 1}, {.start = 0, .end = model->n_layer()}, text_payload(prompt)
+    ));
+    require_success(first_token, "single stage prefill");
+    if (sampled_token(first_token.output.payload) != baseline_tokens[0]) {
+        throw std::runtime_error("single-stage prefill token does not match full-model greedy baseline");
+    }
+
+    ExecutionResult second_token = stage.execute(input_for(
+        session, "single-decode", Phase::Decode, 1,
+        {.index = 0, .count = 1}, {.start = 0, .end = model->n_layer()}, first_token.output.payload
+    ));
+    require_success(second_token, "single stage decode");
+    if (sampled_token(second_token.output.payload) != baseline_tokens[1]) {
+        throw std::runtime_error("single-stage decode token does not match full-model greedy baseline");
+    }
+
+    if (stage.session_count() != 1U) {
+        throw std::runtime_error("single-stage session context was not retained");
+    }
+    stage.close_session(session);
+    if (stage.session_count() != 0U) {
+        throw std::runtime_error("single-stage session cleanup failed");
+    }
+}
+
 void verify_idle_session_expiry(const std::shared_ptr<LlamaCppModel>& model, int split) {
     LlamaCppStageAdapter expiring_stage(LlamaCppStageConfig{
         .model = model,
@@ -130,6 +171,8 @@ int run_test(const std::shared_ptr<LlamaCppModel>& model) {
     if (baseline_response.token_ids.size() < 2U) {
         throw std::runtime_error("baseline must generate two tokens to validate persistent decode");
     }
+
+    verify_single_stage_equivalence(model, prompt, baseline_response.token_ids);
 
     LlamaCppStageAdapter stage0(LlamaCppStageConfig{
         .model = model,
@@ -196,7 +239,7 @@ int run_test(const std::shared_ptr<LlamaCppModel>& model) {
 
     verify_idle_session_expiry(model, split);
 
-    std::cout << "llama.cpp split-stage equivalence passed: architecture=" << model->architecture()
+    std::cout << "llama.cpp single-stage and split-stage equivalence passed: architecture=" << model->architecture()
               << " layers=" << model->n_layer() << " split=" << split
               << " tokens=" << baseline_response.token_ids[0] << ',' << baseline_response.token_ids[1] << '\n';
     return 0;
