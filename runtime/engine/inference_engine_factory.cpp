@@ -40,7 +40,10 @@ private:
 
 InferenceEngineParts build_inference_engine_parts(const Config& config) {
     if (config.engine == "llama.cpp") {
-        if (config.mode == ExecutionMode::PipelineParallel && config.stage_assignment.stage_count > 1) {
+        // Pipeline parallelism uses one execution contract for every cluster
+        // size. A single-node cluster is stage 0/1 over the full layer range;
+        // multi-node clusters use the same adapter with partial ranges.
+        if (config.mode == ExecutionMode::PipelineParallel && config.stage_assignment.stage_count >= 1) {
             return InferenceEngineParts{
                 .layer_executor = std::make_unique<pipeline_parallel::LlamaCppStageExecutor>(
                     adapters::LlamaCppStageConfig{
