@@ -1,14 +1,13 @@
 #pragma once
 
+#include "deployment/model_manager.hpp"
 #include "engine/engine.hpp"
-#include "engine/inference_engine_factory.hpp"
-#include "pipeline_parallel/stage_worker.hpp"
 #include "worker/config.hpp"
 
 namespace jetsonfabric::runtime {
 
-// RuntimeService is the JetsonFabric-owned host service. It owns the configured
-// inference-engine adapter and exposes the runtime HTTP contract.
+// RuntimeService is the JetsonFabric-owned host service. It exposes the runtime
+// HTTP contract while ModelManager owns the active model execution components.
 class RuntimeService final : public RuntimeAPI {
 public:
     explicit RuntimeService(Config config);
@@ -23,8 +22,7 @@ public:
 
 private:
     Config config_;
-    InferenceEngineParts engine_parts_;
-    pipeline_parallel::StageWorker stage_worker_;
+    deployment::ModelManager model_manager_;
 };
 
 } // namespace jetsonfabric::runtime
