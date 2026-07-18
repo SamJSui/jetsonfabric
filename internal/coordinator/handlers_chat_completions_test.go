@@ -7,10 +7,65 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/api"
+	"github.com/SamJSui/jetsonfabric/internal/cluster"
 	"github.com/SamJSui/jetsonfabric/internal/stagewire"
 )
+
+func TestChatCompletionsUsesSingleStagePipelineByDefault(t *testing.T) {
+	stage := newCoordinatorFrameServer(t, func(req stagewire.StageRequest) stagewire.StageResponse {
+		if req.StageIndex != 0 || req.StageCount != 1 || req.LayerStart != 0 || req.LayerEnd != 28 {
+			t.Fatalf("unexpected single-stage assignment: %+v", req.Metadata)
+		}
+		if req.PayloadKind != stagewire.PayloadKindText || !strings.Contains(string(req.Payload), "Say hello") {
+			t.Fatalf("unexpected chat prompt: kind=%q payload=%q", req.PayloadKind, req.Payload)
+		}
+		payload := make([]byte, 4)
+		binary.LittleEndian.PutUint32(payload, 7)
+		metadata := responseMetadataForCoordinator(req, stagewire.PayloadKindSampledToken)
+		metadata.Message = "hello"
+		metadata.CompletionTokens = 1
+		return stagewire.StageResponse{Metadata: metadata, Payload: payload}
+	})
+	defer stage.Close()
+
+	member := membershipMembersForRun{{nodeID: "node-a", apiURL: stage.URL}}.members()[0]
+	member.Capabilities[cluster.CapabilityRuntimeStageIndex] = 0
+	member.Capabilities[cluster.CapabilityRuntimeStageCount] = 1
+	member.Capabilities[cluster.CapabilityRuntimeLayerStart] = 0
+	member.Capabilities[cluster.CapabilityRuntimeLayerEnd] = 28
+	server := NewServer(
+		coordinatorTestRegistry(),
+		WithMembershipSource(staticMemberSource{members: membershipMembersForRun{{nodeID: "node-a", apiURL: stage.URL}}.members()}, time.Minute),
+		WithClock(func() time.Time { return coordinatorTestNow() }),
+	)
+	// Replace the generated member with the explicit one-stage assignment.
+	server.memberSource = staticMemberSource{members: []membership.Member{member}}
+
+	request := httptest.NewRequest(http.MethodPost, api.PathChatCompletions, strings.NewReader(`{
+		"model":"qwen2.5-coder-1.5b-q4",
+		"messages":[{"role":"user","content":"Say hello"}],
+		"max_tokens":1
+	}`))
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("X-JetsonFabric-Session-ID") == "" {
+		t.Fatal("missing JetsonFabric session header")
+	}
+
+	var decoded chatCompletionResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Choices) != 1 || decoded.Choices[0].Message.Content != "hello" {
+		t.Fatalf("unexpected response: %+v", decoded)
+	}
+}
 
 func TestChatCompletionsUsesDistributedPipeline(t *testing.T) {
 	activation := make([]byte, 4*16*4)
