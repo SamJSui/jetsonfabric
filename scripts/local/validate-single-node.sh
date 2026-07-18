@@ -172,6 +172,7 @@ jq -e --argjson baseline "$BASELINE_TOKENS" '
   .plan.stages[0].stage_count == 1 and
   .result.payload_kind == "sampled_token" and
   .result.sampled_tokens == $baseline and
+  .result.prompt_tokens > 0 and
   (.result.stages | length) == 2 and
   .result.stages[0].phase == "prefill" and
   .result.stages[1].phase == "decode"
@@ -194,7 +195,8 @@ jq -e --arg model "$MODEL_ID" '
   .object == "chat.completion" and
   .model == $model and
   (.choices | length) == 1 and
-  .choices[0].message.role == "assistant"
+  .choices[0].message.role == "assistant" and
+  .usage.prompt_tokens > 0
 ' "$CHAT_FILE" >/dev/null
 
 echo "Single-node pipeline validation passed"
