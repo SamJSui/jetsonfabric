@@ -74,21 +74,41 @@ jobs:
           path: |
             runtime/third_party/llama.cpp
             runtime/build-ci-cpu
-          key: ci-runtime-${{ runner.os }}-${{ env.CI_LLAMA_CPP_COMMIT }}-${{ hashFiles('runtime/CMakeLists.txt', 'runtime/**/*.cpp', 'runtime/**/*.h', 'runtime/**/*.hpp', 'runtime/patches/**', 'scripts/ci/**', 'scripts/local/validate-single-node.sh') }}
+          key: ci-runtime-${{ runner.os }}-${{ env.CI_LLAMA_CPP_COMMIT }}-${{ hashFiles('Makefile', 'runtime/CMakeLists.txt', 'runtime/**/*.cpp', 'runtime/**/*.h', 'runtime/**/*.hpp', 'runtime/patches/**', 'scripts/ci/smoke-binary-activation.sh', 'scripts/local/validate-single-node.sh', 'scripts/local/validate-colocated-pipeline.sh') }}
 
       - name: Run one-node real CPU E2E
         shell: bash
         run: |
           set -o pipefail
           mkdir -p .ci-logs/single-runtime
-          bash scripts/ci/smoke-single-runtime-cpu.sh 2>&1 | tee .ci-logs/single-runtime/step.log
+          make test-integration-single \
+            MODEL=ci-tiny-llama \
+            MODEL_PATH="$CI_MODEL_PATH" \
+            LLAMA_CPP_COMMIT="$CI_LLAMA_CPP_COMMIT" \
+            INTEGRATION_BUILD_DIR="$CI_RUNTIME_BUILD_DIR" \
+            INTEGRATION_RUNTIME_BIN=dist/jetsonfabric-runtime-worker-ci-cpu \
+            RUNTIME_BUILD_JOBS=2 \
+            JF_NODE0_PORT=18180 \
+            2>&1 | tee .ci-logs/single-runtime/step.log
 
       - name: Run two-node real CPU E2E
         shell: bash
         run: |
           set -o pipefail
           mkdir -p .ci-logs/real-runtime
-          bash scripts/ci/smoke-real-runtime-cpu.sh 2>&1 | tee .ci-logs/real-runtime/step.log
+          make test-integration-pipeline \
+            MODEL=ci-tiny-llama \
+            MODEL_PATH="$CI_MODEL_PATH" \
+            LLAMA_CPP_COMMIT="$CI_LLAMA_CPP_COMMIT" \
+            INTEGRATION_BUILD_DIR="$CI_RUNTIME_BUILD_DIR" \
+            INTEGRATION_RUNTIME_BIN=dist/jetsonfabric-runtime-worker-ci-cpu \
+            RUNTIME_BUILD_JOBS=2 \
+            JF_NODE0_PORT=18180 \
+            JF_NODE1_PORT=18181 \
+            JF_RUNTIME0_PORT=18190 \
+            JF_RUNTIME1_PORT=18191 \
+            JF_REPORT_PATH=.ci-logs/real-runtime/report.json \
+            2>&1 | tee .ci-logs/real-runtime/step.log
 
       - name: Run native runtime unit tests
         run: ctest --test-dir "$CI_RUNTIME_BUILD_DIR" --output-on-failure
