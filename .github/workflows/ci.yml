@@ -40,6 +40,12 @@ jobs:
       - name: Run unit tests
         run: go test ./...
 
+      - name: Validate shell syntax
+        shell: bash
+        run: |
+          find scripts -type f -name '*.sh' -print0 \
+            | xargs -0 -r -n1 bash -n
+
       - name: Install native build dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build jq
 
