@@ -74,7 +74,14 @@ jobs:
           path: |
             runtime/third_party/llama.cpp
             runtime/build-ci-cpu
-          key: ci-runtime-${{ runner.os }}-${{ env.CI_LLAMA_CPP_COMMIT }}-${{ hashFiles('runtime/CMakeLists.txt', 'runtime/**/*.cpp', 'runtime/**/*.h', 'runtime/**/*.hpp', 'runtime/patches/**', 'scripts/ci/**') }}
+          key: ci-runtime-${{ runner.os }}-${{ env.CI_LLAMA_CPP_COMMIT }}-${{ hashFiles('runtime/CMakeLists.txt', 'runtime/**/*.cpp', 'runtime/**/*.h', 'runtime/**/*.hpp', 'runtime/patches/**', 'scripts/ci/**', 'scripts/local/validate-single-node.sh') }}
+
+      - name: Run one-node real CPU E2E
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p .ci-logs/single-runtime
+          bash scripts/ci/smoke-single-runtime-cpu.sh 2>&1 | tee .ci-logs/single-runtime/step.log
 
       - name: Run two-node real CPU E2E
         shell: bash
