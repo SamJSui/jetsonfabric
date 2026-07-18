@@ -94,7 +94,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.memberSource == nil {
-		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "membership_unavailable", nil, "membership source is required for distributed chat completion")
+		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "membership_unavailable", nil, "membership source is required for pipeline chat completion")
 		return
 	}
 
@@ -114,7 +114,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	requiredStages := policy.StageCount
 	if requiredStages <= 0 {
-		requiredStages = 2
+		requiredStages = 1
+		policy.StageCount = requiredStages
 	}
 	members, identity, err := selectPipelineRuntimeMembers(
 		model,
@@ -127,12 +128,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "runtime_identity_unavailable", nil, err.Error())
 		return
 	}
-	plan := clusterplan.Preview(clusterplan.Request{
+	plan := clusterplan.PreviewPipeline(clusterplan.Request{
 		Model: model, Members: members, Now: s.now(),
 		StaleAfter: s.memberStaleAfter, Policy: policy,
 	})
-	if !plan.Valid || plan.Mode != cluster.ExecutionModePipelineParallel || plan.StageCount < 2 {
-		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "pipeline_route_unavailable", nil, fmt.Sprintf("no valid distributed pipeline route for model %q: %s", modelID, plan.Reason))
+	if !plan.Valid || plan.Mode != cluster.ExecutionModePipelineParallel || plan.StageCount < 1 {
+		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "pipeline_route_unavailable", nil, fmt.Sprintf("no valid pipeline route for model %q: %s", modelID, plan.Reason))
 		return
 	}
 
