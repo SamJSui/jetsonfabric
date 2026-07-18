@@ -11,6 +11,7 @@ import (
 
 	"github.com/SamJSui/jetsonfabric/internal/api"
 	"github.com/SamJSui/jetsonfabric/internal/cluster"
+	"github.com/SamJSui/jetsonfabric/internal/membership"
 	"github.com/SamJSui/jetsonfabric/internal/stagewire"
 )
 
@@ -38,11 +39,9 @@ func TestChatCompletionsUsesSingleStagePipelineByDefault(t *testing.T) {
 	member.Capabilities[cluster.CapabilityRuntimeLayerEnd] = 28
 	server := NewServer(
 		coordinatorTestRegistry(),
-		WithMembershipSource(staticMemberSource{members: membershipMembersForRun{{nodeID: "node-a", apiURL: stage.URL}}.members()}, time.Minute),
+		WithMembershipSource(staticMemberSource{members: []membership.Member{member}}, time.Minute),
 		WithClock(func() time.Time { return coordinatorTestNow() }),
 	)
-	// Replace the generated member with the explicit one-stage assignment.
-	server.memberSource = staticMemberSource{members: []membership.Member{member}}
 
 	request := httptest.NewRequest(http.MethodPost, api.PathChatCompletions, strings.NewReader(`{
 		"model":"qwen2.5-coder-1.5b-q4",
