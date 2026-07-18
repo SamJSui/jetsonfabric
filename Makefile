@@ -59,6 +59,7 @@ LAYER_END ?= 28
 JF_NODE0_PORT ?= 19180
 JF_NODE1_PORT ?= 19181
 JF_RUNTIME_PORT ?= 19190
+JF_RUNTIME1_PORT ?= 19191
 JF_DEV_WORK_DIR ?= .cache/jetsonfabric/dev
 DEV_NODE_URL ?= http://127.0.0.1:$(JF_NODE0_PORT)
 DEV_RUNTIME_URL ?= http://127.0.0.1:$(JF_RUNTIME_PORT)
@@ -101,6 +102,7 @@ help:
 	@printf '  RUNTIME_CUDA_ARCH=87             Jetson Orin default\n'
 	@printf '  JF_NODE0_PORT=19180              Fixed local node port\n'
 	@printf '  JF_RUNTIME_PORT=19190            Fixed supervised runtime port\n'
+	@printf '  JF_RUNTIME1_PORT=19191           Colocated stage-1 runtime port\n'
 	@printf '  CUDA_NVCC=/usr/local/cuda/bin/nvcc\n'
 
 .PHONY: test
@@ -131,6 +133,8 @@ test-integration-pipeline:
 	RUNTIME_BUILD_JOBS="$(RUNTIME_BUILD_JOBS)" \
 	JF_NODE0_PORT="$(JF_NODE0_PORT)" \
 	JF_NODE1_PORT="$(JF_NODE1_PORT)" \
+	JF_RUNTIME0_PORT="$(JF_RUNTIME_PORT)" \
+	JF_RUNTIME1_PORT="$(JF_RUNTIME1_PORT)" \
 	bash scripts/local/validate-colocated-pipeline.sh
 
 .PHONY: build
@@ -184,9 +188,6 @@ runtime-cuda: setup
 	cp $(RUNTIME_BUILD_DIR)/jetsonfabric-runtime-worker $(RUNTIME_BIN).tmp
 	chmod +x $(RUNTIME_BIN).tmp
 	mv -f $(RUNTIME_BIN).tmp $(RUNTIME_BIN)
-
-.PHONY: run
-run: run-node
 
 .PHONY: run-node
 run-node:
@@ -309,23 +310,6 @@ dev-chat:
 	case "$$status" in 2*) result=0 ;; *) printf 'HTTP %s\n' "$$status" >&2; result=1 ;; esac; \
 	rm -f "$$tmp"; \
 	exit $$result
-
-.PHONY: print-node-config
-print-node-config:
-	@printf 'NODE_NAME=%s\n' "$(NODE_NAME)"
-	@printf 'NODE_CLUSTER_ID=%s\n' "$(NODE_CLUSTER_ID)"
-	@printf 'NODE_LISTEN=%s\n' "$(NODE_LISTEN)"
-	@printf 'NODE_DATA_DIR=%s\n' "$(NODE_DATA_DIR)"
-	@printf 'NODE_RUNTIME_URL=%s\n' "$(NODE_RUNTIME_URL)"
-	@printf 'NODE_ENGINE=%s\n' "$(NODE_ENGINE)"
-	@printf 'MODEL=%s\n' "$(MODEL)"
-	@printf 'MODEL_PATH=%s\n' "$(MODEL_PATH)"
-	@printf 'RUNTIME_BIN=%s\n' "$(RUNTIME_BIN)"
-	@printf 'RUNTIME_LISTEN=%s\n' "$(RUNTIME_LISTEN)"
-	@printf 'STAGE_INDEX=%s\n' "$(STAGE_INDEX)"
-	@printf 'STAGE_COUNT=%s\n' "$(STAGE_COUNT)"
-	@printf 'LAYER_START=%s\n' "$(LAYER_START)"
-	@printf 'LAYER_END=%s\n' "$(LAYER_END)"
 
 .PHONY: bench
 bench:
