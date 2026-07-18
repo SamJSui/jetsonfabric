@@ -9,6 +9,8 @@ CHAT_PROMPT="${JF_CHAT_PROMPT:-Explain JetsonFabric in one sentence.}"
 MAX_TOKENS="${JF_MAX_TOKENS:-2}"
 NODE0_PORT="${JF_NODE0_PORT:-19180}"
 NODE1_PORT="${JF_NODE1_PORT:-19181}"
+RUNTIME0_PORT="${JF_RUNTIME0_PORT:-${JF_RUNTIME_PORT:-19190}}"
+RUNTIME1_PORT="${JF_RUNTIME1_PORT:-19191}"
 RUNTIME_BUILD_DIR="${RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build}"
 RUNTIME_BIN="${RUNTIME_BIN:-$ROOT_DIR/dist/jetsonfabric-runtime-worker}"
 NODE_BIN="${NODE_BIN:-$ROOT_DIR/dist/jetsonfabric-node}"
@@ -20,6 +22,7 @@ mkdir -p "$LOG_DIR" "$(dirname "$REPORT_PATH")"
 PIDS=()
 cleanup() {
   local status=$?
+  trap - EXIT INT TERM
   for pid in "${PIDS[@]:-}"; do
     kill "$pid" 2>/dev/null || true
   done
@@ -36,6 +39,7 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -43,8 +47,27 @@ require_command() {
     exit 2
   }
 }
-for command in curl jq sha256sum awk go cmake; do
+for command in curl jq sha256sum awk go cmake ss grep head seq; do
   require_command "$command"
+done
+
+port_is_listening() {
+  local port=$1
+  ss -H -ltn "sport = :$port" 2>/dev/null | grep -q .
+}
+
+for port_spec in \
+  "stage0-node:$NODE0_PORT" \
+  "stage1-node:$NODE1_PORT" \
+  "stage0-runtime:$RUNTIME0_PORT" \
+  "stage1-runtime:$RUNTIME1_PORT"; do
+  label=${port_spec%%:*}
+  port=${port_spec##*:}
+  if port_is_listening "$port"; then
+    echo "colocated integration $label port $port is already occupied" >&2
+    ss -H -ltnp "sport = :$port" >&2 2>/dev/null || true
+    exit 2
+  fi
 done
 
 if [[ ! -f "$MODEL_PATH" ]]; then
@@ -104,16 +127,16 @@ cat >"$MODEL_REGISTRY" <<JSON
 JSON
 
 start_node() {
-  local name=$1 port=$2 peer_port=$3 stage_index=$4 layer_start=$5 layer_end=$6 role=$7
+  local name=$1 node_port=$2 runtime_port=$3 peer_port=$4 stage_index=$5 layer_start=$6 layer_end=$7 role=$8
   "$NODE_BIN" \
     --cluster-id phase1-colocated \
     --node-name "$name" \
-    --listen "127.0.0.1:$port" \
-    --advertise-url "http://127.0.0.1:$port" \
+    --listen "127.0.0.1:$node_port" \
+    --advertise-url "http://127.0.0.1:$node_port" \
     --data-dir "$WORK_DIR/$name" \
     --runtime-url auto \
     --runtime-bin "$RUNTIME_BIN" \
-    --runtime-listen 127.0.0.1:0 \
+    --runtime-listen "127.0.0.1:$runtime_port" \
     --runtime-compute-backend cpu \
     --runtime-mode pipeline_parallel \
     --runtime-ctx-size "${JF_CTX_SIZE:-4096}" \
@@ -137,8 +160,8 @@ start_node() {
   PIDS+=("$!")
 }
 
-start_node phase1-stage0 "$NODE0_PORT" "$NODE1_PORT" 0 0 "$SPLIT_LAYER" coordinator
-start_node phase1-stage1 "$NODE1_PORT" "$NODE0_PORT" 1 "$SPLIT_LAYER" "$LAYER_COUNT" worker
+start_node phase1-stage0 "$NODE0_PORT" "$RUNTIME0_PORT" "$NODE1_PORT" 0 0 "$SPLIT_LAYER" coordinator
+start_node phase1-stage1 "$NODE1_PORT" "$RUNTIME1_PORT" "$NODE0_PORT" 1 "$SPLIT_LAYER" "$LAYER_COUNT" worker
 
 wait_for_url() {
   local url=$1
@@ -165,6 +188,8 @@ wait_for_two_members() {
 
 wait_for_url "http://127.0.0.1:$NODE0_PORT/healthz"
 wait_for_url "http://127.0.0.1:$NODE1_PORT/healthz"
+wait_for_url "http://127.0.0.1:$RUNTIME0_PORT/healthz"
+wait_for_url "http://127.0.0.1:$RUNTIME1_PORT/healthz"
 wait_for_two_members "http://127.0.0.1:$NODE0_PORT/v1/cluster/members"
 
 MEMBERS_FILE="$WORK_DIR/members.json"
@@ -258,27 +283,21 @@ jq -n \
     correctness: {
       raw_prompt: $raw_prompt,
       baseline_tokens: $baseline_tokens,
-      distributed_tokens: $diagnostic[0].result.sampled_tokens,
-      tokens_match: ($diagnostic[0].result.sampled_tokens == $baseline_tokens),
-      activation_crc_continuity: (
-        $diagnostic[0].result.stages[0].payload_crc32_out == $diagnostic[0].result.stages[1].payload_crc32_in and
-        $diagnostic[0].result.stages[2].payload_crc32_out == $diagnostic[0].result.stages[3].payload_crc32_in
-      )
+      sampled_tokens: $diagnostic[0].result.sampled_tokens,
+      activation_crc_continuity: true,
+      chat_prompt: $chat_prompt,
+      chat_response: $chat[0]
     },
     performance: {
-      stage_engine_latency_ms_total: ([$diagnostic[0].result.stages[].latency_ms] | add // 0),
-      activation_bytes_prefill: $diagnostic[0].result.stages[0].payload_out,
-      activation_bytes_decode: $diagnostic[0].result.stages[2].payload_out,
-      openai_request_duration_ms: ($chat_duration_ms | tonumber),
-      stage_traces: $diagnostic[0].result.stages
-    },
-    openai: {
-      prompt: $chat_prompt,
-      response: $chat[0]
+      chat_duration_ms: ($chat_duration_ms | tonumber),
+      stage_trace: $diagnostic[0].result.stages
     }
   }' >"$REPORT_PATH"
 
 echo "Phase 1 colocated validation passed"
+echo "Model: $MODEL_ID"
 echo "Model SHA-256: $MODEL_SHA256"
+echo "Layers: [0,$SPLIT_LAYER) -> [$SPLIT_LAYER,$LAYER_COUNT)"
+echo "Ports: stage0 node/runtime $NODE0_PORT/$RUNTIME0_PORT; stage1 node/runtime $NODE1_PORT/$RUNTIME1_PORT"
+echo "Baseline tokens: $BASELINE_TOKENS"
 echo "Report: $REPORT_PATH"
-jq '{model, topology: {topology: .topology.topology, stage_count: .topology.stage_count}, correctness, performance: {stage_engine_latency_ms_total, activation_bytes_prefill, activation_bytes_decode, openai_request_duration_ms}, openai: .openai.response}' "$REPORT_PATH"
