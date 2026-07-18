@@ -53,7 +53,7 @@ STAGE_COUNT ?= 1
 LAYER_START ?= 0
 LAYER_END ?= 28
 
-# Persistent two-stage colocated developer cluster.
+# Local development and test ports.
 JF_NODE0_PORT ?= 19180
 JF_NODE1_PORT ?= 19181
 DEV_NODE_URL ?= http://127.0.0.1:$(JF_NODE0_PORT)
@@ -69,31 +69,50 @@ BENCH_CONCURRENCY ?= 1
 help:
 	@printf 'JetsonFabric targets\n\n'
 	@printf 'Setup:\n'
-	@printf '  make setup                Prepare pinned llama.cpp checkout\n\n'
+	@printf '  make setup                       Prepare pinned llama.cpp checkout\n\n'
 	@printf 'Build/test:\n'
-	@printf '  make test                 Run Go tests\n'
-	@printf '  make build                Build node binaries and runtime\n'
-	@printf '  make node                 Build node binaries\n'
-	@printf '  make runtime              Build runtime with llama.cpp\n'
-	@printf '  make runtime-cuda         Build runtime with llama.cpp + CUDA\n\n'
+	@printf '  make test                        Run Go unit tests\n'
+	@printf '  make test-integration-single     Run one-stage real-model CPU integration\n'
+	@printf '  make test-integration-pipeline   Run two-stage colocated CPU integration\n'
+	@printf '  make build                       Build node binaries and runtime\n'
+	@printf '  make node                        Build node binaries\n'
+	@printf '  make runtime                     Build runtime with llama.cpp\n'
+	@printf '  make runtime-cuda                Build runtime with llama.cpp + CUDA\n\n'
 	@printf 'Run:\n'
-	@printf '  make run-node             Run one jetsonfabric-node in the foreground\n'
-	@printf '  make run-runtime          Run one runtime worker in the foreground\n'
-	@printf '  make dev-up               Run a persistent two-stage colocated cluster\n'
-	@printf '  make dev-status           Inspect the running development cluster\n'
-	@printf '  make dev-chat             Send a chat request to the development cluster\n\n'
+	@printf '  make run-node                    Run one jetsonfabric-node in the foreground\n'
+	@printf '  make run-runtime                 Run one runtime worker in the foreground\n'
+	@printf '  make dev-up                      Run one full-model pipeline stage\n'
+	@printf '  make dev-status                  Inspect the running development node\n'
+	@printf '  make dev-chat                    Send a chat request to the development node\n\n'
 	@printf 'Developer tools:\n'
-	@printf '  make bench                Run benchmark client against node API\n'
-	@printf '  make clean                Remove generated build artifacts\n\n'
+	@printf '  make bench                       Run benchmark client against node API\n'
+	@printf '  make clean                       Remove generated build artifacts\n\n'
 	@printf 'Common knobs:\n'
 	@printf '  MODEL_PATH=models/model.gguf\n'
-	@printf '  RUNTIME_BUILD_JOBS=1      Safer on Jetson; try 2 or 4 if memory allows\n'
-	@printf '  RUNTIME_CUDA_ARCH=87      Jetson Orin default\n'
+	@printf '  RUNTIME_BUILD_JOBS=1             Safer on Jetson; try 2 or 4 if memory allows\n'
+	@printf '  RUNTIME_CUDA_ARCH=87             Jetson Orin default\n'
 	@printf '  CUDA_NVCC=/usr/local/cuda/bin/nvcc\n'
 
 .PHONY: test
 test:
 	$(GO) test ./...
+
+.PHONY: test-integration-single
+test-integration-single:
+	@MODEL_PATH="$(MODEL_PATH)" \
+	MODEL_ID="$(MODEL)" \
+	RUNTIME_BUILD_JOBS="$(RUNTIME_BUILD_JOBS)" \
+	JF_NODE0_PORT="$(JF_NODE0_PORT)" \
+	bash scripts/local/validate-single-node.sh
+
+.PHONY: test-integration-pipeline
+test-integration-pipeline:
+	@MODEL_PATH="$(MODEL_PATH)" \
+	MODEL_ID="$(MODEL)" \
+	RUNTIME_BUILD_JOBS="$(RUNTIME_BUILD_JOBS)" \
+	JF_NODE0_PORT="$(JF_NODE0_PORT)" \
+	JF_NODE1_PORT="$(JF_NODE1_PORT)" \
+	bash scripts/local/validate-colocated-pipeline.sh
 
 .PHONY: build
 build: test node runtime
@@ -231,8 +250,7 @@ dev-up:
 	NODE_CLUSTER_ID="$(NODE_CLUSTER_ID)" \
 	NODE_ENGINE="$(NODE_ENGINE)" \
 	JF_NODE0_PORT="$(JF_NODE0_PORT)" \
-	JF_NODE1_PORT="$(JF_NODE1_PORT)" \
-	bash scripts/local/run-colocated-dev.sh
+	bash scripts/local/run-dev.sh
 
 .PHONY: dev-status
 dev-status:
@@ -241,18 +259,22 @@ dev-status:
 	@printf 'Members:\n'
 	@curl -fsS "$(DEV_NODE_URL)/v1/cluster/members" | jq
 	@printf '\nRoute preview:\n'
-	@curl -fsS "$(DEV_NODE_URL)/v1/routes/preview?model=$(MODEL)&stage_count=2&allow_colocated_stages=true" | jq
+	@curl -fsS "$(DEV_NODE_URL)/v1/routes/preview?model=$(MODEL)&stage_count=1" | jq
 
 .PHONY: dev-chat
 dev-chat:
-	@curl -fsS -X POST "$(DEV_NODE_URL)/v1/chat/completions" \
+	@tmp="$$(mktemp)"; \
+	status="$$(curl -sS -o "$$tmp" -w '%{http_code}' -X POST "$(DEV_NODE_URL)/v1/chat/completions" \
 		-H 'Content-Type: application/json' \
 		--data-binary "$$(jq -nc \
 			--arg model "$(MODEL)" \
 			--arg prompt "$(DEV_PROMPT)" \
 			--argjson max_tokens "$(DEV_MAX_TOKENS)" \
-			'{model:$$model,messages:[{role:"user",content:$$prompt}],max_tokens:$$max_tokens,jetsonfabric:{stage_count:2,allow_colocated_stages:true}}')" \
-		| jq
+			'{model:$$model,messages:[{role:"user",content:$$prompt}],max_tokens:$$max_tokens}')")"; \
+	jq . "$$tmp" 2>/dev/null || cat "$$tmp"; \
+	case "$$status" in 2*) result=0 ;; *) printf 'HTTP %s\n' "$$status" >&2; result=1 ;; esac; \
+	rm -f "$$tmp"; \
+	exit $$result
 
 .PHONY: print-node-config
 print-node-config:
