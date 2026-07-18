@@ -58,7 +58,10 @@ LAYER_END ?= 28
 # Local development and test ports.
 JF_NODE0_PORT ?= 19180
 JF_NODE1_PORT ?= 19181
+JF_RUNTIME_PORT ?= 19190
+JF_DEV_WORK_DIR ?= .cache/jetsonfabric/dev
 DEV_NODE_URL ?= http://127.0.0.1:$(JF_NODE0_PORT)
+DEV_RUNTIME_URL ?= http://127.0.0.1:$(JF_RUNTIME_PORT)
 DEV_PROMPT ?= Explain JetsonFabric in one sentence.
 DEV_MAX_TOKENS ?= 16
 
@@ -86,7 +89,9 @@ help:
 	@printf '  make run-runtime                 Run one runtime worker in the foreground\n'
 	@printf '  make dev-up                      Run one full-model pipeline stage\n'
 	@printf '  make dev-status                  Inspect the running development node\n'
-	@printf '  make dev-chat                    Send a chat request to the development node\n\n'
+	@printf '  make dev-chat                    Send a chat request to the development node\n'
+	@printf '  make dev-kill                    Stop the recorded dev node and runtime\n'
+	@printf '  make kill                        Alias for make dev-kill\n\n'
 	@printf 'Developer tools:\n'
 	@printf '  make bench                       Run benchmark client against node API\n'
 	@printf '  make clean                       Remove generated build artifacts\n\n'
@@ -94,6 +99,8 @@ help:
 	@printf '  MODEL_PATH=models/model.gguf\n'
 	@printf '  RUNTIME_BUILD_JOBS=1             Safer on Jetson; try 2 or 4 if memory allows\n'
 	@printf '  RUNTIME_CUDA_ARCH=87             Jetson Orin default\n'
+	@printf '  JF_NODE0_PORT=19180              Fixed local node port\n'
+	@printf '  JF_RUNTIME_PORT=19190            Fixed supervised runtime port\n'
 	@printf '  CUDA_NVCC=/usr/local/cuda/bin/nvcc\n'
 
 .PHONY: test
@@ -262,11 +269,26 @@ dev-up:
 	NODE_CLUSTER_ID="$(NODE_CLUSTER_ID)" \
 	NODE_ENGINE="$(NODE_ENGINE)" \
 	JF_NODE0_PORT="$(JF_NODE0_PORT)" \
+	JF_RUNTIME_PORT="$(JF_RUNTIME_PORT)" \
+	JF_DEV_WORK_DIR="$(abspath $(JF_DEV_WORK_DIR))" \
 	bash scripts/local/run-dev.sh
+
+.PHONY: dev-kill kill
+dev-kill:
+	@JF_NODE0_PORT="$(JF_NODE0_PORT)" \
+	JF_RUNTIME_PORT="$(JF_RUNTIME_PORT)" \
+	JF_DEV_WORK_DIR="$(abspath $(JF_DEV_WORK_DIR))" \
+	bash scripts/local/kill-dev.sh
+
+kill: dev-kill
 
 .PHONY: dev-status
 dev-status:
-	@printf 'Health (%s):\n' "$(DEV_NODE_URL)"
+	@printf 'Node: %s\n' "$(DEV_NODE_URL)"
+	@printf 'Runtime: %s\n' "$(DEV_RUNTIME_URL)"
+	@if [ -f "$(JF_DEV_WORK_DIR)/node.pid" ]; then printf 'Node PID: %s\n' "$$(cat "$(JF_DEV_WORK_DIR)/node.pid")"; fi
+	@if [ -f "$(JF_DEV_WORK_DIR)/runtime.pid" ]; then printf 'Runtime PID: %s\n' "$$(cat "$(JF_DEV_WORK_DIR)/runtime.pid")"; fi
+	@printf '\nHealth:\n'
 	@curl -fsS "$(DEV_NODE_URL)/healthz"; printf '\n\n'
 	@printf 'Members:\n'
 	@curl -fsS "$(DEV_NODE_URL)/v1/cluster/members" | jq
