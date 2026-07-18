@@ -289,6 +289,9 @@ struct LlamaCppStageAdapter::Impl {
         inference::StageOutput output;
         output.payload = sampled_token_payload(token);
         output.end_of_generation = config.model->is_end_token(token);
+        if (prefill && first_stage) {
+            output.prompt_tokens = n_tokens;
+        }
         if (!output.end_of_generation) {
             output.token_text = config.model->token_piece(token);
             output.completion_tokens = 1;
