@@ -13,17 +13,17 @@ import (
 )
 
 type layerSplitRunRequest struct {
-	RequestID                string `json:"request_id,omitempty"`
-	Model                    string `json:"model"`
-	Payload                  string `json:"payload"`
-	MaxTokens                int    `json:"max_tokens,omitempty"`
-	StageCount               *int   `json:"stage_count,omitempty"`
-	AllowColocatedStages     bool   `json:"allow_colocated_stages,omitempty"`
-	StrictPayloadTransitions bool   `json:"strict_payload_transitions,omitempty"`
+	RequestID            string `json:"request_id,omitempty"`
+	Model                string `json:"model"`
+	Payload              string `json:"payload"`
+	MaxTokens            int    `json:"max_tokens,omitempty"`
+	StageCount           *int   `json:"stage_count,omitempty"`
+	AllowColocatedStages bool   `json:"allow_colocated_stages,omitempty"`
 }
 
 type layerSplitRunResponse struct {
 	InterStagePayloadKind stagewire.PayloadKind    `json:"inter_stage_payload_kind"`
+	RuntimeIdentity       pipelineRuntimeIdentity  `json:"runtime_identity"`
 	Plan                  clusterplan.RoutePreview `json:"plan"`
 	Result                stageexec.Result         `json:"result"`
 }
@@ -64,7 +64,7 @@ func (s *Server) handleLayerSplitRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.memberSource == nil {
-		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, "membership source is required for layer split run", nil, nil)
+		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, "membership source is required for pipeline run", nil, nil)
 		return
 	}
 
@@ -75,37 +75,53 @@ func (s *Server) handleLayerSplitRun(w http.ResponseWriter, r *http.Request) {
 	if runReq.StageCount != nil {
 		policy.StageCount = *runReq.StageCount
 	}
-	plan := clusterplan.Preview(clusterplan.Request{
-		Model: model, Members: s.memberSource.List(), Now: s.now(),
+	requiredStages := policy.StageCount
+	if requiredStages <= 0 {
+		requiredStages = 1
+		policy.StageCount = requiredStages
+	}
+	members, identity, err := selectPipelineRuntimeMembers(
+		model,
+		s.memberSource.List(),
+		s.now(),
+		s.memberStaleAfter,
+		requiredStages,
+	)
+	if err != nil {
+		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, err.Error(), nil, nil)
+		return
+	}
+	plan := clusterplan.PreviewPipeline(clusterplan.Request{
+		Model: model, Members: members, Now: s.now(),
 		StaleAfter: s.memberStaleAfter, Policy: policy,
 	})
 	if !plan.Valid {
-		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, fmt.Sprintf("no valid layer split route: %s", plan.Reason), &plan, nil)
+		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, fmt.Sprintf("no valid pipeline route: %s", plan.Reason), &plan, nil)
 		return
 	}
-	if plan.Mode != cluster.ExecutionModePipelineParallel || plan.StageCount < 2 {
-		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, "layer split run requires a pipeline_parallel plan with at least two stages", &plan, nil)
+	if plan.Mode != cluster.ExecutionModePipelineParallel || plan.StageCount < 1 {
+		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, "pipeline run requires a pipeline_parallel plan with at least one stage", &plan, nil)
 		return
 	}
 
-	result, err := stageexec.New(stageexec.Config{}).Execute(r.Context(), stageexec.Request{
-		RequestID:                runReq.RequestID,
-		Model:                    model.ID,
-		Payload:                  runReq.Payload,
-		MaxTokens:                runReq.MaxTokens,
-		Plan:                     plan,
-		StrictPayloadTransitions: runReq.StrictPayloadTransitions,
+	result, err := stageexec.New(stageexec.Config{}).Generate(r.Context(), stageexec.Request{
+		RequestID: runReq.RequestID,
+		Model:     model.ID,
+		Payload:   runReq.Payload,
+		MaxTokens: runReq.MaxTokens,
+		Plan:      plan,
 	})
 	if err != nil {
 		writeLayerSplitRunError(w, http.StatusBadGateway, errorPipelineStageFailed, err.Error(), &plan, &result)
 		return
 	}
-	writeJSON(w, http.StatusOK, newLayerSplitRunResponse(plan, result))
+	writeJSON(w, http.StatusOK, newLayerSplitRunResponse(identity, plan, result))
 }
 
-func newLayerSplitRunResponse(plan clusterplan.RoutePreview, result stageexec.Result) layerSplitRunResponse {
+func newLayerSplitRunResponse(identity pipelineRuntimeIdentity, plan clusterplan.RoutePreview, result stageexec.Result) layerSplitRunResponse {
 	return layerSplitRunResponse{
 		InterStagePayloadKind: interStagePayloadKind(result),
+		RuntimeIdentity:       identity,
 		Plan:                  plan,
 		Result:                result,
 	}

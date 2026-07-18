@@ -40,6 +40,12 @@ jobs:
       - name: Run unit tests
         run: go test ./...
 
+      - name: Validate shell syntax
+        shell: bash
+        run: |
+          find scripts -type f -name '*.sh' -print0 \
+            | xargs -0 -r -n1 bash -n
+
       - name: Install native build dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build jq
 
@@ -68,10 +74,53 @@ jobs:
           path: |
             runtime/third_party/llama.cpp
             runtime/build-ci-cpu
-          key: ci-runtime-${{ runner.os }}-${{ env.CI_LLAMA_CPP_COMMIT }}-${{ hashFiles('runtime/CMakeLists.txt', 'runtime/**/*.cpp', 'runtime/**/*.h', 'runtime/**/*.hpp') }}
+          key: ci-runtime-${{ runner.os }}-${{ env.CI_LLAMA_CPP_COMMIT }}-${{ hashFiles('Makefile', 'runtime/CMakeLists.txt', 'runtime/**/*.cpp', 'runtime/**/*.h', 'runtime/**/*.hpp', 'runtime/patches/**', 'scripts/ci/smoke-binary-activation.sh', 'scripts/local/validate-single-node.sh', 'scripts/local/validate-colocated-pipeline.sh') }}
+
+      - name: Run one-node real CPU E2E
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p .ci-logs/single-runtime
+          make test-integration-single \
+            MODEL=ci-tiny-llama \
+            MODEL_PATH="$CI_MODEL_PATH" \
+            LLAMA_CPP_COMMIT="$CI_LLAMA_CPP_COMMIT" \
+            INTEGRATION_BUILD_DIR="$CI_RUNTIME_BUILD_DIR" \
+            INTEGRATION_RUNTIME_BIN=dist/jetsonfabric-runtime-worker-ci-cpu \
+            RUNTIME_BUILD_JOBS=2 \
+            JF_NODE0_PORT=18180 \
+            2>&1 | tee .ci-logs/single-runtime/step.log
 
       - name: Run two-node real CPU E2E
-        run: bash scripts/ci/smoke-real-runtime-cpu.sh
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p .ci-logs/real-runtime
+          make test-integration-pipeline \
+            MODEL=ci-tiny-llama \
+            MODEL_PATH="$CI_MODEL_PATH" \
+            LLAMA_CPP_COMMIT="$CI_LLAMA_CPP_COMMIT" \
+            INTEGRATION_BUILD_DIR="$CI_RUNTIME_BUILD_DIR" \
+            INTEGRATION_RUNTIME_BIN=dist/jetsonfabric-runtime-worker-ci-cpu \
+            RUNTIME_BUILD_JOBS=2 \
+            JF_NODE0_PORT=18180 \
+            JF_NODE1_PORT=18181 \
+            JF_RUNTIME0_PORT=18190 \
+            JF_RUNTIME1_PORT=18191 \
+            JF_REPORT_PATH=.ci-logs/real-runtime/report.json \
+            2>&1 | tee .ci-logs/real-runtime/step.log
+
+      - name: Run native runtime unit tests
+        run: ctest --test-dir "$CI_RUNTIME_BUILD_DIR" --output-on-failure
 
       - name: Run two-node binary activation E2E
         run: bash scripts/ci/smoke-binary-activation.sh
+
+      - name: Upload CI diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-diagnostics-${{ github.run_id }}
+          path: .ci-logs
+          if-no-files-found: warn
+          retention-days: 7

@@ -9,7 +9,7 @@ namespace jetsonfabric::runtime::pipeline_parallel {
 // transformer layers.
 class SyntheticActivationExecutor final : public LayerExecutor {
 public:
-    StageRunResult run_layers(const protocol::StageRequest& request) const override;
+    inference::ExecutionResult execute(const inference::StageInput& input) const override;
 };
 
 } // namespace jetsonfabric::runtime::pipeline_parallel

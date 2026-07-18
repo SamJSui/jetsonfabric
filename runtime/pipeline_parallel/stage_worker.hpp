@@ -13,14 +13,17 @@ class StageWorker {
 public:
     StageWorker(
         std::string node_name,
+        std::string model_id,
         StageAssignment assignment,
         const LayerExecutor& layer_executor
     );
 
     StageRunResult run(const protocol::StageRequest& request) const;
+    StageRunResult close_session(const protocol::StageRequest& request) const;
 
 private:
     std::string node_name_;
+    std::string model_id_;
     StageAssignment assignment_;
     const LayerExecutor& layer_executor_;
 

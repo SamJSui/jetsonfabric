@@ -9,8 +9,16 @@
 namespace jetsonfabric::runtime::pipeline_parallel {
 namespace {
 
-StageRunResult error_result(const std::string& code, const std::string& message) {
-    return StageRunResult{false, "400 Bad Request", code, message, {}};
+std::uint32_t crc32(const std::vector<std::uint8_t>& payload) {
+    std::uint32_t crc = 0xffffffffU;
+    for (const std::uint8_t value : payload) {
+        crc ^= value;
+        for (int bit = 0; bit < 8; ++bit) {
+            const std::uint32_t mask = 0U - (crc & 1U);
+            crc = (crc >> 1U) ^ (0xedb88320U & mask);
+        }
+    }
+    return ~crc;
 }
 
 void append_u32_le(std::vector<std::uint8_t>& out, std::uint32_t value) {
@@ -21,7 +29,7 @@ void append_u32_le(std::vector<std::uint8_t>& out, std::uint32_t value) {
 }
 
 std::vector<std::uint8_t> make_activation(const std::vector<std::uint8_t>& input) {
-    const std::uint32_t seed = protocol::payload_crc32(input);
+    const std::uint32_t seed = crc32(input);
     std::vector<std::uint8_t> activation;
     activation.reserve(4U * 16U * sizeof(float));
     for (std::uint32_t index = 0; index < 64U; ++index) {
@@ -32,72 +40,88 @@ std::vector<std::uint8_t> make_activation(const std::vector<std::uint8_t>& input
     return activation;
 }
 
-protocol::StageResponse base_response(const protocol::StageRequest& request) {
-    protocol::StageResponse response;
-    response.session_id = request.session_id;
-    response.request_id = request.request_id;
-    response.model_id = request.model_id;
-    response.phase = request.phase;
-    response.decode_step = request.decode_step;
-    response.stage_index = request.stage_index;
-    response.stage_count = request.stage_count;
-    response.node_name = request.node_name;
-    response.layer_start = request.layer_start;
-    response.layer_end = request.layer_end;
-    response.bytes_in = static_cast<std::int64_t>(request.payload.size());
-    return response;
+inference::Payload activation_payload(std::vector<std::uint8_t> activation) {
+    return inference::Payload{
+        .kind = inference::PayloadKind::Activation,
+        .encoding = "",
+        .tensor = inference::TensorDescriptor{
+            .dtype = "f32",
+            .shape = {4, 16},
+            .byte_order = "little",
+            .layout = "row_major",
+        },
+        .bytes = std::move(activation),
+    };
 }
 
-StageRunResult activation_result(const protocol::StageRequest& request, std::vector<std::uint8_t> activation) {
-    protocol::StageResponse response = base_response(request);
-    response.payload_kind = "activation";
-    response.dtype = "f32";
-    response.shape = {4, 16};
-    response.byte_order = "little";
-    response.layout = "row_major";
-    response.payload = std::move(activation);
-    response.bytes_out = static_cast<std::int64_t>(response.payload.size());
-    return StageRunResult{true, "200 OK", "", "", std::move(response)};
+inference::Payload sampled_token_payload(const std::vector<std::uint8_t>& activation) {
+    inference::Payload payload{
+        .kind = inference::PayloadKind::SampledToken,
+        .encoding = "",
+        .tensor = inference::TensorDescriptor{
+            .dtype = "u32",
+            .shape = {1},
+            .byte_order = "little",
+            .layout = "row_major",
+        },
+        .bytes = {},
+    };
+    append_u32_le(payload.bytes, crc32(activation));
+    return payload;
 }
 
-StageRunResult sampled_token_result(const protocol::StageRequest& request, const std::vector<std::uint8_t>& activation) {
-    protocol::StageResponse response = base_response(request);
-    response.payload_kind = "sampled_token";
-    response.dtype = "u32";
-    response.shape = {1};
-    response.byte_order = "little";
-    response.layout = "row_major";
-    append_u32_le(response.payload, protocol::payload_crc32(activation));
-    response.bytes_out = static_cast<std::int64_t>(response.payload.size());
-    response.completion_tokens = 1;
-    return StageRunResult{true, "200 OK", "", "", std::move(response)};
+inference::ExecutionResult activation_result(std::vector<std::uint8_t> activation) {
+    return inference::ExecutionResult::success(inference::StageOutput{
+        .payload = activation_payload(std::move(activation)),
+    });
+}
+
+inference::ExecutionResult sampled_token_result(const std::vector<std::uint8_t>& activation) {
+    return inference::ExecutionResult::success(inference::StageOutput{
+        .payload = sampled_token_payload(activation),
+        .completion_tokens = 1,
+    });
+}
+
+bool is_expected_activation(const inference::Payload& payload) {
+    return payload.kind == inference::PayloadKind::Activation &&
+           payload.tensor.dtype == "f32" &&
+           payload.tensor.shape == std::vector<std::int64_t>({4, 16}) &&
+           payload.tensor.byte_order == "little" &&
+           payload.tensor.layout == "row_major" &&
+           payload.bytes.size() == 256U;
 }
 
 } // namespace
 
-StageRunResult SyntheticActivationExecutor::run_layers(const protocol::StageRequest& request) const {
-    if (request.is_first_stage()) {
-        const bool valid_input = request.phase == "prefill"
-            ? request.payload_kind == "text" || request.payload_kind == "tokens"
-            : request.payload_kind == "sampled_token";
-        if (!valid_input) {
-            return error_result("invalid_synthetic_input", "first synthetic stage received an invalid payload kind");
-        }
-        std::vector<std::uint8_t> activation = make_activation(request.payload);
-        if (request.is_last_stage()) {
-            return sampled_token_result(request, activation);
-        }
-        return activation_result(request, std::move(activation));
+inference::ExecutionResult SyntheticActivationExecutor::execute(
+    const inference::StageInput& input
+) const {
+    if (!inference::is_allowed_input(input.phase, input.position, input.payload.kind)) {
+        return inference::ExecutionResult::invalid_input(
+            "invalid_synthetic_input",
+            "synthetic stage received a payload kind that is invalid for its phase and position"
+        );
     }
 
-    if (request.payload_kind != "activation" || request.dtype != "f32" ||
-        request.shape != std::vector<std::int64_t>({4, 16}) || request.payload.size() != 256U) {
-        return error_result("invalid_synthetic_activation", "synthetic downstream stage requires f32[4,16] activation bytes");
+    if (input.position.is_first()) {
+        std::vector<std::uint8_t> activation = make_activation(input.payload.bytes);
+        if (input.position.is_last()) {
+            return sampled_token_result(activation);
+        }
+        return activation_result(std::move(activation));
     }
-    if (request.is_last_stage()) {
-        return sampled_token_result(request, request.payload);
+
+    if (!is_expected_activation(input.payload)) {
+        return inference::ExecutionResult::invalid_input(
+            "invalid_synthetic_activation",
+            "synthetic downstream stage requires f32[4,16] activation bytes"
+        );
     }
-    return activation_result(request, request.payload);
+    if (input.position.is_last()) {
+        return sampled_token_result(input.payload.bytes);
+    }
+    return activation_result(input.payload.bytes);
 }
 
 } // namespace jetsonfabric::runtime::pipeline_parallel

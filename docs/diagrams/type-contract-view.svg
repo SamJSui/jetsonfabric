@@ -1,53 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 780" role="img" aria-labelledby="title desc">
-  <title id="title">JetsonFabric Type Contract Diagram</title>
-  <desc id="desc">Class-style Go type contract view showing the core structs, ownership boundaries, and important methods.</desc>
-  <defs>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
-    <style>
-      .title{font:700 26px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.subtitle{font:14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#475569}.class{fill:#f8fafc;stroke:#334155;stroke-width:2;rx:14}.owner{fill:#ecfeff;stroke:#0891b2;stroke-width:3;rx:16}.runtime{fill:#fef3c7;stroke:#d97706;stroke-width:2;rx:14}.label{font:700 15px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.small{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#334155}.caption{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#64748b}.line{stroke:#334155;stroke-width:2;marker-end:url(#arrow);fill:none}.dash{stroke:#64748b;stroke-width:2;stroke-dasharray:6 5;marker-end:url(#arrow);fill:none}
-    </style>
-  </defs>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 850" role="img" aria-labelledby="title desc">
+  <title id="title">JetsonFabric Current Type and Method Contracts</title>
+  <desc id="desc">The most important Go structs and C++ classes in the current distributed generation path.</desc>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker><style>.title{font:700 26px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.subtitle{font:14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#475569}.go{fill:#ecfeff;stroke:#0891b2;stroke-width:2;rx:14}.policy{fill:#f5f3ff;stroke:#7c3aed;stroke-width:2;rx:14}.wire{fill:#fff7ed;stroke:#ea580c;stroke-width:2;rx:14}.cpp{fill:#fef3c7;stroke:#d97706;stroke-width:2;rx:14}.label{font:700 14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.small{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#334155}.caption{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#64748b}.line{stroke:#334155;stroke-width:2;marker-end:url(#arrow);fill:none}.dash{stroke:#64748b;stroke-width:2;stroke-dasharray:6 5;marker-end:url(#arrow);fill:none}</style></defs>
+  <text x="40" y="42" class="title">Current type and method contracts</text><text x="40" y="68" class="subtitle">Go structs coordinate a request; C++ classes own model execution and persistent stage-local session state.</text>
 
-  <text x="40" y="45" class="title">Type contract diagram</text>
-  <text x="40" y="70" class="subtitle">Go has structs and interfaces, not classes; this view shows the main contracts worth remembering.</text>
+  <rect x="45" y="105" width="235" height="155" class="go"/><text x="162" y="135" text-anchor="middle" class="label">node.App</text><text x="70" y="162" class="small">cfg Config</text><text x="70" y="181" class="small">store *membership.Store</text><text x="70" y="200" class="small">server *http.Server</text><text x="70" y="219" class="small">runtimeSupervisor</text><text x="70" y="243" class="small">Run(ctx), shutdown()</text>
+  <rect x="335" y="105" width="250" height="155" class="policy"/><text x="460" y="135" text-anchor="middle" class="label">coordinator.Server</text><text x="360" y="162" class="small">registry Registry</text><text x="360" y="181" class="small">memberSource</text><text x="360" y="200" class="small">handleChatCompletions()</text><text x="360" y="219" class="small">selectPipelineRuntimeMembers()</text><text x="360" y="238" class="small">stageexec.Generate()</text>
+  <rect x="640" y="105" width="250" height="155" class="policy"/><text x="765" y="135" text-anchor="middle" class="label">clusterplan.RoutePreview</text><text x="665" y="162" class="small">Mode, Topology</text><text x="665" y="181" class="small">StageCount</text><text x="665" y="200" class="small">Stages []Stage</text><text x="665" y="219" class="small">Warnings, Reason</text><text x="665" y="238" class="small">Preview(Request)</text>
+  <rect x="945" y="95" width="315" height="175" class="policy"/><text x="1102" y="125" text-anchor="middle" class="label">stageexec.Executor</text><text x="970" y="152" class="small">Generate(ctx, Request)</text><text x="970" y="171" class="small">  full completion lifecycle</text><text x="970" y="194" class="small">RunPipelinePass(ctx, Request)</text><text x="970" y="213" class="small">  one prefill/decode traversal</text><text x="970" y="236" class="small">callStage(stage, request)</text><text x="970" y="255" class="small">CloseSession(session, plan)</text>
 
-  <rect x="60" y="115" width="255" height="172" class="owner"/>
-  <text x="187" y="145" text-anchor="middle" class="label">node.App</text>
-  <text x="85" y="172" class="small">cfg Config</text><text x="85" y="190" class="small">nodeID string</text><text x="85" y="208" class="small">store *membership.Store</text><text x="85" y="226" class="small">server *http.Server</text><text x="85" y="244" class="small">runtimeSupervisor</text><text x="85" y="266" class="small">Run(ctx), shutdown()</text>
+  <rect x="120" y="360" width="250" height="165" class="go"/><text x="245" y="390" text-anchor="middle" class="label">membership.Member</text><text x="145" y="417" class="small">NodeID, NodeName, APIURL</text><text x="145" y="436" class="small">Capabilities, Engines</text><text x="145" y="455" class="small">LastSeen</text><text x="145" y="479" class="small">Valid(), IsStale()</text><text x="145" y="498" class="small">configured partition metadata</text>
+  <rect x="420" y="350" width="250" height="185" class="wire"/><text x="545" y="380" text-anchor="middle" class="label">stagewire.Metadata</text><text x="445" y="407" class="small">Operation</text><text x="445" y="426" class="small">SessionID, RequestID</text><text x="445" y="445" class="small">ModelID, Phase, DecodeStep</text><text x="445" y="464" class="small">StageIndex, StageCount</text><text x="445" y="483" class="small">LayerStart, LayerEnd</text><text x="445" y="502" class="small">PayloadKind, dtype, shape</text>
+  <rect x="720" y="360" width="250" height="165" class="wire"/><text x="845" y="390" text-anchor="middle" class="label">stageexec.StageTrace</text><text x="745" y="417" class="small">RequestID, SessionID</text><text x="745" y="436" class="small">StageIndex, NodeID</text><text x="745" y="455" class="small">LatencyMS, BytesIn/Out</text><text x="745" y="474" class="small">PayloadKindIn/Out</text><text x="745" y="493" class="small">CRC32In/Out</text>
+  <rect x="1020" y="350" width="250" height="185" class="wire"/><text x="1145" y="380" text-anchor="middle" class="label">inference contracts</text><text x="1045" y="407" class="small">Phase</text><text x="1045" y="426" class="small">StagePosition</text><text x="1045" y="445" class="small">LayerRange</text><text x="1045" y="464" class="small">Payload + TensorDescriptor</text><text x="1045" y="483" class="small">ValidatePayloadTransition()</text><text x="1045" y="502" class="small">StageInput / StageOutput</text>
 
-  <rect x="385" y="115" width="235" height="172" class="class"/>
-  <text x="502" y="145" text-anchor="middle" class="label">node.Config</text>
-  <text x="410" y="172" class="small">ClusterID, NodeName</text><text x="410" y="190" class="small">Listen, APIURL</text><text x="410" y="208" class="small">RuntimeURL, RuntimeListen</text><text x="410" y="226" class="small">Model, ModelPath</text><text x="410" y="244" class="small">Role, DiscoveryModes</text><text x="410" y="266" class="small">RuntimeAuto()</text>
+  <rect x="85" y="645" width="250" height="145" class="cpp"/><text x="210" y="675" text-anchor="middle" class="label">RuntimeService</text><text x="110" y="702" class="small">run_stage(body)</text><text x="110" y="721" class="small">decode_stage_request()</text><text x="110" y="740" class="small">dispatch execute/close</text>
+  <rect x="385" y="625" width="250" height="185" class="cpp"/><text x="510" y="655" text-anchor="middle" class="label">StageWorker</text><text x="410" y="682" class="small">configured model ID</text><text x="410" y="701" class="small">configured StageAssignment</text><text x="410" y="725" class="small">run(request)</text><text x="410" y="744" class="small">validate_request()</text><text x="410" y="763" class="small">close_session()</text><text x="410" y="782" class="small">protocol ↔ inference</text>
+  <rect x="685" y="645" width="250" height="145" class="cpp"/><text x="810" y="675" text-anchor="middle" class="label">LayerExecutor</text><text x="710" y="702" class="small">execute(StageInput)</text><text x="710" y="721" class="small">close_session(sessionID)</text><text x="710" y="744" class="small">engine-neutral interface</text>
+  <rect x="985" y="625" width="285" height="185" class="cpp"/><text x="1127" y="655" text-anchor="middle" class="label">LlamaCppStageAdapter</text><text x="1010" y="682" class="small">model *LlamaCppModel</text><text x="1010" y="701" class="small">configured position + layers</text><text x="1010" y="720" class="small">sessions map[sessionID]Context</text><text x="1010" y="744" class="small">execute(), create_context()</text><text x="1010" y="763" class="small">prune_expired_sessions()</text><text x="1010" y="782" class="small">llama_decode + sampling</text>
 
-  <rect x="700" y="115" width="235" height="172" class="class"/>
-  <text x="817" y="145" text-anchor="middle" class="label">membership.Member</text>
-  <text x="725" y="172" class="small">ClusterID, NodeID</text><text x="725" y="190" class="small">NodeName, Hostname</text><text x="725" y="208" class="small">Role, APIURL, RuntimeURL</text><text x="725" y="226" class="small">Capabilities, Metrics</text><text x="725" y="244" class="small">StartedAt, LastSeen</text><text x="725" y="266" class="small">Valid(), IsStale()</text>
-
-  <rect x="60" y="360" width="235" height="152" class="class"/>
-  <text x="177" y="390" text-anchor="middle" class="label">membership.Store</text>
-  <text x="85" y="417" class="small">members map[string]Member</text><text x="85" y="435" class="small">mu sync.RWMutex</text><text x="85" y="457" class="small">Upsert(Member)</text><text x="85" y="475" class="small">Get(nodeID)</text><text x="85" y="493" class="small">List(), Prune()</text>
-
-  <rect x="365" y="340" width="250" height="192" class="owner"/>
-  <text x="490" y="370" text-anchor="middle" class="label">facade.Router</text>
-  <text x="390" y="397" class="small">selfID string</text><text x="390" y="415" class="small">store *Store</text><text x="390" y="433" class="small">coordinator http.Handler</text><text x="390" y="451" class="small">stageRunner http.Handler</text><text x="390" y="473" class="small">handleCoordinator()</text><text x="390" y="491" class="small">handleStageRun()</text><text x="390" y="509" class="small">handleAnnounce()</text>
-
-  <rect x="690" y="360" width="235" height="152" class="runtime"/>
-  <text x="807" y="390" text-anchor="middle" class="label">ChatProxy</text>
-  <text x="715" y="417" class="small">runtimeURL *url.URL</text><text x="715" y="435" class="small">nodeName, model</text><text x="715" y="457" class="small">ServeHTTP()</text><text x="715" y="475" class="small">prepareChatRequest()</text><text x="715" y="493" class="small">buildStageRequest()</text>
-
-  <rect x="970" y="360" width="190" height="152" class="runtime"/>
-  <text x="1065" y="390" text-anchor="middle" class="label">StageProxy</text>
-  <text x="990" y="417" class="small">runtimeURL</text><text x="990" y="435" class="small">client</text><text x="990" y="457" class="small">ServeHTTP()</text><text x="990" y="475" class="small">newRuntimeRequest()</text><text x="990" y="493" class="small">copyResponse()</text>
-
-  <rect x="385" y="600" width="250" height="112" class="runtime"/>
-  <text x="510" y="630" text-anchor="middle" class="label">RuntimeSupervisor</text>
-  <text x="410" y="657" class="small">cmd *exec.Cmd</text><text x="410" y="675" class="small">URL string</text><text x="410" y="697" class="small">StartRuntimeSupervisor()</text>
-
-  <rect x="700" y="600" width="235" height="112" class="class"/>
-  <text x="817" y="630" text-anchor="middle" class="label">election.Tracker</text>
-  <text x="725" y="657" class="small">Epoch</text><text x="725" y="675" class="small">Leader</text><text x="725" y="697" class="small">Explain(now, members)</text>
-
-  <path d="M315 200 H385" class="line"/><path d="M315 245 C335 310, 120 320, 177 360" class="line"/><path d="M295 436 H365" class="line"/><path d="M620 201 H700" class="dash"/><path d="M490 340 C555 280, 720 270, 817 287" class="dash"/><path d="M615 436 H690" class="line"/><path d="M925 436 H970" class="line"/><path d="M510 600 C420 555, 250 520, 187 287" class="dash"/><path d="M615 470 C675 525, 755 575, 817 600" class="dash"/>
-
-  <text x="336" y="188" class="caption">owns config</text><text x="319" y="424" class="caption">reads members</text><text x="642" y="424" class="caption">calls local</text><text x="938" y="424" class="caption">stage path</text>
+  <path d="M280 182 H335" class="line"/><path d="M585 182 H640" class="line"/><path d="M890 182 H945" class="line"/>
+  <path d="M460 260 C430 315,320 335,245 360" class="dash"/><path d="M1102 270 C1000 320,680 330,545 350" class="line"/><path d="M1102 270 C1030 315,900 335,845 360" class="dash"/><path d="M1102 270 V350" class="line"/>
+  <path d="M545 535 C490 575,370 610,210 645" class="dash"/><path d="M335 717 H385" class="line"/><path d="M635 717 H685" class="line"/><path d="M935 717 H985" class="line"/>
+  <text x="292" y="170" class="caption">constructs</text><text x="900" y="170" class="caption">plan → generation</text><text x="645" y="335" class="caption">wire + traces</text><text x="948" y="705" class="caption">adapter</text>
 </svg>

@@ -9,7 +9,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/SamJSui/jetsonfabric/internal/api"
 	"github.com/SamJSui/jetsonfabric/internal/benchmarks"
 	"github.com/SamJSui/jetsonfabric/internal/coordinator"
 	"github.com/SamJSui/jetsonfabric/internal/discovery"
@@ -21,14 +20,15 @@ import (
 )
 
 type App struct {
-	cfg               Config
-	nodeID            string
-	startedAt         time.Time
-	store             *membership.Store
-	discovery         discovery.Source
-	mdnsAdvertiser    *discovery.MDNSAdvertiser
-	server            *http.Server
-	runtimeSupervisor *RuntimeSupervisor
+	cfg                 Config
+	nodeID              string
+	startedAt           time.Time
+	modelArtifactSHA256 string
+	store               *membership.Store
+	discovery           discovery.Source
+	mdnsAdvertiser      *discovery.MDNSAdvertiser
+	server              *http.Server
+	runtimeSupervisor   *RuntimeSupervisor
 }
 
 func New(cfg Config) (*App, error) {
@@ -53,7 +53,17 @@ func buildApp(cfg Config) (*App, error) {
 		return nil, err
 	}
 
-	return newApp(cfg, nodeID), nil
+	app := newApp(cfg, nodeID)
+	if cfg.ModelPath != "" {
+		app.modelArtifactSHA256, err = computeModelArtifactSHA256(cfg.ModelPath)
+		if err != nil {
+			return nil, fmt.Errorf("compute configured model identity: %w", err)
+		}
+		// newApp publishes an initial local member. Replace it now that the
+		// artifact identity is available.
+		app.store.Upsert(app.selfMember(time.Now().UTC()))
+	}
+	return app, nil
 }
 
 func newApp(cfg Config, nodeID string) *App {
@@ -102,24 +112,9 @@ func (a *App) stageRunner() (http.Handler, error) {
 }
 
 func (a *App) publicRouter(coordinatorRouter http.Handler) (http.Handler, error) {
-	chatProxy, err := a.chatProxy()
-	if err != nil {
-		return nil, err
-	}
-	mux := http.NewServeMux()
-	mux.Handle(api.PathChatCompletions, chatProxy)
-	mux.Handle("/", coordinatorRouter)
-	return mux, nil
-}
-
-func (a *App) chatProxy() (http.Handler, error) {
-	return runtimebridge.NewChatProxy(runtimebridge.ChatProxyConfig{
-		RuntimeURL: a.cfg.RuntimeURL,
-		NodeName:   a.cfg.NodeName,
-		Model:      a.cfg.Model,
-		LayerStart: 0,
-		LayerEnd:   28,
-	})
+	// All public APIs, including /v1/chat/completions, are coordinator-owned.
+	// Followers proxy them to the elected leader through the facade router.
+	return coordinatorRouter, nil
 }
 
 func (a *App) configureDiscovery() {
@@ -217,19 +212,6 @@ func (a *App) startMDNS(ctx context.Context) {
 		return
 	}
 	log.Printf("JetsonFabric node advertising with mDNS service=%s domain=%s", a.cfg.MDNSService, a.cfg.MDNSDomain)
-}
-
-func (a *App) listen(errCh chan<- error) {
-	log.Printf(
-		"JetsonFabric node listening on http://%s advertised=%s cluster=%s node_id=%s role=%s discovery=%v",
-		a.cfg.Listen,
-		a.cfg.APIURL,
-		a.cfg.ClusterID,
-		a.nodeID,
-		a.cfg.Role,
-		a.cfg.DiscoveryModes,
-	)
-	errCh <- a.server.ListenAndServe()
 }
 
 func (a *App) shutdown(errCh <-chan error) error {
@@ -352,6 +334,7 @@ func (a *App) selfMember(now time.Time) membership.Member {
 		OS:               snapshot.OS,
 		Capabilities:     a.memberCapabilities(snapshot.Capabilities),
 		Metrics:          snapshot.Metrics,
+		Engines:          a.engineEndpoints(),
 		StartedAt:        a.startedAt,
 		LastSeen:         now,
 	}

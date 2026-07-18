@@ -135,6 +135,9 @@ func Validate(frame Frame) error {
 	if m.ProtocolVersion != Version {
 		return fmt.Errorf("protocol_version must be %d", Version)
 	}
+	if !m.Operation.Valid() {
+		return fmt.Errorf("invalid operation %q", m.Operation)
+	}
 	if strings.TrimSpace(m.SessionID) == "" {
 		return errors.New("session_id is required")
 	}
@@ -173,6 +176,9 @@ func Validate(frame Frame) error {
 
 func normalizeFrame(frame Frame) Frame {
 	frame.ProtocolVersion = Version
+	if frame.Operation == "" {
+		frame.Operation = OperationExecute
+	}
 	if frame.Phase == "" {
 		if frame.DecodeStep == 0 {
 			frame.Phase = inference.PhasePrefill

@@ -1,85 +1,104 @@
 # Architecture Diagrams
 
-These checked-in SVG diagrams describe the current JetsonFabric node fabric and
-the activation-pipeline target. They render on GitHub without Mermaid support.
+These checked-in SVG diagrams are the visual source of truth for JetsonFabric.
+They are divided into **current implementation** and **target architecture** so a
+future design is never mistaken for code that already exists.
 
-## Codebase Map
+## Current Implementation
 
-![JetsonFabric codebase map](diagrams/codebase-map.svg)
+### Codebase Map
 
-## Package Dependency View
+A repository-level tour from the Go service entrypoint to the C++ partial-layer
+runtime.
+
+![JetsonFabric current codebase map](diagrams/codebase-map.svg)
+
+### Go Package Dependency View
+
+Arrows show caller/importer direction. Higher-level packages own policy; lower-
+level packages own transport and execution mechanisms.
 
 ![JetsonFabric Go package dependency diagram](diagrams/package-dependency.svg)
 
-## Type Contract View
+### Type and Method Contract View
 
-![JetsonFabric type contract view](diagrams/type-contract-view.svg)
+The main Go structs and C++ classes involved in one distributed generation.
 
-## Current Node Component View
+![JetsonFabric current type and method contracts](diagrams/type-contract-view.svg)
 
-A `jetsonfabric-node` owns identity, membership, discovery, election, facade
-routing, planning, runtime bridging, and its supervised runtime worker.
+### Current Service Component View
 
-![JetsonFabric current node component view](diagrams/component-view.svg)
+A client may call any Go node. The elected leader coordinates the request through
+peer node APIs and each node's supervised C++ runtime.
 
-## Startup Sequence
+![JetsonFabric current service component view](diagrams/component-view.svg)
 
-The listener is bound before externally advertised API and runtime addresses are
-derived.
+### Startup Sequence
+
+The node binds its listener, derives advertised addresses, starts the supervised
+runtime, publishes self membership, and begins discovery.
 
 ![JetsonFabric node startup sequence](diagrams/startup-sequence.svg)
 
-## Membership-Backed Planning
+### Deployment and Topology
 
-The planner consumes a fresh membership snapshot and returns count-aware stages,
-layer ranges, topology counts, and peer API URLs.
-
-![JetsonFabric membership-backed planning component view](diagrams/future-layer-split-component.svg)
-
-## Model Registry and Runtime Artifact Flow
-
-The Go node loads model metadata. The C++ runtime worker loads local model
-artifacts through its configured inference engine adapter.
-
-![JetsonFabric model registry and artifact flow](diagrams/model-artifact-flow.svg)
-
-## Go Package Boundary View
-
-![JetsonFabric Go package boundary view](diagrams/go-contract-view.svg)
-
-## Node Discovery and Membership Hydration
-
-![JetsonFabric node discovery sequence](diagrams/agent-join-sequence.svg)
-
-## Current Any-Node Chat Path
-
-Chat requests use `stage_index=0`, `stage_count=1`, and a text payload. Stage
-position is derived from count arithmetic rather than a role string.
-
-![JetsonFabric current any-node chat sequence](diagrams/poc-prompt-sequence.svg)
-
-## Sequential Stage Path and Activation Target
-
-Sequential node/runtime handoff is current. Replacing text handoff with real
-activation tensors and assigned-layer execution is the next runtime milestone.
-
-![JetsonFabric layer-split sequence](diagrams/layer-split-sequence.svg)
-
-## Deployment View
-
-Logical node count and physical host count are separate. Runtime URLs are local;
-peer traffic uses node API URLs.
+Logical node count and physical host count are separate. Runtime URLs remain
+local; peer traffic uses node API URLs.
 
 ![JetsonFabric deployment view](diagrams/deployment-view.svg)
 
-## Logical Node Identity and Topology
-
-Multiple logical nodes may share one physical host for development. Route metadata
-reports this as `topology=colocated`; physical multi-host execution reports
-`topology=distributed`.
-
-![JetsonFabric logical node identity policy](diagrams/node-name-conflict.svg)
-
-## Test Strategy View
+### Test Strategy
 
 ![JetsonFabric test strategy view](diagrams/test-strategy-view.svg)
+
+## Generation Ownership
+
+### Current Versus Target Call Stack
+
+Today Go `stageexec` owns both the token loop and stage loop. The target moves the
+generation data plane behind one runtime `Generate` call while preserving the
+unavoidable internal prefill/decode passes.
+
+![JetsonFabric generation call ownership](diagrams/generation-call-stack.svg)
+
+### Target One-Call Distributed Generation Sequence
+
+The coordinator selects a prepared plan and calls one runtime pipeline leader.
+The runtime leader owns prefill, repeated decode passes, direct activation
+transport, cancellation, and session cleanup.
+
+![JetsonFabric target one-call generation sequence](diagrams/layer-split-sequence.svg)
+
+## Target Dynamic Runtime Architecture
+
+These diagrams describe the next milestone. They are design targets, not claims
+about the current runtime.
+
+### Dynamic Model Deployment Component View
+
+Runtimes load model partitions on demand from versioned deployment plans. Backend
+is placement metadata; model and activation compatibility determine correctness.
+
+![JetsonFabric target dynamic runtime component view](diagrams/future-layer-split-component.svg)
+
+### Model Artifact and In-Memory Lifecycle
+
+A model may be registered and present on disk without occupying runtime memory.
+`ModelManager`, `ModelCache`, and `SessionManager` prepare, pin, drain, and evict
+stage-local model partitions.
+
+![JetsonFabric target model artifact and memory flow](diagrams/model-artifact-flow.svg)
+
+### Safe Rebalance Sequence
+
+When a new node joins, the coordinator prepares a new deployment epoch, waits for
+all partitions to become ready, routes new sessions to the new epoch, lets old
+sessions drain on their original plan, and only then unloads obsolete partitions.
+
+![JetsonFabric safe pipeline rebalance sequence](diagrams/rebalance-sequence.svg)
+
+## Supporting Historical Diagrams
+
+The remaining SVGs under `docs/diagrams/` preserve earlier discovery, identity,
+and proof-of-concept views. The diagrams linked above supersede them for the
+current distributed-runtime architecture.

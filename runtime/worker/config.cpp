@@ -140,6 +140,13 @@ Config parse_args(int argc, char** argv) {
     if (cfg.threads < 0) fail("--threads must be zero or greater");
 
     validate_config(cfg);
+    std::cerr
+        << "runtime configuration: engine=" << cfg.engine
+        << " compute_backend=" << cfg.compute_backend
+        << " n_gpu_layers=" << cfg.n_gpu_layers
+        << " ctx_size=" << cfg.ctx_size
+        << " stage=" << cfg.stage_assignment.stage_index << "/" << cfg.stage_assignment.stage_count
+        << " layers=[" << cfg.stage_assignment.layer_start << "," << cfg.stage_assignment.layer_end << ")\n";
     return cfg;
 }
 

@@ -10,6 +10,19 @@ const (
 	Transport   = "http_binary_v1"
 )
 
+type Operation string
+
+const (
+	OperationExecute      Operation = "execute"
+	OperationCloseSession Operation = "close_session"
+)
+
+// Empty remains a valid legacy value and is interpreted as execute. Encoders
+// normalize new frames to the explicit execute operation.
+func (o Operation) Valid() bool {
+	return o == "" || o == OperationExecute || o == OperationCloseSession
+}
+
 type PayloadKind = inference.PayloadKind
 
 const (
@@ -24,9 +37,10 @@ const (
 type Metadata struct {
 	ProtocolVersion uint16 `json:"protocol_version"`
 
-	SessionID string `json:"session_id"`
-	RequestID string `json:"request_id"`
-	ModelID   string `json:"model_id"`
+	Operation Operation `json:"operation,omitempty"`
+	SessionID string    `json:"session_id"`
+	RequestID string    `json:"request_id"`
+	ModelID   string    `json:"model_id"`
 
 	Phase      inference.Phase `json:"phase"`
 	DecodeStep int             `json:"decode_step"`

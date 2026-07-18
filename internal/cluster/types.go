@@ -36,7 +36,7 @@ const (
 	DeviceClassMac     DeviceClass = "mac"
 )
 
-// OperatingSystem identifies the OS family reported by the node.
+// OperatingSystem identifies the OS family.
 type OperatingSystem string
 
 const (
@@ -69,6 +69,15 @@ const (
 	CapabilityRuntimeLayerStart = "runtime_layer_start"
 	CapabilityRuntimeLayerEnd   = "runtime_layer_end"
 
+	// Runtime identity describes the process that is actually serving requests.
+	// Host-level CUDA or engine installation detection is not a substitute for
+	// these configured runtime facts.
+	CapabilityRuntimeEngine          = "runtime_engine"
+	CapabilityRuntimeModelID         = "runtime_model_id"
+	CapabilityRuntimeModelSHA256     = "runtime_model_sha256"
+	CapabilityRuntimeComputeBackend  = "runtime_compute_backend"
+	CapabilityRuntimeExecutionMode   = "runtime_execution_mode"
+
 	MetricTemperatureC = "temperature_c"
 )
 
@@ -77,11 +86,14 @@ const (
 // BaseURL should usually be the node URL, not the raw local runtime URL, because
 // cluster requests should go through the node facade and runtime gateway.
 type EngineEndpoint struct {
-	InstanceID       string   `json:"instance_id,omitempty"`
-	Engine           Engine   `json:"engine"`
-	BaseURL          string   `json:"base_url"`
-	Models           []string `json:"models,omitempty"`
-	OpenAICompatible bool     `json:"openai_compatible"`
+	InstanceID       string          `json:"instance_id,omitempty"`
+	Engine           Engine          `json:"engine"`
+	BaseURL          string          `json:"base_url"`
+	Models           []string        `json:"models,omitempty"`
+	ModelSHA256      string          `json:"model_sha256,omitempty"`
+	ComputeBackend   ComputeBackend  `json:"compute_backend,omitempty"`
+	ExecutionMode    ExecutionMode   `json:"execution_mode,omitempty"`
+	OpenAICompatible bool            `json:"openai_compatible"`
 }
 
 type NodeRecord struct {

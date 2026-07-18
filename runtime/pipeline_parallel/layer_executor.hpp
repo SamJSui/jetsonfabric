@@ -1,7 +1,8 @@
 #pragma once
 
-#include "pipeline_parallel/stage_result.hpp"
-#include "protocol/stage.hpp"
+#include "inference/stage.hpp"
+
+#include <string>
 
 namespace jetsonfabric::runtime::pipeline_parallel {
 
@@ -9,7 +10,11 @@ class LayerExecutor {
 public:
     virtual ~LayerExecutor() = default;
 
-    virtual StageRunResult run_layers(const protocol::StageRequest& request) const = 0;
+    virtual inference::ExecutionResult execute(const inference::StageInput& input) const = 0;
+
+    virtual void close_session(const std::string& session_id) const {
+        (void) session_id;
+    }
 };
 
 } // namespace jetsonfabric::runtime::pipeline_parallel
