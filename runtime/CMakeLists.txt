@@ -143,6 +143,25 @@ if(BUILD_TESTING)
     COMMAND jetsonfabric-runtime-stage-interface-test
   )
 
+  add_executable(jetsonfabric-model-manager-test
+    inference/stage.cpp
+    pipeline_parallel/stage_assignment.cpp
+    pipeline_parallel/stage_worker.cpp
+    deployment/model_manager_test.cpp
+  )
+  target_include_directories(jetsonfabric-model-manager-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-model-manager-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME model-manager
+    COMMAND jetsonfabric-model-manager-test
+  )
+
   add_executable(jetsonfabric-llama-stage-test
     inference/stage.cpp
     adapters/llama_cpp_model.cpp
