@@ -1,6 +1,5 @@
 #include "engine/runtime_service.hpp"
 
-#include "engine/inference_engine_factory.hpp"
 #include "protocol/stage.hpp"
 #include "protocol/stage_control.hpp"
 
@@ -51,8 +50,7 @@ protocol::StageResponse stage_error_response(
 
 RuntimeService::RuntimeService(Config config)
     : config_(std::move(config)),
-      engine_parts_(build_inference_engine_parts(config_)),
-      stage_worker_(config_.node_name, config_.model, config_.stage_assignment, *engine_parts_.layer_executor) {}
+      model_manager_(config_) {}
 
 std::string RuntimeService::runtime_name() const {
     return "jetsonfabric-runtime-worker";
@@ -67,7 +65,7 @@ ExecutionMode RuntimeService::execution_mode() const {
 }
 
 std::string RuntimeService::model() const {
-    return config_.model;
+    return model_manager_.active_model_id();
 }
 
 RuntimeResponse RuntimeService::chat_completion(const std::string& /*request_body*/) const {
@@ -93,8 +91,8 @@ RuntimeResponse RuntimeService::run_stage(const std::string& request_body) const
     }
 
     const pipeline_parallel::StageRunResult result = operation == protocol::kStageOperationCloseSession
-        ? stage_worker_.close_session(request)
-        : stage_worker_.run(request);
+        ? model_manager_.close_session(request)
+        : model_manager_.run_stage(request);
     if (!result.ok) {
         protocol::StageResponse response = stage_error_response(request, result.error_code, result.error_message);
         return RuntimeResponse{result.status, protocol::kStageWireContentType, protocol::encode_stage_response(std::move(response))};
