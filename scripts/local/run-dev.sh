@@ -20,9 +20,13 @@ RUNTIME_BUILD_DIR="${RUNTIME_BUILD_DIR:-runtime/build}"
 RUNTIME_BIN="${RUNTIME_BIN:-dist/jetsonfabric-runtime-worker}"
 NODE_BIN="${NODE_BIN:-dist/jetsonfabric-node}"
 NODE_PORT="${JF_NODE0_PORT:-19180}"
+RUNTIME_PORT="${JF_RUNTIME_PORT:-19190}"
 DEV_CLUSTER_ID="${JF_DEV_CLUSTER_ID:-${NODE_CLUSTER_ID:-home-lab}-dev}"
 WORK_DIR="${JF_DEV_WORK_DIR:-$ROOT_DIR/.cache/jetsonfabric/dev}"
 LOG_DIR="$WORK_DIR/logs"
+LOCK_FILE="$WORK_DIR/dev.lock"
+NODE_PID_FILE="$WORK_DIR/node.pid"
+RUNTIME_PID_FILE="$WORK_DIR/runtime.pid"
 
 absolute_from_root() {
   local value=$1
@@ -37,19 +41,66 @@ MODEL_PATH="$(absolute_from_root "$MODEL_PATH")"
 RUNTIME_BUILD_DIR="$(absolute_from_root "$RUNTIME_BUILD_DIR")"
 RUNTIME_BIN="$(absolute_from_root "$RUNTIME_BIN")"
 NODE_BIN="$(absolute_from_root "$NODE_BIN")"
-
-rm -rf "$WORK_DIR"
-mkdir -p "$LOG_DIR"
+if [[ "$WORK_DIR" != /* ]]; then
+  WORK_DIR="$(absolute_from_root "$WORK_DIR")"
+  LOG_DIR="$WORK_DIR/logs"
+  LOCK_FILE="$WORK_DIR/dev.lock"
+  NODE_PID_FILE="$WORK_DIR/node.pid"
+  RUNTIME_PID_FILE="$WORK_DIR/runtime.pid"
+fi
 
 NODE_PID=""
+RUNTIME_PID=""
+
+pid_is_running() {
+  local pid=${1:-}
+  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
+}
+
+terminate_dev_processes() {
+  if pid_is_running "$NODE_PID"; then
+    local node_pgid
+    node_pgid="$(ps -o pgid= -p "$NODE_PID" 2>/dev/null | tr -d ' ' || true)"
+    if [[ "$node_pgid" == "$NODE_PID" ]]; then
+      kill -TERM -- "-$NODE_PID" 2>/dev/null || true
+    else
+      kill -TERM "$NODE_PID" 2>/dev/null || true
+    fi
+  fi
+  if pid_is_running "$RUNTIME_PID"; then
+    kill -TERM "$RUNTIME_PID" 2>/dev/null || true
+  fi
+
+  for _ in $(seq 1 50); do
+    if ! pid_is_running "$NODE_PID" && ! pid_is_running "$RUNTIME_PID"; then
+      break
+    fi
+    sleep 0.2
+  done
+
+  if pid_is_running "$NODE_PID"; then
+    local node_pgid
+    node_pgid="$(ps -o pgid= -p "$NODE_PID" 2>/dev/null | tr -d ' ' || true)"
+    if [[ "$node_pgid" == "$NODE_PID" ]]; then
+      kill -KILL -- "-$NODE_PID" 2>/dev/null || true
+    else
+      kill -KILL "$NODE_PID" 2>/dev/null || true
+    fi
+  fi
+  if pid_is_running "$RUNTIME_PID"; then
+    kill -KILL "$RUNTIME_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$NODE_PID" ]]; then
+    wait "$NODE_PID" 2>/dev/null || true
+  fi
+}
+
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
-  if [[ -n "$NODE_PID" ]]; then
-    kill "$NODE_PID" 2>/dev/null || true
-    wait "$NODE_PID" 2>/dev/null || true
-  fi
-  if [[ $status -ne 0 ]]; then
+  terminate_dev_processes
+  rm -f "$NODE_PID_FILE" "$RUNTIME_PID_FILE"
+  if [[ $status -ne 0 && $status -ne 130 && $status -ne 143 ]]; then
     echo "JetsonFabric development node stopped with an error." >&2
     for log_file in "$LOG_DIR"/*.log; do
       [[ -e "$log_file" ]] || continue
@@ -68,8 +119,37 @@ require_command() {
     exit 2
   }
 }
-for command in curl jq go cmake make head seq; do
+for command in curl jq go cmake make head seq flock setsid ss pgrep ps grep; do
   require_command "$command"
+done
+
+mkdir -p "$WORK_DIR"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  echo "another JetsonFabric development session already holds $LOCK_FILE" >&2
+  if [[ -f "$NODE_PID_FILE" ]]; then
+    echo "recorded node PID: $(cat "$NODE_PID_FILE" 2>/dev/null || true)" >&2
+  fi
+  echo "Run 'make dev-status' or 'make dev-kill'." >&2
+  exit 2
+fi
+mkdir -p "$LOG_DIR"
+rm -f "$LOG_DIR"/*.log "$NODE_PID_FILE" "$RUNTIME_PID_FILE" "$WORK_DIR/readiness-chat.json"
+
+port_is_listening() {
+  local port=$1
+  ss -H -ltn "sport = :$port" 2>/dev/null | grep -q .
+}
+
+for port_spec in "node:$NODE_PORT" "runtime:$RUNTIME_PORT"; do
+  label=${port_spec%%:*}
+  port=${port_spec##*:}
+  if port_is_listening "$port"; then
+    echo "JetsonFabric dev $label port $port is already occupied." >&2
+    ss -H -ltnp "sport = :$port" >&2 2>/dev/null || true
+    echo "Run 'make dev-kill' if this is a stale JetsonFabric dev process." >&2
+    exit 2
+  fi
 done
 
 if [[ ! -f "$MODEL_PATH" ]]; then
@@ -131,7 +211,8 @@ cat >"$MODEL_REGISTRY" <<JSON
 JSON
 
 NODE_URL="http://127.0.0.1:$NODE_PORT"
-"$NODE_BIN" \
+RUNTIME_URL="http://127.0.0.1:$RUNTIME_PORT"
+setsid "$NODE_BIN" \
   --cluster-id "$DEV_CLUSTER_ID" \
   --node-name jf-dev \
   --listen "127.0.0.1:$NODE_PORT" \
@@ -139,7 +220,7 @@ NODE_URL="http://127.0.0.1:$NODE_PORT"
   --data-dir "$WORK_DIR/node" \
   --runtime-url auto \
   --runtime-bin "$RUNTIME_BIN" \
-  --runtime-listen 127.0.0.1:0 \
+  --runtime-listen "127.0.0.1:$RUNTIME_PORT" \
   --runtime-compute-backend "$RUNTIME_COMPUTE_BACKEND" \
   --runtime-mode pipeline_parallel \
   --runtime-ctx-size "${RUNTIME_CTX_SIZE:-4096}" \
@@ -160,6 +241,20 @@ NODE_URL="http://127.0.0.1:$NODE_PORT"
   --models "$MODEL_REGISTRY" \
   >"$LOG_DIR/jf-dev.log" 2>&1 &
 NODE_PID=$!
+printf '%s\n' "$NODE_PID" >"$NODE_PID_FILE"
+
+find_runtime_pid() {
+  local pid cmdline
+  for pid in $(pgrep -f 'jetsonfabric-runtime-worker' 2>/dev/null || true); do
+    [[ -r "/proc/$pid/cmdline" ]] || continue
+    cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline")"
+    if [[ "$cmdline" == *"--node-name jf-dev"* && "$cmdline" == *"--listen 127.0.0.1:$RUNTIME_PORT"* ]]; then
+      printf '%s\n' "$pid"
+      return 0
+    fi
+  done
+  return 1
+}
 
 wait_for_url() {
   local url=$1
@@ -167,7 +262,7 @@ wait_for_url() {
     if curl -fsS "$url" >/dev/null 2>&1; then
       return 0
     fi
-    if ! kill -0 "$NODE_PID" 2>/dev/null; then
+    if ! pid_is_running "$NODE_PID"; then
       wait "$NODE_PID"
       return $?
     fi
@@ -178,6 +273,18 @@ wait_for_url() {
 }
 
 wait_for_url "$NODE_URL/healthz"
+for _ in $(seq 1 40); do
+  RUNTIME_PID="$(find_runtime_pid || true)"
+  if pid_is_running "$RUNTIME_PID"; then
+    printf '%s\n' "$RUNTIME_PID" >"$RUNTIME_PID_FILE"
+    break
+  fi
+  sleep 0.25
+done
+if ! pid_is_running "$RUNTIME_PID"; then
+  echo "could not identify the supervised runtime process on port $RUNTIME_PORT" >&2
+  exit 1
+fi
 
 SMOKE_RESPONSE="$WORK_DIR/readiness-chat.json"
 SMOKE_STATUS="$(curl -sS -o "$SMOKE_RESPONSE" -w '%{http_code}' \
@@ -201,16 +308,20 @@ Layers:      [0,$LAYER_COUNT)
 Pipeline:    stage 0 of 1
 Backend:     $RUNTIME_COMPUTE_BACKEND
 Node:        $NODE_URL
+Runtime:     $RUNTIME_URL
+Node PID:    $NODE_PID
+Runtime PID: $RUNTIME_PID
 Logs:        $LOG_DIR
 
 In another terminal:
   make dev-status
   make dev-chat DEV_PROMPT='Explain JetsonFabric in one sentence.'
+  make dev-kill
 
 Press Ctrl+C to stop the Go node and its supervised C++ runtime.
 EOF
 
-while kill -0 "$NODE_PID" 2>/dev/null; do
+while pid_is_running "$NODE_PID"; do
   sleep 1
 done
 wait "$NODE_PID"
