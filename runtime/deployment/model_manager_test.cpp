@@ -72,9 +72,24 @@ runtime::protocol::StageRequest valid_request() {
     };
 }
 
-} // namespace
+void test_idle_manager() {
+    runtime::deployment::ModelManager manager;
 
-int main() {
+    expect(!manager.has_active_deployment(), "empty manager reported an active deployment");
+    expect(!manager.active_model_id().has_value(), "empty manager reported an active model identity");
+
+    const runtime::pipeline_parallel::StageRunResult run_result = manager.run_stage(valid_request());
+    expect(!run_result.ok, "empty manager accepted stage execution");
+    expect(run_result.status == "503 Service Unavailable", "idle execution rejection used the wrong status");
+    expect(run_result.error_code == "no_active_deployment", "idle execution rejection used the wrong error");
+
+    const runtime::pipeline_parallel::StageRunResult close_result = manager.close_session(valid_request());
+    expect(!close_result.ok, "empty manager accepted session close");
+    expect(close_result.status == "503 Service Unavailable", "idle close rejection used the wrong status");
+    expect(close_result.error_code == "no_active_deployment", "idle close rejection used the wrong error");
+}
+
+void test_loaded_manager() {
     auto executor = std::make_unique<RecordingExecutor>();
     RecordingExecutor* recording = executor.get();
 
@@ -90,10 +105,13 @@ int main() {
         runtime::InferenceEngineParts{.layer_executor = std::move(executor)}
     );
 
-    expect(manager.active_model_id() == "model-a", "active model identity was not retained");
+    expect(manager.has_active_deployment(), "configured manager did not report an active deployment");
+    const auto active_model = manager.active_model_id();
+    expect(active_model.has_value(), "configured manager did not report an active model identity");
+    expect(*active_model == "model-a", "active model identity was not retained");
 
     const runtime::pipeline_parallel::StageRunResult result = manager.run_stage(valid_request());
-    expect(result.ok, "valid stage request did not reach the active model");
+    expect(result.ok, "valid stage request did not reach the active deployment");
     expect(recording->execute_calls == 1, "active executor was not invoked exactly once");
     expect(recording->last_model_id == "model-a", "active executor received the wrong model identity");
     expect(result.response.payload_kind == "sampled_token", "active executor response was not returned");
@@ -106,10 +124,12 @@ int main() {
     expect(recording->execute_calls == 1, "rejected request reached the active executor");
 
     const runtime::pipeline_parallel::StageRunResult closed = manager.close_session(valid_request());
-    expect(closed.ok, "session close did not reach the active model");
+    expect(closed.ok, "session close did not reach the active deployment");
     expect(recording->close_calls == 1, "active executor did not receive session close");
     expect(recording->last_closed_session == "session-1", "wrong session was closed");
+}
 
+void test_missing_executor_rejected() {
     bool rejected_missing_executor = false;
     try {
         runtime::deployment::ModelManager invalid(
@@ -128,6 +148,14 @@ int main() {
         rejected_missing_executor = true;
     }
     expect(rejected_missing_executor, "model manager accepted an empty engine deployment");
+}
+
+} // namespace
+
+int main() {
+    test_idle_manager();
+    test_loaded_manager();
+    test_missing_executor_rejected();
 
     std::cout << "runtime model manager tests passed\n";
     return 0;
