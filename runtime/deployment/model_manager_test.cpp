@@ -76,7 +76,7 @@ void test_idle_manager() {
     runtime::deployment::ModelManager manager;
 
     expect(!manager.has_active_deployment(), "empty manager reported an active deployment");
-    expect(!manager.active_model_id().has_value(), "empty manager reported an active model identity");
+    expect(manager.active_model_id().empty(), "empty manager reported an active model identity");
 
     const runtime::pipeline_parallel::StageRunResult run_result = manager.run_stage(valid_request());
     expect(!run_result.ok, "empty manager accepted stage execution");
@@ -106,9 +106,7 @@ void test_loaded_manager() {
     );
 
     expect(manager.has_active_deployment(), "configured manager did not report an active deployment");
-    const auto active_model = manager.active_model_id();
-    expect(active_model.has_value(), "configured manager did not report an active model identity");
-    expect(*active_model == "model-a", "active model identity was not retained");
+    expect(manager.active_model_id() == "model-a", "active model identity was not retained");
 
     const runtime::pipeline_parallel::StageRunResult result = manager.run_stage(valid_request());
     expect(result.ok, "valid stage request did not reach the active deployment");
