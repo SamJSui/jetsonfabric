@@ -7,7 +7,6 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <utility>
 
 namespace jetsonfabric::runtime::deployment {
@@ -50,11 +49,9 @@ public:
         return active_.has_value();
     }
 
-    std::optional<std::string_view> active_model_id() const noexcept {
-        if (!active_) {
-            return std::nullopt;
-        }
-        return std::string_view(active_->model_id);
+    const std::string& active_model_id() const noexcept {
+        static const std::string empty_model_id;
+        return active_ ? active_->model_id : empty_model_id;
     }
 
     pipeline_parallel::StageRunResult run_stage(const protocol::StageRequest& request) const {
