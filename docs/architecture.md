@@ -1,130 +1,112 @@
 # Architecture
 
-See [Architecture Diagrams](architecture-diagrams.md) for visual views of these contracts.
+This page describes the current implementation. Future deployment, generation, and rebalance designs are documented separately in [Architecture diagrams](architecture-diagrams.md) and the repository roadmap.
 
 ## Product shape
 
-Every logical node runs one Go process:
+Every physical host runs one Go node supervising one node-local C++ runtime:
 
 ```text
 jetsonfabric-node
-  -> identity, membership, discovery, and election
-  -> cluster planning and coordinator APIs
-  -> runtime bridge
+  -> identity, discovery, membership, and coordinator election
+  -> topology and stage planning
+  -> OpenAI-compatible API and follower forwarding
+  -> ordered stage execution
   -> node-local jetsonfabric-runtime-worker
-      -> inference-engine adapter such as llama.cpp
+      -> ModelManager
+      -> StageWorker
+      -> inference-engine LayerExecutor
+      -> llama.cpp or synthetic adapter
 ```
 
-The runtime worker is a JetsonFabric-owned host process. The engine is the model implementation it hosts, and the compute backend is CPU or CUDA.
+The runtime worker is JetsonFabric infrastructure. `llama.cpp` is the first real inference engine, and CPU or CUDA is the compute backend.
 
-## Main boundaries
+## Control plane
 
-1. `cmd/jetsonfabric-node` parses flags and starts the node app.
-2. `internal/node` owns process lifecycle and runtime supervision.
-3. `internal/membership` and `internal/discovery` maintain the local peer view.
-4. `internal/election` selects a coordinator; `internal/facade` provides the any-node API.
-5. `internal/clusterplan` selects eligible nodes, orders stages, assigns layer ranges, and reports topology.
-6. `internal/inference` defines prefill/decode lifecycle and legal payload semantics.
-7. `internal/stagewire` defines and validates the versioned binary stage frame.
-8. `internal/stageexec` executes an ordered pass and carries each binary payload into the next stage.
-9. `internal/runtimebridge` streams node-local stage frames to the supervised runtime.
-10. `runtime/` hosts C++ engine adapters and implements the matching frame contract.
+The Go node owns cluster policy:
 
-The package names answer separate questions:
+- `internal/discovery` finds static or mDNS peers;
+- `internal/membership` maintains a fresh local member view;
+- `internal/election` deterministically selects a coordinator;
+- `internal/facade` lets clients call any node and forwards coordinator-owned APIs;
+- `internal/clusterplan` selects compatible runtimes, orders stages, and assigns contiguous layer ranges;
+- `internal/coordinator` owns public APIs and request-level generation orchestration.
+
+Membership is a local peer cache, not a consensus database. Planning uses a fresh snapshot for each request.
+
+## Current generation data plane
+
+The coordinator currently owns both the token loop and stage loop:
 
 ```text
-inference:       what should a distributed inference session mean?
-clusterplan:     where should each stage run?
-stagewire:       what crosses the stage boundary?
-stageexec:       how is an ordered stage pass invoked?
-runtimebridge:   how does the Go node reach its local C++ runtime?
+client
+  -> any node
+  -> elected coordinator
+  -> stageexec
+  -> target node API
+  -> target runtimebridge
+  -> target runtime StageWorker
+  -> assigned LayerExecutor
+  -> Stagewire response
+  -> next stage
 ```
 
-## Execution vocabulary
+For prefill, the first stage accepts text or tokens. Non-final stages emit F32 hidden activations. The final stage keeps logits local and emits one sampled token. Decode repeats the same ordered stage path using persistent stage-local contexts.
 
-Execution mode describes how inference work is distributed:
+`internal/stagewire` and `runtime/protocol` implement the matching versioned binary frame. `internal/runtimebridge` proxies between a Go node and its local runtime. `internal/stageexec` validates and forwards each stage output as the next stage input.
 
-- `data_parallel`: each replica owns a complete model.
-- `pipeline_parallel`: ordered transformer layer ranges are assigned to stages.
-- `tensor_parallel`: tensor operations are partitioned across devices or nodes.
+Direct runtime-to-runtime transport and a single runtime `Generate` call are target architecture, not current behavior.
 
-Stage position is represented only by `stage_index` and `stage_count`:
+## Runtime ownership
 
 ```text
+RuntimeService
+  -> ModelManager
+      -> active LoadedModel
+          -> model identity
+          -> InferenceEngineParts
+          -> StageWorker
+              -> LayerExecutor
+```
+
+`ModelManager` is now the ownership boundary for active model execution state. The runtime still starts with exactly one configured model and assignment; idle startup and prepare/activate/unload operations are not implemented yet.
+
+## Stage and session contract
+
+Stage position is count-based:
+
+```text
+0 <= stage_index < stage_count
 is_first = stage_index == 0
 is_last  = stage_index == stage_count - 1
 ```
 
-For `stage_count=1`, index `0` is both first and last. Layer ranges are contiguous and exhaustive.
+For `stage_count=1`, stage `0` is both first and final. Layer ranges must be contiguous and exhaustive for the selected pipeline.
+
+One completion has:
+
+```text
+request ID  -> user-facing completion
+session ID  -> persistent generation state across all stages
+stage request ID -> one prefill, decode, or cleanup operation on one stage
+```
+
+The coordinator creates the session ID and closes every stage session when generation ends. Runtime adapters also reap sessions after an idle timeout.
+
+## Compatibility and topology
+
+A pipeline is grouped by correctness-critical runtime identity, including engine adapter, model ID, exact model artifact hash, and execution mode. Compute backend remains placement and telemetry metadata so compatible CPU and CUDA stages can share the same semantic contract.
 
 Topology describes physical placement:
 
-- `colocated`: stages share a physical host.
-- `distributed`: stages span physical hosts.
+- `colocated`: multiple logical stages share one physical host;
+- `distributed`: selected stages run on distinct physical hosts.
 
-The stage wire contract supports `text`, `tokens`, `activation`, and `sampled_token`. Logits and KV cache remain engine-local.
+## Current limitations
 
-## Node lifecycle
-
-A node binds its API listener, derives its advertised URL, starts or attaches to its runtime worker, constructs the facade/coordinator/runtime-bridge stack, publishes itself to membership, starts discovery, and serves until shutdown.
-
-`membership.Store` is a local peer cache, not a consensus database. Planning takes a fresh snapshot for each request.
-
-## Request routing
-
-Clients can call any node. Coordinator-owned requests are served locally by the elected coordinator or proxied to its `APIURL`. `POST /v1/layer-split/stage` remains node-local and is forwarded through `runtimebridge` to that node's runtime URL.
-
-## Stage data plane
-
-One stage operation uses `stagewire` v1:
-
-```text
-fixed binary header
-  -> versioned JSON metadata
-  -> raw payload bytes
-```
-
-The frame uses media type `application/vnd.jetsonfabric.stage.v1+octet-stream`. Tensor bytes are not base64-encoded. Metadata carries dtype, shape, little-endian byte order, row-major layout, byte length, and CRC32. See [Stagewire v1](stagewire-v1.md).
-
-The coordinator-mediated P0 path is:
-
-```text
-runtime stage 0
-  -> node 0 runtimebridge
-  -> stageexec at coordinator
-  -> node 1 API
-  -> node 1 runtimebridge
-  -> runtime stage 1
-```
-
-Direct runtime-to-runtime transport may replace this path later without changing the stagewire payload semantics.
-
-## Current execution status
-
-The existing llama.cpp path still performs full-model generation at each stage. Its inter-stage semantic payload remains `text`, although transport now uses the binary stagewire frame.
-
-A synthetic CI engine proves the activation data plane independently of llama.cpp:
-
-```text
-text
-  -> synthetic stage 0
-  -> f32[4,16] activation bytes
-  -> second logical node and runtime
-  -> u32 sampled-token payload containing activation CRC32
-```
-
-CI asserts byte length and checksum continuity across the logical-node boundary. This proves activation transport, not partial transformer execution.
-
-## P0 partial-layer target
-
-```text
-text
-  -> tokenizer
-  -> first assigned layer range
-  -> activation stagewire payload
-  -> remaining assigned layer ranges
-  -> final-stage logits and sampling
-  -> sampled token
-```
-
-Each stage keeps KV state for its assigned layers local across decode steps. The remaining engine milestone is to make llama.cpp or another adapter produce and consume the real activation tensors defined by this data plane.
+- Every runtime still opens the complete GGUF even though it executes only its assigned transformer range.
+- Runtime deployment is fixed at process startup.
+- Go coordinates every stage operation and autoregressive decode step.
+- Inter-stage activations are F32.
+- Chat completions are non-streaming and greedy-only.
+- Physical multi-Jetson CUDA acceptance has not yet been completed.
