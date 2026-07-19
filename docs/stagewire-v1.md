@@ -1,8 +1,6 @@
 # Stagewire v1
 
-`stagewire` is JetsonFabric's versioned contract for one stage operation. It carries
-metadata plus raw payload bytes between logical nodes and their runtime workers.
-Tensor payloads are never base64-encoded and are never represented as JSON arrays.
+`stagewire` is JetsonFabric's versioned contract for one stage operation. It carries metadata plus raw payload bytes between logical nodes and their runtime workers. Tensor payloads are never base64-encoded or represented as JSON arrays.
 
 ## Media type
 
@@ -24,16 +22,14 @@ All integer fields in the fixed header use network byte order.
 | 20 | variable | UTF-8 JSON metadata |
 | after metadata | variable | raw payload bytes |
 
-A request or response body contains exactly one frame. Trailing bytes, truncated
-payloads, unsupported versions, oversized frames, and checksum mismatches are
-rejected.
+A request or response body contains exactly one frame. Unsupported versions, oversized metadata or payloads, truncation, trailing bytes, shape mismatches, and checksum mismatches are rejected.
 
 ## Metadata
 
 Stage metadata includes:
 
 - protocol version;
-- session, request, and model identity;
+- session, request, model, and node identity;
 - inference phase and decode step;
 - stage index/count and assigned layer range;
 - payload kind;
@@ -42,27 +38,27 @@ Stage metadata includes:
 - transport identifier;
 - request limits, token counts, byte counts, latency, and optional error details.
 
-Stage position remains count-based. There is no first/middle/final role string.
+Stage position remains count-based. There is no first, intermediate, or final role string on the wire.
 
 ## Payloads
 
 Supported semantic payload kinds are:
 
-- `text`: UTF-8 bytes;
+- `text`: UTF-8 prompt bytes;
 - `tokens`: typed token-ID bytes;
 - `activation`: typed hidden-state tensor bytes;
 - `sampled_token`: one typed token ID.
 
-Tensor payloads currently require:
+Tensor payloads require:
 
 ```text
 byte_order = little
 layout     = row_major
 ```
 
-Supported v1 dtype labels are `u8`, `i8`, `f16`, `bf16`, `i32`, `u32`, `f32`,
-`i64`, `u64`, and `f64`. The product of shape dimensions and dtype width must
-match the payload length exactly.
+Supported v1 dtype labels are `u8`, `i8`, `f16`, `bf16`, `i32`, `u32`, `f32`, `i64`, `u64`, and `f64`. The product of shape dimensions and dtype width must match the payload length exactly.
+
+The current llama.cpp pipeline uses F32 activations with shape `[sequence_length, hidden_size]` and one little-endian 32-bit sampled token.
 
 ## Ownership
 
@@ -71,25 +67,23 @@ internal/inference
   defines legal semantic transitions
 
 internal/stagewire
-  encodes, decodes, versions, validates, and checksums frames
+  encodes, decodes, versions, validates, and checksums Go frames
 
 internal/stageexec
   sends one stage output as the next stage input
 
 internal/runtimebridge
-  streams frames between the node API and local runtime
+  streams frames between a node API and its local runtime
 
 runtime/protocol
   implements the matching C++ frame contract
 ```
 
-## Current validation milestone
+## Current validation
 
-The CI synthetic engine produces a deterministic `f32[4,16]` activation on stage
-0. The activation crosses two real logical node APIs and two supervised C++
-runtime workers. Stage 1 receives the activation and returns its CRC32 as a
-`u32[1]` sampled-token payload. CI asserts that the outgoing and incoming
-activation checksums and byte lengths match.
+Two complementary tests exercise the same wire contract:
 
-This proves JetsonFabric's activation data plane. It does not claim that llama.cpp
-partial-layer execution or distributed KV-cache ownership is implemented yet.
+1. The synthetic integration creates a deterministic `f32[4,16]` activation, sends it through two logical nodes and runtimes, and returns the activation CRC32 as a sampled token.
+2. The real-model integration sends llama.cpp hidden activations between assigned layer ranges during prefill and decode, verifies byte and CRC continuity, and requires distributed greedy tokens to match a one-runtime baseline.
+
+These tests prove binary activation transport and real partial-layer execution. They do not yet prove physical CUDA transport, direct runtime-to-runtime networking, or reduced per-node model-weight memory.
