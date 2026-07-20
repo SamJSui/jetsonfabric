@@ -7,6 +7,7 @@ The repository README is the project overview, getting-started guide, and public
 - [Local development](local-development.md) — configure, run, inspect, test, and stop a local node and runtime.
 - [Architecture](architecture.md) — current component ownership and request flow.
 - [Architecture diagrams](architecture-diagrams.md) — curated current and target architecture views.
+- [Deployment invariants](deployment-invariants.md) — target constraints for model admission, residency, epochs, membership, and session ownership.
 
 ## Runtime contracts
 
