@@ -53,6 +53,15 @@ public:
     mutable std::string last_closed_session;
 };
 
+runtime::pipeline_parallel::StageAssignment assignment() {
+    return runtime::pipeline_parallel::StageAssignment{
+        .stage_index = 0,
+        .stage_count = 1,
+        .layer_start = 0,
+        .layer_end = 4,
+    };
+}
+
 runtime::protocol::StageRequest valid_request() {
     return runtime::protocol::StageRequest{
         .session_id = "session-1",
@@ -76,6 +85,9 @@ void test_idle_manager() {
     runtime::deployment::ModelManager manager;
 
     expect(!manager.has_active_deployment(), "empty manager reported an active deployment");
+    expect(manager.active_deployment_identity() == nullptr, "empty manager exposed a deployment identity");
+    expect(!manager.active_deployment_state().has_value(), "empty manager exposed a deployment state");
+    expect(manager.active_deployment_id().empty(), "empty manager reported an active deployment ID");
     expect(manager.active_model_id().empty(), "empty manager reported an active model identity");
 
     const runtime::pipeline_parallel::StageRunResult run_result = manager.run_stage(valid_request());
@@ -95,18 +107,25 @@ void test_loaded_manager() {
 
     runtime::deployment::ModelManager manager(
         "node-a",
-        "model-a",
-        runtime::pipeline_parallel::StageAssignment{
-            .stage_index = 0,
-            .stage_count = 1,
-            .layer_start = 0,
-            .layer_end = 4,
+        runtime::deployment::DeploymentIdentity{
+            .deployment_id = "deployment-a",
+            .model_id = "model-a",
         },
+        assignment(),
         runtime::InferenceEngineParts{.layer_executor = std::move(executor)}
     );
 
     expect(manager.has_active_deployment(), "configured manager did not report an active deployment");
+    const runtime::deployment::DeploymentIdentity* identity = manager.active_deployment_identity();
+    expect(identity != nullptr, "configured manager did not expose its deployment identity");
+    expect(identity->deployment_id == "deployment-a", "active deployment ID was not retained");
+    expect(identity->model_id == "model-a", "active deployment model ID was not retained");
+    expect(manager.active_deployment_id() == "deployment-a", "active deployment ID query was incorrect");
     expect(manager.active_model_id() == "model-a", "active model identity was not retained");
+    expect(
+        manager.active_deployment_state() == runtime::deployment::DeploymentState::Active,
+        "configured deployment did not report the active state"
+    );
 
     const runtime::pipeline_parallel::StageRunResult result = manager.run_stage(valid_request());
     expect(result.ok, "valid stage request did not reach the active deployment");
@@ -127,18 +146,44 @@ void test_loaded_manager() {
     expect(recording->last_closed_session == "session-1", "wrong session was closed");
 }
 
+void test_invalid_identity_rejected() {
+    const auto rejected = [](runtime::deployment::DeploymentIdentity identity) {
+        try {
+            runtime::deployment::ModelManager invalid(
+                "node-a",
+                std::move(identity),
+                assignment(),
+                runtime::InferenceEngineParts{
+                    .layer_executor = std::make_unique<RecordingExecutor>(),
+                }
+            );
+            (void) invalid;
+            return false;
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+    };
+
+    expect(
+        rejected(runtime::deployment::DeploymentIdentity{.deployment_id = "", .model_id = "model-a"}),
+        "model manager accepted an empty deployment ID"
+    );
+    expect(
+        rejected(runtime::deployment::DeploymentIdentity{.deployment_id = "deployment-a", .model_id = ""}),
+        "model manager accepted an empty model ID"
+    );
+}
+
 void test_missing_executor_rejected() {
     bool rejected_missing_executor = false;
     try {
         runtime::deployment::ModelManager invalid(
             "node-a",
-            "model-a",
-            runtime::pipeline_parallel::StageAssignment{
-                .stage_index = 0,
-                .stage_count = 1,
-                .layer_start = 0,
-                .layer_end = 4,
+            runtime::deployment::DeploymentIdentity{
+                .deployment_id = "deployment-a",
+                .model_id = "model-a",
             },
+            assignment(),
             runtime::InferenceEngineParts{}
         );
         (void) invalid;
@@ -153,6 +198,7 @@ void test_missing_executor_rejected() {
 int main() {
     test_idle_manager();
     test_loaded_manager();
+    test_invalid_identity_rejected();
     test_missing_executor_rejected();
 
     std::cout << "runtime model manager tests passed\n";
