@@ -69,6 +69,18 @@ public:
             : std::nullopt;
     }
 
+    DeploymentStatus deployment_status() const {
+        if (!resident_.has_value()) {
+            return DeploymentStatus{};
+        }
+        return DeploymentStatus{
+            .resident = true,
+            .active = resident_->state == ResidentDeploymentState::Active,
+            .state = resident_->state,
+            .identity = resident_->identity,
+        };
+    }
+
     const DeploymentIdentity* active_deployment_identity() const noexcept {
         const ResidentDeployment* deployment = active_deployment();
         return deployment != nullptr ? &deployment->identity : nullptr;
