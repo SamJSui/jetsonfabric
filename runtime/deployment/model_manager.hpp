@@ -16,6 +16,8 @@ namespace jetsonfabric::runtime::deployment {
 // installs an active deployment immediately, while an empty slot represents an
 // idle runtime for later lifecycle operations.
 class ModelManager {
+    struct ResidentDeployment;
+
 public:
     ModelManager() = default;
 
