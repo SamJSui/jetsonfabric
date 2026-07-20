@@ -12,9 +12,9 @@
 
 namespace jetsonfabric::runtime::deployment {
 
-// ModelManager owns the runtime's active deployment execution components. The
-// configured startup path still installs one deployment immediately, while an
-// empty manager provides the idle state needed by later lifecycle operations.
+// ModelManager owns one resident deployment slot. Configured startup still
+// installs an active deployment immediately, while an empty slot represents an
+// idle runtime for later lifecycle operations.
 class ModelManager {
 public:
     ModelManager() = default;
@@ -36,7 +36,7 @@ public:
         pipeline_parallel::StageAssignment assignment,
         InferenceEngineParts engine_parts
     )
-        : active_(
+        : resident_(
               std::in_place,
               std::move(node_name),
               std::move(identity),
@@ -49,40 +49,55 @@ public:
     ModelManager(ModelManager&&) = delete;
     ModelManager& operator=(ModelManager&&) = delete;
 
+    bool has_resident_deployment() const noexcept {
+        return resident_.has_value();
+    }
+
     bool has_active_deployment() const noexcept {
-        return active_.has_value();
+        return active_deployment() != nullptr;
+    }
+
+    const DeploymentIdentity* resident_deployment_identity() const noexcept {
+        return resident_.has_value() ? &resident_->identity : nullptr;
+    }
+
+    std::optional<ResidentDeploymentState> resident_deployment_state() const noexcept {
+        return resident_.has_value()
+            ? std::optional<ResidentDeploymentState>{resident_->state}
+            : std::nullopt;
     }
 
     const DeploymentIdentity* active_deployment_identity() const noexcept {
-        return active_ ? &active_->identity : nullptr;
-    }
-
-    std::optional<DeploymentState> active_deployment_state() const noexcept {
-        return active_ ? std::optional<DeploymentState>{active_->state} : std::nullopt;
+        const ResidentDeployment* deployment = active_deployment();
+        return deployment != nullptr ? &deployment->identity : nullptr;
     }
 
     const std::string& active_deployment_id() const noexcept {
         static const std::string empty_deployment_id;
-        return active_ ? active_->identity.deployment_id : empty_deployment_id;
+        const DeploymentIdentity* identity = active_deployment_identity();
+        return identity != nullptr ? identity->deployment_id : empty_deployment_id;
     }
 
     const std::string& active_model_id() const noexcept {
         static const std::string empty_model_id;
-        return active_ ? active_->identity.model_id : empty_model_id;
+        const DeploymentIdentity* identity = active_deployment_identity();
+        return identity != nullptr ? identity->model_id : empty_model_id;
     }
 
     pipeline_parallel::StageRunResult run_stage(const protocol::StageRequest& request) const {
-        if (!active_) {
+        const ResidentDeployment* deployment = active_deployment();
+        if (deployment == nullptr) {
             return no_active_deployment();
         }
-        return active_->stage_worker.run(request);
+        return deployment->stage_worker.run(request);
     }
 
     pipeline_parallel::StageRunResult close_session(const protocol::StageRequest& request) const {
-        if (!active_) {
+        const ResidentDeployment* deployment = active_deployment();
+        if (deployment == nullptr) {
             return no_active_deployment();
         }
-        return active_->stage_worker.close_session(request);
+        return deployment->stage_worker.close_session(request);
     }
 
 private:
@@ -114,15 +129,15 @@ private:
         return *engine_parts.layer_executor;
     }
 
-    struct Deployment {
-        Deployment(
+    struct ResidentDeployment {
+        ResidentDeployment(
             std::string node_name,
             DeploymentIdentity deployment_identity,
             pipeline_parallel::StageAssignment assignment,
             InferenceEngineParts loaded_engine_parts
         )
             : identity(ModelManager::require_identity(std::move(deployment_identity))),
-              state(DeploymentState::Active),
+              state(ResidentDeploymentState::Active),
               engine_parts(std::move(loaded_engine_parts)),
               stage_worker(
                   std::move(node_name),
@@ -131,18 +146,25 @@ private:
                   ModelManager::require_layer_executor(engine_parts)
               ) {}
 
-        Deployment(const Deployment&) = delete;
-        Deployment& operator=(const Deployment&) = delete;
-        Deployment(Deployment&&) = delete;
-        Deployment& operator=(Deployment&&) = delete;
+        ResidentDeployment(const ResidentDeployment&) = delete;
+        ResidentDeployment& operator=(const ResidentDeployment&) = delete;
+        ResidentDeployment(ResidentDeployment&&) = delete;
+        ResidentDeployment& operator=(ResidentDeployment&&) = delete;
 
         DeploymentIdentity identity;
-        DeploymentState state;
+        ResidentDeploymentState state;
         InferenceEngineParts engine_parts;
         pipeline_parallel::StageWorker stage_worker;
     };
 
-    std::optional<Deployment> active_;
+    const ResidentDeployment* active_deployment() const noexcept {
+        if (!resident_.has_value() || resident_->state != ResidentDeploymentState::Active) {
+            return nullptr;
+        }
+        return &*resident_;
+    }
+
+    std::optional<ResidentDeployment> resident_;
 };
 
 } // namespace jetsonfabric::runtime::deployment
