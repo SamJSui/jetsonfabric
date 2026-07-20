@@ -4,6 +4,7 @@
 #include "protocol/stage_control.hpp"
 
 #include <exception>
+#include <sstream>
 #include <utility>
 
 namespace jetsonfabric::runtime {
@@ -66,6 +67,37 @@ ExecutionMode RuntimeService::execution_mode() const {
 
 std::string RuntimeService::model() const {
     return model_manager_.active_model_id();
+}
+
+RuntimeResponse RuntimeService::deployment_status() const {
+    const deployment::DeploymentStatus status = model_manager_.deployment_status();
+
+    std::ostringstream body;
+    body << "{\"resident\":" << (status.resident ? "true" : "false")
+         << ",\"active\":" << (status.active ? "true" : "false");
+
+    if (!status.resident) {
+        body << ",\"state\":\"idle\",\"deployment\":null}";
+        return RuntimeResponse{"200 OK", "application/json", body.str()};
+    }
+
+    if (!status.state.has_value() || !status.identity.has_value()) {
+        return json_error(
+            "500 Internal Server Error",
+            "invalid_deployment_status",
+            "resident deployment status is incomplete"
+        );
+    }
+
+    body << ",\"state\":\""
+         << deployment::resident_deployment_state_string(*status.state)
+         << "\",\"deployment\":{\"deployment_id\":\""
+         << protocol::json_escape(status.identity->deployment_id)
+         << "\",\"model_id\":\""
+         << protocol::json_escape(status.identity->model_id)
+         << "\"}}";
+
+    return RuntimeResponse{"200 OK", "application/json", body.str()};
 }
 
 RuntimeResponse RuntimeService::chat_completion(const std::string& /*request_body*/) const {
