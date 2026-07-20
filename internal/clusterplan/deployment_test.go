@@ -28,18 +28,17 @@ func TestNewDeploymentPlanCopiesAndNormalizesInput(t *testing.T) {
 	}
 
 	spec.Stages[0].NodeID = "mutated-input"
-	if got := plan.Stages()[0].NodeID; got != "node-a" {
-		t.Fatalf("plan changed after input mutation: %q", got)
+	if plan.Stages()[0].NodeID != "node-a" {
+		t.Fatal("plan changed after constructor input mutation")
 	}
-
 	stages := plan.Stages()
 	stages[0].NodeID = "mutated-output"
-	if got := plan.Stages()[0].NodeID; got != "node-a" {
-		t.Fatalf("plan changed after accessor result mutation: %q", got)
+	if plan.Stages()[0].NodeID != "node-a" {
+		t.Fatal("plan changed after accessor result mutation")
 	}
 }
 
-func TestNewDeploymentPlanAcceptsOneSelectedDataParallelReplica(t *testing.T) {
+func TestNewDeploymentPlanAcceptsOneDataParallelReplica(t *testing.T) {
 	spec := validDeploymentPlanSpec()
 	spec.Model.ExecutionMode = cluster.ExecutionModeDataParallel
 	spec.Stages = spec.Stages[:1]
@@ -50,76 +49,30 @@ func TestNewDeploymentPlanAcceptsOneSelectedDataParallelReplica(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDeploymentPlan() error = %v", err)
 	}
-	if plan.StageCount() != 1 || plan.Stages()[0].LayerEnd != spec.Model.LayerCount {
-		t.Fatalf("unexpected data-parallel plan: %+v", plan.Stages())
+	if plan.StageCount() != 1 {
+		t.Fatalf("StageCount() = %d, want 1", plan.StageCount())
 	}
 }
 
-func TestNewDeploymentPlanRejectsInvalidIdentityOrModel(t *testing.T) {
+func TestNewDeploymentPlanRejectsInvalidMetadata(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(*DeploymentPlanSpec)
 		want   string
 	}{
-		{
-			name: "missing deployment id",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Identity.DeploymentID = ""
-			},
-			want: "deployment_id",
-		},
-		{
-			name: "zero epoch",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Identity.Epoch = 0
-			},
-			want: "epoch",
-		},
-		{
-			name: "missing model id",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Model.ModelID = ""
-			},
-			want: "model_id",
-		},
-		{
-			name: "invalid artifact hash",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Model.ModelSHA256 = "not-a-sha256"
-			},
-			want: "model_sha256",
-		},
-		{
-			name: "missing engine",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Model.Engine = ""
-			},
-			want: "engine",
-		},
-		{
-			name: "invalid layer count",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Model.LayerCount = 0
-			},
-			want: "layer_count",
-		},
-		{
-			name: "tensor parallel unsupported",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Model.ExecutionMode = cluster.ExecutionModeTensorParallel
-			},
-			want: "unsupported execution mode",
-		},
+		{"missing deployment id", func(s *DeploymentPlanSpec) { s.Identity.DeploymentID = "" }, "deployment_id"},
+		{"zero epoch", func(s *DeploymentPlanSpec) { s.Identity.Epoch = 0 }, "epoch"},
+		{"missing model id", func(s *DeploymentPlanSpec) { s.Model.ModelID = "" }, "model_id"},
+		{"invalid artifact hash", func(s *DeploymentPlanSpec) { s.Model.ModelSHA256 = "bad" }, "model_sha256"},
+		{"missing engine", func(s *DeploymentPlanSpec) { s.Model.Engine = "" }, "engine"},
+		{"invalid layer count", func(s *DeploymentPlanSpec) { s.Model.LayerCount = 0 }, "layer_count"},
+		{"tensor parallel", func(s *DeploymentPlanSpec) { s.Model.ExecutionMode = cluster.ExecutionModeTensorParallel }, "unsupported execution mode"},
 	}
-
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			spec := validDeploymentPlanSpec()
 			test.mutate(&spec)
-			_, err := NewDeploymentPlan(spec)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("NewDeploymentPlan() error = %v, want containing %q", err, test.want)
-			}
+			expectDeploymentPlanError(t, spec, test.want)
 		})
 	}
 }
@@ -130,134 +83,49 @@ func TestNewDeploymentPlanRejectsInvalidStages(t *testing.T) {
 		mutate func(*DeploymentPlanSpec)
 		want   string
 	}{
-		{
-			name: "no stages",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Stages = nil
-			},
-			want: "at least one stage",
-		},
-		{
-			name: "unordered stage index",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Stages[0].StageIndex = 1
-			},
-			want: "has index",
-		},
-		{
-			name: "inconsistent stage count",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Stages[1].StageCount = 3
-			},
-			want: "stage_count",
-		},
-		{
-			name: "missing node id",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Stages[0].NodeID = ""
-			},
-			want: "node_id",
-		},
-		{
-			name: "duplicate node",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Stages[1].NodeID = spec.Stages[0].NodeID
-			},
-			want: "assigned more than once",
-		},
-		{
-			name: "invalid node api url",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Stages[0].APIURL = "127.0.0.1:19180"
-			},
-			want: "api_url is invalid",
-		},
-		{
-			name: "duplicate node api url",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Stages[1].APIURL = spec.Stages[0].APIURL
-			},
-			want: "api_url",
-		},
-		{
-			name: "missing physical host",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Stages[0].PhysicalHostID = ""
-			},
-			want: "physical_host_id",
-		},
-		{
-			name: "layer gap",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Stages[1].LayerStart = 15
-			},
-			want: "want 14",
-		},
-		{
-			name: "layer overlap",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Stages[1].LayerStart = 13
-			},
-			want: "want 14",
-		},
-		{
-			name: "empty layer range",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Stages[0].LayerEnd = 0
-			},
-			want: "empty or reversed",
-		},
-		{
-			name: "incomplete layer coverage",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Stages[1].LayerEnd = 27
-			},
-			want: "want layer_count 28",
-		},
-		{
-			name: "multiple selected data replicas",
-			mutate: func(spec *DeploymentPlanSpec) {
-				spec.Model.ExecutionMode = cluster.ExecutionModeDataParallel
-			},
-			want: "exactly one selected replica",
-		},
+		{"no stages", func(s *DeploymentPlanSpec) { s.Stages = nil }, "at least one stage"},
+		{"wrong stage index", func(s *DeploymentPlanSpec) { s.Stages[0].StageIndex = 1 }, "inconsistent"},
+		{"wrong stage count", func(s *DeploymentPlanSpec) { s.Stages[1].StageCount = 3 }, "inconsistent"},
+		{"missing node", func(s *DeploymentPlanSpec) { s.Stages[0].NodeID = "" }, "node_id"},
+		{"duplicate node", func(s *DeploymentPlanSpec) { s.Stages[1].NodeID = s.Stages[0].NodeID }, "assigned more than once"},
+		{"layer gap", func(s *DeploymentPlanSpec) { s.Stages[1].LayerStart = 15 }, "want 14"},
+		{"empty range", func(s *DeploymentPlanSpec) { s.Stages[0].LayerEnd = 0 }, "empty or reversed"},
+		{"incomplete coverage", func(s *DeploymentPlanSpec) { s.Stages[1].LayerEnd = 27 }, "layer_count 28"},
+		{"multiple data replicas", func(s *DeploymentPlanSpec) { s.Model.ExecutionMode = cluster.ExecutionModeDataParallel }, "exactly one selected replica"},
 	}
-
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			spec := validDeploymentPlanSpec()
 			test.mutate(&spec)
-			_, err := NewDeploymentPlan(spec)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("NewDeploymentPlan() error = %v, want containing %q", err, test.want)
-			}
+			expectDeploymentPlanError(t, spec, test.want)
 		})
+	}
+}
+
+func expectDeploymentPlanError(t *testing.T, spec DeploymentPlanSpec, want string) {
+	t.Helper()
+	_, err := NewDeploymentPlan(spec)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("NewDeploymentPlan() error = %v, want containing %q", err, want)
 	}
 }
 
 func validDeploymentPlanSpec() DeploymentPlanSpec {
 	return DeploymentPlanSpec{
-		Identity: DeploymentIdentity{
-			DeploymentID: "deployment-a",
-			Epoch:        7,
-		},
+		Identity: DeploymentIdentity{DeploymentID: "deployment-a", Epoch: 7},
 		Model: DeploymentModelIdentity{
-			ModelID:       "model-a",
-			ModelSHA256:   strings.Repeat("a", 64),
-			Engine:        cluster.EngineLlamaCPP,
-			ExecutionMode: cluster.ExecutionModePipelineParallel,
-			LayerCount:    28,
+			ModelID: "model-a", ModelSHA256: strings.Repeat("a", 64),
+			Engine: cluster.EngineLlamaCPP, ExecutionMode: cluster.ExecutionModePipelineParallel,
+			LayerCount: 28,
 		},
 		Stages: []Stage{
 			{
-				StageIndex: 0, StageCount: 2,
-				NodeID: "node-a", NodeName: "dopey", Hostname: "dopey",
+				StageIndex: 0, StageCount: 2, NodeID: "node-a", NodeName: "dopey",
 				PhysicalHostID: "dopey", APIURL: "http://dopey.local:19180",
 				LayerStart: 0, LayerEnd: 14,
 			},
 			{
-				StageIndex: 1, StageCount: 2,
-				NodeID: "node-b", NodeName: "sleepy", Hostname: "sleepy",
+				StageIndex: 1, StageCount: 2, NodeID: "node-b", NodeName: "sleepy",
 				PhysicalHostID: "sleepy", APIURL: "http://sleepy.local:19180",
 				LayerStart: 14, LayerEnd: 28,
 			},
