@@ -1,5 +1,6 @@
 #pragma once
 
+#include "deployment/deployment.hpp"
 #include "engine/inference_engine_factory.hpp"
 #include "pipeline_parallel/stage_worker.hpp"
 #include "worker/config.hpp"
@@ -21,21 +22,24 @@ public:
     explicit ModelManager(const Config& config)
         : ModelManager(
               config.node_name,
-              config.model,
+              DeploymentIdentity{
+                  .deployment_id = config.model,
+                  .model_id = config.model,
+              },
               config.stage_assignment,
               build_inference_engine_parts(config)
           ) {}
 
     ModelManager(
         std::string node_name,
-        std::string model_id,
+        DeploymentIdentity identity,
         pipeline_parallel::StageAssignment assignment,
         InferenceEngineParts engine_parts
     )
         : active_(
               std::in_place,
               std::move(node_name),
-              std::move(model_id),
+              std::move(identity),
               assignment,
               std::move(engine_parts)
           ) {}
@@ -49,9 +53,22 @@ public:
         return active_.has_value();
     }
 
+    const DeploymentIdentity* active_deployment_identity() const noexcept {
+        return active_ ? &active_->identity : nullptr;
+    }
+
+    std::optional<DeploymentState> active_deployment_state() const noexcept {
+        return active_ ? std::optional<DeploymentState>{active_->state} : std::nullopt;
+    }
+
+    const std::string& active_deployment_id() const noexcept {
+        static const std::string empty_deployment_id;
+        return active_ ? active_->identity.deployment_id : empty_deployment_id;
+    }
+
     const std::string& active_model_id() const noexcept {
         static const std::string empty_model_id;
-        return active_ ? active_->model_id : empty_model_id;
+        return active_ ? active_->identity.model_id : empty_model_id;
     }
 
     pipeline_parallel::StageRunResult run_stage(const protocol::StageRequest& request) const {
@@ -78,6 +95,16 @@ private:
         return result;
     }
 
+    static DeploymentIdentity require_identity(DeploymentIdentity identity) {
+        if (identity.deployment_id.empty()) {
+            throw std::invalid_argument("deployment_id is required");
+        }
+        if (identity.model_id.empty()) {
+            throw std::invalid_argument("model_id is required");
+        }
+        return identity;
+    }
+
     static const pipeline_parallel::LayerExecutor& require_layer_executor(
         const InferenceEngineParts& engine_parts
     ) {
@@ -90,15 +117,16 @@ private:
     struct Deployment {
         Deployment(
             std::string node_name,
-            std::string loaded_model_id,
+            DeploymentIdentity deployment_identity,
             pipeline_parallel::StageAssignment assignment,
             InferenceEngineParts loaded_engine_parts
         )
-            : model_id(std::move(loaded_model_id)),
+            : identity(ModelManager::require_identity(std::move(deployment_identity))),
+              state(DeploymentState::Active),
               engine_parts(std::move(loaded_engine_parts)),
               stage_worker(
                   std::move(node_name),
-                  model_id,
+                  identity.model_id,
                   assignment,
                   ModelManager::require_layer_executor(engine_parts)
               ) {}
@@ -108,7 +136,8 @@ private:
         Deployment(Deployment&&) = delete;
         Deployment& operator=(Deployment&&) = delete;
 
-        std::string model_id;
+        DeploymentIdentity identity;
+        DeploymentState state;
         InferenceEngineParts engine_parts;
         pipeline_parallel::StageWorker stage_worker;
     };
