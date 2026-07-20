@@ -98,6 +98,15 @@ runtime::protocol::StageRequest valid_request() {
     };
 }
 
+void test_resident_state_strings() {
+    expect(runtime::deployment::resident_deployment_state_string(ResidentState::Loading) == "loading", "loading state string changed");
+    expect(runtime::deployment::resident_deployment_state_string(ResidentState::Ready) == "ready", "ready state string changed");
+    expect(runtime::deployment::resident_deployment_state_string(ResidentState::Active) == "active", "active state string changed");
+    expect(runtime::deployment::resident_deployment_state_string(ResidentState::Draining) == "draining", "draining state string changed");
+    expect(runtime::deployment::resident_deployment_state_string(ResidentState::Unloading) == "unloading", "unloading state string changed");
+    expect(runtime::deployment::resident_deployment_state_string(ResidentState::Failed) == "failed", "failed state string changed");
+}
+
 void test_valid_resident_state_transitions() {
     expect_transition(std::nullopt, ResidentState::Loading, true, "idle must transition to loading");
 
@@ -177,6 +186,12 @@ void test_idle_manager() {
     expect(manager.active_deployment_id().empty(), "empty manager reported an active deployment ID");
     expect(manager.active_model_id().empty(), "empty manager reported an active model identity");
 
+    const runtime::deployment::DeploymentStatus status = manager.deployment_status();
+    expect(!status.resident, "idle status reported a resident deployment");
+    expect(!status.active, "idle status reported an active deployment");
+    expect(!status.state.has_value(), "idle status reported a resident state");
+    expect(!status.identity.has_value(), "idle status reported a deployment identity");
+
     const runtime::pipeline_parallel::StageRunResult run_result = manager.run_stage(valid_request());
     expect(!run_result.ok, "empty manager accepted stage execution");
     expect(run_result.status == "503 Service Unavailable", "idle execution rejection used the wrong status");
@@ -214,6 +229,14 @@ void test_loaded_manager() {
         manager.resident_deployment_state() == ResidentState::Active,
         "configured deployment did not report the active resident state"
     );
+
+    const runtime::deployment::DeploymentStatus status = manager.deployment_status();
+    expect(status.resident, "configured status did not report a resident deployment");
+    expect(status.active, "configured status did not report an active deployment");
+    expect(status.state == ResidentState::Active, "configured status reported the wrong state");
+    expect(status.identity.has_value(), "configured status omitted deployment identity");
+    expect(status.identity->deployment_id == "deployment-a", "status reported the wrong deployment ID");
+    expect(status.identity->model_id == "model-a", "status reported the wrong model ID");
 
     const runtime::deployment::DeploymentIdentity* active_identity =
         manager.active_deployment_identity();
@@ -292,6 +315,7 @@ void test_missing_executor_rejected() {
 } // namespace
 
 int main() {
+    test_resident_state_strings();
     test_valid_resident_state_transitions();
     test_invalid_resident_state_transitions();
     test_idle_manager();
