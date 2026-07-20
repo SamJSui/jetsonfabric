@@ -119,7 +119,7 @@ void test_valid_resident_state_transitions() {
     );
     expect_transition(ResidentState::Draining, ResidentState::Failed, true, "draining must transition to failed");
 
-    expect_transition(ResidentState::Unloading, std::nopt, true, "unloading must transition to idle");
+    expect_transition(ResidentState::Unloading, std::nullopt, true, "unloading must transition to idle");
     expect_transition(
         ResidentState::Unloading,
         ResidentState::Failed,
@@ -131,7 +131,7 @@ void test_valid_resident_state_transitions() {
 }
 
 void test_invalid_resident_state_transitions() {
-    expect_transition(std::nopt, std::nullopt, false, "idle must not transition to idle");
+    expect_transition(std::nullopt, std::nullopt, false, "idle must not transition to idle");
     expect_transition(std::nullopt, ResidentState::Ready, false, "idle must not skip loading");
     expect_transition(ResidentState::Loading, ResidentState::Active, false, "loading must not skip ready");
     expect_transition(ResidentState::Ready, ResidentState::Draining, false, "ready must not enter draining");
@@ -143,7 +143,7 @@ void test_invalid_resident_state_transitions() {
     );
     expect_transition(ResidentState::Draining, ResidentState::Active, false, "draining must not reactivate");
     expect_transition(ResidentState::Ready, std::nullopt, false, "ready must unload before idle");
-    expect_transition(ResidentState::Active, std::nopt, false, "active must not transition directly to idle");
+    expect_transition(ResidentState::Active, std::nullopt, false, "active must not transition directly to idle");
     expect_transition(ResidentState::Failed, ResidentState::Active, false, "failed must not reactivate");
     expect_transition(ResidentState::Failed, std::nullopt, false, "failed must unload before idle");
 
