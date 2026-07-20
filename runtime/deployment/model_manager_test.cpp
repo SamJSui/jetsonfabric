@@ -1,8 +1,10 @@
 #include "deployment/model_manager.hpp"
 
+#include <array>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -11,6 +13,9 @@ namespace runtime = jetsonfabric::runtime;
 
 namespace {
 
+using ResidentState = runtime::deployment::ResidentDeploymentState;
+using OptionalResidentState = std::optional<ResidentState>;
+
 [[noreturn]] void fail(const std::string& message) {
     std::cerr << message << '\n';
     std::exit(1);
@@ -18,6 +23,18 @@ namespace {
 
 void expect(bool condition, const std::string& message) {
     if (!condition) fail(message);
+}
+
+void expect_transition(
+    OptionalResidentState from,
+    OptionalResidentState to,
+    bool expected,
+    const std::string& message
+) {
+    expect(
+        runtime::deployment::is_valid_resident_deployment_transition(from, to) == expected,
+        message
+    );
 }
 
 class RecordingExecutor final : public runtime::pipeline_parallel::LayerExecutor {
@@ -81,12 +98,82 @@ runtime::protocol::StageRequest valid_request() {
     };
 }
 
+void test_valid_resident_state_transitions() {
+    expect_transition(std::nullopt, ResidentState::Loading, true, "idle must transition to loading");
+
+    expect_transition(ResidentState::Loading, ResidentState::Ready, true, "loading must transition to ready");
+    expect_transition(ResidentState::Loading, ResidentState::Failed, true, "loading must transition to failed");
+
+    expect_transition(ResidentState::Ready, ResidentState::Active, true, "ready must transition to active");
+    expect_transition(ResidentState::Ready, ResidentState::Unloading, true, "ready must transition to unloading");
+    expect_transition(ResidentState::Ready, ResidentState::Failed, true, "ready must transition to failed");
+
+    expect_transition(ResidentState::Active, ResidentState::Draining, true, "active must transition to draining");
+    expect_transition(ResidentState::Active, ResidentState::Failed, true, "active must transition to failed");
+
+    expect_transition(
+        ResidentState::Draining,
+        ResidentState::Unloading,
+        true,
+        "draining must transition to unloading"
+    );
+    expect_transition(ResidentState::Draining, ResidentState::Failed, true, "draining must transition to failed");
+
+    expect_transition(ResidentState::Unloading, std::nullopt, true, "unloading must transition to idle");
+    expect_transition(
+        ResidentState::Unloading,
+        ResidentState::Failed,
+        true,
+        "unloading must transition to failed"
+    );
+
+    expect_transition(ResidentState::Failed, ResidentState::Unloading, true, "failed must transition to unloading");
+}
+
+void test_invalid_resident_state_transitions() {
+    expect_transition(std::nullopt, std::nullopt, false, "idle must not transition to idle");
+    expect_transition(std::nullopt, ResidentState::Ready, false, "idle must not skip loading");
+    expect_transition(ResidentState::Loading, ResidentState::Active, false, "loading must not skip ready");
+    expect_transition(ResidentState::Ready, ResidentState::Draining, false, "ready must not enter draining");
+    expect_transition(
+        ResidentState::Active,
+        ResidentState::Unloading,
+        false,
+        "active must drain before unloading"
+    );
+    expect_transition(ResidentState::Draining, ResidentState::Active, false, "draining must not reactivate");
+    expect_transition(ResidentState::Ready, std::nullopt, false, "ready must unload before idle");
+    expect_transition(ResidentState::Active, std::nullopt, false, "active must not transition directly to idle");
+    expect_transition(ResidentState::Failed, ResidentState::Active, false, "failed must not reactivate");
+    expect_transition(ResidentState::Failed, std::nullopt, false, "failed must unload before idle");
+
+    constexpr std::array<ResidentState, 6> states{
+        ResidentState::Loading,
+        ResidentState::Ready,
+        ResidentState::Active,
+        ResidentState::Draining,
+        ResidentState::Unloading,
+        ResidentState::Failed,
+    };
+    for (const ResidentState state : states) {
+        expect_transition(state, state, false, "resident state transitions must make progress");
+    }
+}
+
 void test_idle_manager() {
     runtime::deployment::ModelManager manager;
 
+    expect(!manager.has_resident_deployment(), "empty manager reported a resident deployment");
     expect(!manager.has_active_deployment(), "empty manager reported an active deployment");
-    expect(manager.active_deployment_identity() == nullptr, "empty manager exposed a deployment identity");
-    expect(!manager.active_deployment_state().has_value(), "empty manager exposed a deployment state");
+    expect(
+        manager.resident_deployment_identity() == nullptr,
+        "empty manager exposed a resident deployment identity"
+    );
+    expect(
+        !manager.resident_deployment_state().has_value(),
+        "empty manager exposed a resident deployment state"
+    );
+    expect(manager.active_deployment_identity() == nullptr, "empty manager exposed an active identity");
     expect(manager.active_deployment_id().empty(), "empty manager reported an active deployment ID");
     expect(manager.active_model_id().empty(), "empty manager reported an active model identity");
 
@@ -115,17 +202,26 @@ void test_loaded_manager() {
         runtime::InferenceEngineParts{.layer_executor = std::move(executor)}
     );
 
+    expect(manager.has_resident_deployment(), "configured manager did not report a resident deployment");
     expect(manager.has_active_deployment(), "configured manager did not report an active deployment");
-    const runtime::deployment::DeploymentIdentity* identity = manager.active_deployment_identity();
-    expect(identity != nullptr, "configured manager did not expose its deployment identity");
-    expect(identity->deployment_id == "deployment-a", "active deployment ID was not retained");
-    expect(identity->model_id == "model-a", "active deployment model ID was not retained");
+
+    const runtime::deployment::DeploymentIdentity* resident_identity =
+        manager.resident_deployment_identity();
+    expect(resident_identity != nullptr, "configured manager did not expose its resident identity");
+    expect(resident_identity->deployment_id == "deployment-a", "resident deployment ID was not retained");
+    expect(resident_identity->model_id == "model-a", "resident deployment model ID was not retained");
+    expect(
+        manager.resident_deployment_state() == ResidentState::Active,
+        "configured deployment did not report the active resident state"
+    );
+
+    const runtime::deployment::DeploymentIdentity* active_identity =
+        manager.active_deployment_identity();
+    expect(active_identity != nullptr, "configured manager did not expose its active identity");
+    expect(active_identity->deployment_id == "deployment-a", "active deployment ID was not retained");
+    expect(active_identity->model_id == "model-a", "active deployment model ID was not retained");
     expect(manager.active_deployment_id() == "deployment-a", "active deployment ID query was incorrect");
     expect(manager.active_model_id() == "model-a", "active model identity was not retained");
-    expect(
-        manager.active_deployment_state() == runtime::deployment::DeploymentState::Active,
-        "configured deployment did not report the active state"
-    );
 
     const runtime::pipeline_parallel::StageRunResult result = manager.run_stage(valid_request());
     expect(result.ok, "valid stage request did not reach the active deployment");
@@ -196,6 +292,8 @@ void test_missing_executor_rejected() {
 } // namespace
 
 int main() {
+    test_valid_resident_state_transitions();
+    test_invalid_resident_state_transitions();
     test_idle_manager();
     test_loaded_manager();
     test_invalid_identity_rejected();
