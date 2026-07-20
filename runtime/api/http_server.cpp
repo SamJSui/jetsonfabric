@@ -224,6 +224,9 @@ void HttpServer::handle_client(int client_fd) const {
         response = not_found_response();
         if (starts_with(request, "GET /healthz ")) {
             response = json_response("200 OK", health_body(runtime_));
+        } else if (starts_with(request, "GET /v1/deployment ")) {
+            const RuntimeResponse runtime_response = runtime_.deployment_status();
+            response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
         } else if (starts_with(request, "POST /v1/chat/completions ")) {
             const RuntimeResponse runtime_response = runtime_.chat_completion(body);
             response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
