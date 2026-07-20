@@ -21,6 +21,7 @@ public:
     virtual ExecutionMode execution_mode() const = 0;
     virtual std::string model() const = 0;
 
+    virtual RuntimeResponse deployment_status() const = 0;
     virtual RuntimeResponse chat_completion(const std::string& request_body) const = 0;
     virtual RuntimeResponse run_stage(const std::string& request_body) const = 0;
 };
