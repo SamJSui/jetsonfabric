@@ -364,7 +364,11 @@ RuntimeResponse RuntimeService::load_deployment(const std::string& request_body)
     }
 
     config_ = deployment_config;
-    return operation_response("loaded", result, model_manager_.deployment_status());
+    return operation_response(
+        "loaded",
+        result,
+        model_manager_.deployment_status(*result.identity)
+    );
 }
 
 RuntimeResponse RuntimeService::activate_deployment(const std::string& request_body) {
@@ -380,7 +384,31 @@ RuntimeResponse RuntimeService::activate_deployment(const std::string& request_b
     if (!result.ok) {
         return json_error(result.status, result.error_code, result.error_message);
     }
-    return operation_response("activated", result, model_manager_.deployment_status());
+    return operation_response(
+        "activated",
+        result,
+        model_manager_.deployment_status(*result.identity)
+    );
+}
+
+RuntimeResponse RuntimeService::drain_deployment(const std::string& request_body) {
+    deployment::DeploymentIdentity expected_identity;
+    try {
+        expected_identity = decode_expected_deployment_identity(request_body);
+    } catch (const std::invalid_argument& err) {
+        return json_error("400 Bad Request", "invalid_drain_request", err.what());
+    }
+
+    const deployment::DrainDeploymentResult result =
+        model_manager_.drain_resident_deployment(expected_identity);
+    if (!result.ok) {
+        return json_error(result.status, result.error_code, result.error_message);
+    }
+    return operation_response(
+        "drained",
+        result,
+        model_manager_.deployment_status(*result.identity)
+    );
 }
 
 RuntimeResponse RuntimeService::unload_deployment(const std::string& request_body) {
@@ -396,7 +424,11 @@ RuntimeResponse RuntimeService::unload_deployment(const std::string& request_bod
     if (!result.ok) {
         return json_error(result.status, result.error_code, result.error_message);
     }
-    return operation_response("unloaded", result, model_manager_.deployment_status());
+    return operation_response(
+        "unloaded",
+        result,
+        model_manager_.deployment_status(*result.identity)
+    );
 }
 
 RuntimeResponse RuntimeService::chat_completion(const std::string& /*request_body*/) const {
@@ -432,14 +464,20 @@ RuntimeResponse RuntimeService::generate(
         };
     }
 
-    const deployment::DeploymentIdentity* active = model_manager_.active_deployment_identity();
+    const deployment::DeploymentIdentity* active = request.deployment.has_value()
+        ? model_manager_.executable_deployment_identity(*request.deployment)
+        : model_manager_.active_deployment_identity();
     if (active == nullptr) {
+        const bool identity_mismatch = request.deployment.has_value() &&
+            model_manager_.has_active_deployment();
         return RuntimeResponse{
             "200 OK",
             protocol::kGenerationContentType,
             protocol::encode_generation_error_event(
-                "no_active_deployment",
-                "runtime has no active deployment"
+                identity_mismatch ? "deployment_mismatch" : "no_active_deployment",
+                identity_mismatch
+                    ? "generation deployment identity does not match an executable runtime epoch"
+                    : "runtime has no executable deployment for the requested epoch"
             ),
         };
     }
@@ -449,7 +487,7 @@ RuntimeResponse RuntimeService::generate(
             protocol::kGenerationContentType,
             protocol::encode_generation_error_event(
                 "deployment_mismatch",
-                "generation model does not match the active deployment"
+                "generation model does not match the selected deployment"
             ),
         };
     }
@@ -469,7 +507,7 @@ RuntimeResponse RuntimeService::generate(
             protocol::kGenerationContentType,
             protocol::encode_generation_error_event(
                 "deployment_mismatch",
-                "generation deployment identity does not match the active runtime"
+                "generation deployment identity does not match an executable runtime epoch"
             ),
         };
     }

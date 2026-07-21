@@ -6,7 +6,9 @@
 #include "worker/config.hpp"
 
 #include <cctype>
+#include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -15,11 +17,12 @@
 
 namespace jetsonfabric::runtime::deployment {
 
-// ModelManager owns one resident deployment slot. A resident identity may exist
-// while loading or after a failed load, but inference components are reachable
-// only after the deployment is explicitly activated.
+// ModelManager owns resident deployments on one runtime. Managed requests carry
+// an immutable deployment identity, allowing a replacement epoch to be prepared
+// while the previous epoch remains executable for already-admitted sessions.
 class ModelManager {
     struct ResidentDeployment;
+    using DeploymentKey = std::pair<std::string, std::uint64_t>;
 
 public:
     using EngineBuilder = std::function<InferenceEngineParts()>;
@@ -28,7 +31,7 @@ public:
 
     explicit ModelManager(const Config& config) {
         if (!config.start_idle) {
-            resident_.emplace(
+            insert_active(
                 config.node_name,
                 DeploymentIdentity{
                     .deployment_id = config.model,
@@ -48,7 +51,7 @@ public:
         pipeline_parallel::StageAssignment assignment,
         InferenceEngineParts engine_parts
     ) {
-        resident_.emplace(
+        insert_active(
             std::move(node_name),
             std::move(identity),
             assignment,
@@ -62,34 +65,41 @@ public:
     ModelManager& operator=(ModelManager&&) = delete;
 
     bool has_resident_deployment() const noexcept {
-        return resident_.has_value();
+        return !deployments_.empty();
+    }
+
+    std::size_t resident_deployment_count() const noexcept {
+        return deployments_.size();
     }
 
     bool has_active_deployment() const noexcept {
-        return active_deployment() != nullptr;
+        for (const auto& [key, deployment] : deployments_) {
+            (void) key;
+            if (is_executable(*deployment)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     const DeploymentIdentity* resident_deployment_identity() const noexcept {
-        return resident_.has_value() ? &resident_->identity : nullptr;
+        const ResidentDeployment* deployment = preferred_deployment();
+        return deployment != nullptr ? &deployment->identity : nullptr;
     }
 
     std::optional<ResidentDeploymentState> resident_deployment_state() const noexcept {
-        return resident_.has_value()
-            ? std::optional<ResidentDeploymentState>{resident_->state}
+        const ResidentDeployment* deployment = preferred_deployment();
+        return deployment != nullptr
+            ? std::optional<ResidentDeploymentState>{deployment->state}
             : std::nullopt;
     }
 
     DeploymentStatus deployment_status() const {
-        if (!resident_.has_value()) {
-            return DeploymentStatus{};
-        }
-        return DeploymentStatus{
-            .resident = true,
-            .active = active_deployment() != nullptr,
-            .state = resident_->state,
-            .identity = resident_->identity,
-            .model_residency = resident_->model_residency,
-        };
+        return status_for(preferred_deployment());
+    }
+
+    DeploymentStatus deployment_status(const DeploymentIdentity& identity) const {
+        return status_for(find_exact(identity));
     }
 
     LoadDeploymentResult load_resident_deployment(
@@ -98,15 +108,6 @@ public:
         pipeline_parallel::StageAssignment assignment,
         EngineBuilder build_engine_parts
     ) {
-        if (resident_.has_value()) {
-            return operation_error(
-                "409 Conflict",
-                "resident_deployment_exists",
-                "runtime already has a resident deployment",
-                resident_->identity,
-                resident_->state
-            );
-        }
         if (!build_engine_parts) {
             return operation_error(
                 "400 Bad Request",
@@ -114,8 +115,8 @@ public:
                 "deployment load requires an engine builder"
             );
         }
-
-        const std::string assignment_error = pipeline_parallel::validate_stage_assignment(assignment);
+        const std::string assignment_error =
+            pipeline_parallel::validate_stage_assignment(assignment);
         if (!assignment_error.empty()) {
             return operation_error(
                 "400 Bad Request",
@@ -125,36 +126,58 @@ public:
         }
 
         try {
-            resident_.emplace(
-                require_identity(std::move(identity)),
-                ResidentDeploymentState::Loading
+            require_managed_identity(identity);
+        } catch (const std::invalid_argument& error) {
+            return operation_error(
+                "400 Bad Request",
+                "invalid_deployment_identity",
+                error.what()
             );
-        } catch (const std::invalid_argument& err) {
-            return operation_error("400 Bad Request", "invalid_deployment_identity", err.what());
+        }
+
+        const DeploymentKey key = key_for(identity);
+        if (const ResidentDeployment* existing = find_key(key); existing != nullptr) {
+            return operation_error(
+                "409 Conflict",
+                "resident_deployment_exists",
+                "runtime already has this resident deployment identity",
+                existing->identity,
+                existing->state
+            );
+        }
+
+        auto deployment = std::make_unique<ResidentDeployment>(
+            std::move(identity),
+            ResidentDeploymentState::Loading
+        );
+        ResidentDeployment* resident = deployment.get();
+        deployments_.emplace(key, std::move(deployment));
+        if (!preferred_.has_value()) {
+            preferred_ = key;
         }
 
         try {
             InferenceEngineParts engine_parts = build_engine_parts();
-            resident_->model_residency = engine_parts.model_residency;
-            resident_->execution = std::make_unique<ResidentExecution>(
+            resident->model_residency = engine_parts.model_residency;
+            resident->execution = std::make_unique<ResidentExecution>(
                 std::move(node_name),
-                resident_->identity.model_id,
+                resident->identity.model_id,
                 assignment,
                 std::move(engine_parts)
             );
-            transition_resident_to(ResidentDeploymentState::Ready);
+            transition(*resident, ResidentDeploymentState::Ready);
             return operation_success(
                 "200 OK",
-                resident_->identity,
+                resident->identity,
                 ResidentDeploymentState::Ready
             );
-        } catch (const std::exception& err) {
-            transition_resident_to(ResidentDeploymentState::Failed);
+        } catch (const std::exception& error) {
+            transition(*resident, ResidentDeploymentState::Failed);
             return operation_error(
                 "500 Internal Server Error",
                 "deployment_load_failed",
-                err.what(),
-                resident_->identity,
+                error.what(),
+                resident->identity,
                 ResidentDeploymentState::Failed
             );
         }
@@ -163,136 +186,110 @@ public:
     ActivateDeploymentResult activate_resident_deployment(
         const DeploymentIdentity& expected_identity
     ) {
-        try {
-            require_managed_identity(expected_identity);
-        } catch (const std::invalid_argument& err) {
-            return operation_error(
-                "400 Bad Request",
-                "invalid_deployment_identity",
-                err.what()
-            );
+        if (DeploymentOperationResult invalid = validate_operation_identity(expected_identity);
+            !invalid.ok) {
+            return invalid;
         }
-        if (!resident_.has_value()) {
-            return operation_error(
-                "409 Conflict",
-                "no_resident_deployment",
-                "runtime has no resident deployment"
-            );
+        ResidentDeployment* resident = find_exact(expected_identity);
+        if (resident == nullptr) {
+            return deployment_not_found(expected_identity);
         }
-        if (resident_->identity != expected_identity) {
-            return operation_error(
-                "409 Conflict",
-                "deployment_mismatch",
-                "resident deployment does not match the expected deployment identity",
-                resident_->identity,
-                resident_->state
-            );
+        if (resident->state == ResidentDeploymentState::Active) {
+            preferred_ = key_for(resident->identity);
+            return operation_success("200 OK", resident->identity, resident->state);
         }
-        if (resident_->state == ResidentDeploymentState::Active) {
-            return operation_success(
-                "200 OK",
-                resident_->identity,
-                ResidentDeploymentState::Active
-            );
+        if (resident->state == ResidentDeploymentState::Loading ||
+            resident->state == ResidentDeploymentState::Draining ||
+            resident->state == ResidentDeploymentState::Unloading) {
+            return transitioning_error(*resident);
         }
-        if (resident_->state == ResidentDeploymentState::Loading ||
-            resident_->state == ResidentDeploymentState::Draining ||
-            resident_->state == ResidentDeploymentState::Unloading) {
-            return operation_error(
-                "503 Service Unavailable",
-                "deployment_transitioning",
-                "resident deployment is transitioning",
-                resident_->identity,
-                resident_->state
-            );
-        }
-        if (resident_->state == ResidentDeploymentState::Failed) {
+        if (resident->state == ResidentDeploymentState::Failed) {
             return operation_error(
                 "409 Conflict",
                 "deployment_failed",
-                "failed deployment must be unloaded before another load",
-                resident_->identity,
-                resident_->state
+                "failed deployment must be unloaded before activation",
+                resident->identity,
+                resident->state
             );
         }
-        if (resident_->state != ResidentDeploymentState::Ready ||
-            !resident_->execution) {
-            return operation_error(
-                "500 Internal Server Error",
-                "invalid_deployment_state",
-                "ready deployment is missing execution components",
-                resident_->identity,
-                resident_->state
-            );
+        if (resident->state != ResidentDeploymentState::Ready ||
+            !resident->execution) {
+            return invalid_state_error(*resident);
         }
 
-        transition_resident_to(ResidentDeploymentState::Active);
-        return operation_success(
-            "200 OK",
-            resident_->identity,
-            ResidentDeploymentState::Active
-        );
+        transition(*resident, ResidentDeploymentState::Active);
+        preferred_ = key_for(resident->identity);
+        return operation_success("200 OK", resident->identity, resident->state);
+    }
+
+    DrainDeploymentResult drain_resident_deployment(
+        const DeploymentIdentity& expected_identity
+    ) {
+        if (DeploymentOperationResult invalid = validate_operation_identity(expected_identity);
+            !invalid.ok) {
+            return invalid;
+        }
+        ResidentDeployment* resident = find_exact(expected_identity);
+        if (resident == nullptr) {
+            return operation_success("200 OK", expected_identity, std::nullopt);
+        }
+        if (resident->state == ResidentDeploymentState::Loading ||
+            resident->state == ResidentDeploymentState::Unloading) {
+            return transitioning_error(*resident);
+        }
+        if (resident->state == ResidentDeploymentState::Active) {
+            transition(*resident, ResidentDeploymentState::Draining);
+        }
+        return operation_success("200 OK", resident->identity, resident->state);
     }
 
     UnloadDeploymentResult unload_resident_deployment(
         const DeploymentIdentity& expected_identity
     ) {
-        try {
-            require_managed_identity(expected_identity);
-        } catch (const std::invalid_argument& err) {
-            return operation_error(
-                "400 Bad Request",
-                "invalid_deployment_identity",
-                err.what()
-            );
+        if (DeploymentOperationResult invalid = validate_operation_identity(expected_identity);
+            !invalid.ok) {
+            return invalid;
         }
-        if (!resident_.has_value()) {
-            return operation_error(
-                "409 Conflict",
-                "no_resident_deployment",
-                "runtime has no resident deployment"
-            );
+        ResidentDeployment* resident = find_exact(expected_identity);
+        if (resident == nullptr) {
+            return operation_success("200 OK", expected_identity, std::nullopt);
         }
-        if (resident_->identity != expected_identity) {
+        if (resident->state == ResidentDeploymentState::Loading ||
+            resident->state == ResidentDeploymentState::Unloading) {
+            return transitioning_error(*resident);
+        }
+        if (resident->state == ResidentDeploymentState::Active) {
             return operation_error(
                 "409 Conflict",
-                "deployment_mismatch",
-                "resident deployment does not match the expected deployment identity",
-                resident_->identity,
-                resident_->state
-            );
-        }
-        if (resident_->state == ResidentDeploymentState::Loading ||
-            resident_->state == ResidentDeploymentState::Unloading) {
-            return operation_error(
-                "503 Service Unavailable",
-                "deployment_transitioning",
-                "resident deployment is already transitioning",
-                resident_->identity,
-                resident_->state
+                "deployment_not_draining",
+                "active deployment must enter draining state before unload",
+                resident->identity,
+                resident->state
             );
         }
 
-        if (resident_->state == ResidentDeploymentState::Active) {
-            transition_resident_to(ResidentDeploymentState::Draining);
-        }
-        transition_resident_to(ResidentDeploymentState::Unloading);
-
-        DeploymentIdentity unloaded_identity = resident_->identity;
-        if (!is_valid_resident_deployment_transition(
-                ResidentDeploymentState::Unloading,
-                std::nullopt
-            )) {
-            throw std::logic_error("unloading deployment cannot transition to idle");
-        }
-        resident_.reset();
-
-        return operation_success("200 OK", std::move(unloaded_identity), std::nullopt);
+        const DeploymentKey key = key_for(resident->identity);
+        const DeploymentIdentity unloaded_identity = resident->identity;
+        transition(*resident, ResidentDeploymentState::Unloading);
+        deployments_.erase(key);
+        select_preferred_after_erase();
+        return operation_success("200 OK", unloaded_identity, std::nullopt);
     }
 
     const DeploymentIdentity* active_deployment_identity() const noexcept {
-        const ResidentDeployment* deployment = active_deployment();
-        return deployment != nullptr ? &deployment->identity : nullptr;
+        const ResidentDeployment* deployment = preferred_deployment();
+        return deployment != nullptr && is_executable(*deployment)
+            ? &deployment->identity
+            : nullptr;
+    }
+
+    const DeploymentIdentity* executable_deployment_identity(
+        const DeploymentIdentity& expected_identity
+    ) const noexcept {
+        const ResidentDeployment* deployment = find_exact(expected_identity);
+        return deployment != nullptr && is_executable(*deployment)
+            ? &deployment->identity
+            : nullptr;
     }
 
     const std::string& active_deployment_id() const noexcept {
@@ -307,29 +304,31 @@ public:
         return identity != nullptr ? identity->model_id : empty_model_id;
     }
 
-    pipeline_parallel::StageRunResult run_stage(const protocol::StageRequest& request) const {
-        const ResidentDeployment* deployment = active_deployment();
+    pipeline_parallel::StageRunResult run_stage(
+        const protocol::StageRequest& request
+    ) const {
+        const ResidentDeployment* deployment = deployment_for(request);
         if (deployment == nullptr) {
-            return no_active_deployment();
+            return unavailable_for(request);
         }
-        if (pipeline_parallel::StageRunResult mismatch = validate_stage_deployment(
-                deployment->identity,
-                request
-            ); !mismatch.ok) {
+        if (pipeline_parallel::StageRunResult mismatch =
+                validate_stage_deployment(deployment->identity, request);
+            !mismatch.ok) {
             return mismatch;
         }
         return deployment->execution->stage_worker.run(request);
     }
 
-    pipeline_parallel::StageRunResult close_session(const protocol::StageRequest& request) const {
-        const ResidentDeployment* deployment = active_deployment();
+    pipeline_parallel::StageRunResult close_session(
+        const protocol::StageRequest& request
+    ) const {
+        const ResidentDeployment* deployment = deployment_for(request);
         if (deployment == nullptr) {
-            return no_active_deployment();
+            return unavailable_for(request);
         }
-        if (pipeline_parallel::StageRunResult mismatch = validate_stage_deployment(
-                deployment->identity,
-                request
-            ); !mismatch.ok) {
+        if (pipeline_parallel::StageRunResult mismatch =
+                validate_stage_deployment(deployment->identity, request);
+            !mismatch.ok) {
             return mismatch;
         }
         return deployment->execution->stage_worker.close_session(request);
@@ -350,11 +349,6 @@ private:
                   assignment,
                   ModelManager::require_layer_executor(engine_parts)
               ) {}
-
-        ResidentExecution(const ResidentExecution&) = delete;
-        ResidentExecution& operator=(const ResidentExecution&) = delete;
-        ResidentExecution(ResidentExecution&&) = delete;
-        ResidentExecution& operator=(ResidentExecution&&) = delete;
 
         InferenceEngineParts engine_parts;
         pipeline_parallel::StageWorker stage_worker;
@@ -384,23 +378,203 @@ private:
                   std::move(loaded_engine_parts)
               )) {}
 
-        ResidentDeployment(const ResidentDeployment&) = delete;
-        ResidentDeployment& operator=(const ResidentDeployment&) = delete;
-        ResidentDeployment(ResidentDeployment&&) = delete;
-        ResidentDeployment& operator=(ResidentDeployment&&) = delete;
-
         DeploymentIdentity identity;
         ResidentDeploymentState state;
         std::optional<ModelResidency> model_residency;
         std::unique_ptr<ResidentExecution> execution;
     };
 
+    void insert_active(
+        std::string node_name,
+        DeploymentIdentity identity,
+        pipeline_parallel::StageAssignment assignment,
+        InferenceEngineParts engine_parts
+    ) {
+        const DeploymentKey key = key_for(identity);
+        deployments_.emplace(
+            key,
+            std::make_unique<ResidentDeployment>(
+                std::move(node_name),
+                std::move(identity),
+                assignment,
+                std::move(engine_parts)
+            )
+        );
+        preferred_ = key;
+    }
+
+    static DeploymentKey key_for(const DeploymentIdentity& identity) {
+        return {identity.deployment_id, identity.epoch};
+    }
+
+    ResidentDeployment* find_key(const DeploymentKey& key) noexcept {
+        const auto found = deployments_.find(key);
+        return found != deployments_.end() ? found->second.get() : nullptr;
+    }
+
+    const ResidentDeployment* find_key(const DeploymentKey& key) const noexcept {
+        const auto found = deployments_.find(key);
+        return found != deployments_.end() ? found->second.get() : nullptr;
+    }
+
+    ResidentDeployment* find_exact(const DeploymentIdentity& identity) noexcept {
+        ResidentDeployment* deployment = find_key(key_for(identity));
+        return deployment != nullptr && deployment->identity == identity
+            ? deployment
+            : nullptr;
+    }
+
+    const ResidentDeployment* find_exact(
+        const DeploymentIdentity& identity
+    ) const noexcept {
+        const ResidentDeployment* deployment = find_key(key_for(identity));
+        return deployment != nullptr && deployment->identity == identity
+            ? deployment
+            : nullptr;
+    }
+
+    const ResidentDeployment* preferred_deployment() const noexcept {
+        return preferred_.has_value() ? find_key(*preferred_) : nullptr;
+    }
+
+    const ResidentDeployment* deployment_for(
+        const protocol::StageRequest& request
+    ) const noexcept {
+        const bool managed = !request.deployment_id.empty() ||
+            request.deployment_epoch != 0 ||
+            !request.model_sha256.empty();
+        if (!managed) {
+            const ResidentDeployment* deployment = preferred_deployment();
+            return deployment != nullptr && is_executable(*deployment)
+                ? deployment
+                : nullptr;
+        }
+        const DeploymentIdentity expected{
+            .deployment_id = request.deployment_id,
+            .epoch = request.deployment_epoch,
+            .model_id = request.model_id,
+            .model_sha256 = request.model_sha256,
+        };
+        const ResidentDeployment* deployment = find_exact(expected);
+        return deployment != nullptr && is_executable(*deployment)
+            ? deployment
+            : nullptr;
+    }
+
+    static bool is_executable(const ResidentDeployment& deployment) noexcept {
+        return deployment.execution &&
+            (deployment.state == ResidentDeploymentState::Active ||
+             deployment.state == ResidentDeploymentState::Draining);
+    }
+
+    static DeploymentStatus status_for(const ResidentDeployment* deployment) {
+        if (deployment == nullptr) {
+            return DeploymentStatus{};
+        }
+        return DeploymentStatus{
+            .resident = true,
+            .active = is_executable(*deployment),
+            .state = deployment->state,
+            .identity = deployment->identity,
+            .model_residency = deployment->model_residency,
+        };
+    }
+
+    void select_preferred_after_erase() noexcept {
+        preferred_.reset();
+        for (auto iterator = deployments_.rbegin(); iterator != deployments_.rend(); ++iterator) {
+            if (is_executable(*iterator->second)) {
+                preferred_ = iterator->first;
+                return;
+            }
+        }
+        if (!deployments_.empty()) {
+            preferred_ = deployments_.rbegin()->first;
+        }
+    }
+
+    static DeploymentOperationResult validate_operation_identity(
+        const DeploymentIdentity& identity
+    ) {
+        try {
+            require_managed_identity(identity);
+            DeploymentOperationResult result;
+            result.ok = true;
+            return result;
+        } catch (const std::invalid_argument& error) {
+            return operation_error(
+                "400 Bad Request",
+                "invalid_deployment_identity",
+                error.what()
+            );
+        }
+    }
+
+    static DeploymentOperationResult deployment_not_found(
+        const DeploymentIdentity& identity
+    ) {
+        return operation_error(
+            "409 Conflict",
+            "deployment_not_found",
+            "runtime has no resident deployment matching the expected identity",
+            identity
+        );
+    }
+
+    static DeploymentOperationResult transitioning_error(
+        const ResidentDeployment& deployment
+    ) {
+        return operation_error(
+            "503 Service Unavailable",
+            "deployment_transitioning",
+            "resident deployment is transitioning",
+            deployment.identity,
+            deployment.state
+        );
+    }
+
+    static DeploymentOperationResult invalid_state_error(
+        const ResidentDeployment& deployment
+    ) {
+        return operation_error(
+            "500 Internal Server Error",
+            "invalid_deployment_state",
+            "ready deployment is missing execution components",
+            deployment.identity,
+            deployment.state
+        );
+    }
+
     static pipeline_parallel::StageRunResult no_active_deployment() {
         pipeline_parallel::StageRunResult result;
         result.ok = false;
         result.status = "503 Service Unavailable";
         result.error_code = "no_active_deployment";
-        result.error_message = "runtime has no active deployment";
+        result.error_message = "runtime has no executable deployment for the request identity";
+        return result;
+    }
+
+    pipeline_parallel::StageRunResult unavailable_for(
+        const protocol::StageRequest& request
+    ) const {
+        const bool managed = !request.deployment_id.empty() ||
+            request.deployment_epoch != 0 ||
+            !request.model_sha256.empty();
+        if (!managed || !has_active_deployment()) {
+            return no_active_deployment();
+        }
+        pipeline_parallel::StageRunResult result;
+        result.ok = false;
+        result.status = "409 Conflict";
+        result.error_code = "deployment_mismatch";
+        result.error_message =
+            "stage request identity does not match a resident executable epoch";
+        return result;
+    }
+
+    static pipeline_parallel::StageRunResult stage_success() {
+        pipeline_parallel::StageRunResult result;
+        result.ok = true;
         return result;
     }
 
@@ -412,23 +586,20 @@ private:
             request.deployment_epoch != 0 ||
             !request.model_sha256.empty();
         if (active.epoch == 0 && !request_has_identity) {
-            pipeline_parallel::StageRunResult result;
-            result.ok = true;
-            return result;
+            return stage_success();
         }
         if (request.deployment_id == active.deployment_id &&
             request.deployment_epoch == active.epoch &&
             request.model_id == active.model_id &&
             request.model_sha256 == active.model_sha256) {
-            pipeline_parallel::StageRunResult result;
-            result.ok = true;
-            return result;
+            return stage_success();
         }
         pipeline_parallel::StageRunResult result;
         result.ok = false;
         result.status = "409 Conflict";
         result.error_code = "deployment_mismatch";
-        result.error_message = "stage request deployment identity does not match the active runtime";
+        result.error_message =
+            "stage request deployment identity does not match the selected runtime epoch";
         return result;
     }
 
@@ -440,6 +611,8 @@ private:
         return DeploymentOperationResult{
             .ok = true,
             .status = std::move(status),
+            .error_code = "",
+            .error_message = "",
             .identity = std::move(identity),
             .state = state,
         };
@@ -472,17 +645,23 @@ private:
         return identity;
     }
 
-    static const DeploymentIdentity& require_managed_identity(const DeploymentIdentity& identity) {
+    static const DeploymentIdentity& require_managed_identity(
+        const DeploymentIdentity& identity
+    ) {
         require_identity(identity);
         if (identity.epoch == 0) {
             throw std::invalid_argument("deployment epoch must be positive");
         }
         if (identity.model_sha256.size() != 64) {
-            throw std::invalid_argument("model_sha256 must be a 64-character hexadecimal digest");
+            throw std::invalid_argument(
+                "model_sha256 must be a 64-character hexadecimal digest"
+            );
         }
         for (const unsigned char character : identity.model_sha256) {
             if (!std::isxdigit(character)) {
-                throw std::invalid_argument("model_sha256 must be a 64-character hexadecimal digest");
+                throw std::invalid_argument(
+                    "model_sha256 must be a 64-character hexadecimal digest"
+                );
             }
         }
         return identity;
@@ -497,24 +676,18 @@ private:
         return *engine_parts.layer_executor;
     }
 
-    void transition_resident_to(ResidentDeploymentState next) {
-        if (!resident_.has_value() ||
-            !is_valid_resident_deployment_transition(resident_->state, next)) {
+    static void transition(
+        ResidentDeployment& deployment,
+        ResidentDeploymentState next
+    ) {
+        if (!is_valid_resident_deployment_transition(deployment.state, next)) {
             throw std::logic_error("invalid resident deployment transition");
         }
-        resident_->state = next;
+        deployment.state = next;
     }
 
-    const ResidentDeployment* active_deployment() const noexcept {
-        if (!resident_.has_value() ||
-            resident_->state != ResidentDeploymentState::Active ||
-            !resident_->execution) {
-            return nullptr;
-        }
-        return &*resident_;
-    }
-
-    std::optional<ResidentDeployment> resident_;
+    std::map<DeploymentKey, std::unique_ptr<ResidentDeployment>> deployments_;
+    std::optional<DeploymentKey> preferred_;
 };
 
 } // namespace jetsonfabric::runtime::deployment

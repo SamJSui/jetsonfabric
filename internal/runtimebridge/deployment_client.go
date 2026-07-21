@@ -44,6 +44,7 @@ type DeploymentOperationResponse struct {
 	DeploymentStatus
 	Loaded    bool `json:"loaded,omitempty"`
 	Activated bool `json:"activated,omitempty"`
+	Drained   bool `json:"drained,omitempty"`
 	Unloaded  bool `json:"unloaded,omitempty"`
 }
 
@@ -69,6 +70,7 @@ type DeploymentClient interface {
 	Status(context.Context, string) (DeploymentStatus, error)
 	Load(context.Context, string, LoadDeploymentRequest) (DeploymentOperationResponse, error)
 	Activate(context.Context, string, DeploymentIdentity) (DeploymentOperationResponse, error)
+	Drain(context.Context, string, DeploymentIdentity) (DeploymentOperationResponse, error)
 	Unload(context.Context, string, DeploymentIdentity) (DeploymentOperationResponse, error)
 }
 
@@ -115,6 +117,15 @@ func (c *HTTPDeploymentClient) Activate(ctx context.Context, nodeURL string, ide
 	err := c.do(ctx, http.MethodPost, nodeURL, api.PathRuntimeDeploymentActivate, identity, &response)
 	if err == nil && !response.Activated {
 		err = fmt.Errorf("runtime activation response did not confirm activated=true")
+	}
+	return response, err
+}
+
+func (c *HTTPDeploymentClient) Drain(ctx context.Context, nodeURL string, identity DeploymentIdentity) (DeploymentOperationResponse, error) {
+	var response DeploymentOperationResponse
+	err := c.do(ctx, http.MethodPost, nodeURL, api.PathRuntimeDeploymentDrain, identity, &response)
+	if err == nil && !response.Drained {
+		err = fmt.Errorf("runtime drain response did not confirm drained=true")
 	}
 	return response, err
 }

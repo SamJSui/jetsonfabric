@@ -97,6 +97,25 @@ func TestPlanSupportsRequestedStageCount(t *testing.T) {
 	}
 }
 
+func TestPlanUsesEveryEligibleNodeWhenStageCountIsAutomatic(t *testing.T) {
+	members := make([]membership.Member, 0, 3)
+	for i := 0; i < 3; i++ {
+		members = append(members, clusterPlanTestMember(
+			fmt.Sprintf("node-%d", i),
+			fmt.Sprintf("node-%d", i),
+			fmt.Sprintf("host-%d", i),
+			fmt.Sprintf("http://host-%d.local:52415", i),
+		))
+	}
+	preview := Preview(Request{
+		Model: clusterPlanTestModel(), Members: members,
+		Now: clusterPlanTestNow(), StaleAfter: time.Minute,
+	})
+	if !preview.Valid || preview.StageCount != 3 || preview.PhysicalHostCount != 3 {
+		t.Fatalf("automatic placement did not use every eligible node: %+v", preview)
+	}
+}
+
 func TestPlanRejectsUnavailableRequestedStageCount(t *testing.T) {
 	preview := Preview(Request{
 		Model: clusterPlanTestModel(),

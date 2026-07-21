@@ -76,8 +76,9 @@ The llama.cpp stage executor:
 
 ## Current limitations
 
-- The runtime supports idle startup and explicit load, activate, status, and
-  unload operations, but automatic reconciliation is not implemented.
+- The runtime supports idle startup and explicit load, activate, drain, status,
+  and unload operations. The coordinator automatically reconciles the last
+  successful deployment intent after membership or capacity changes.
 - Chat completions support buffered and SSE output but are greedy-only.
 - Cancellation is observed between stage passes or failed stream writes; an
   already-blocking peer request runs until its transport timeout.

@@ -61,6 +61,7 @@ func NewRouter(cfg Config) http.Handler {
 	mux.HandleFunc(api.RouteRuntimeDeploymentStatus, r.handleRuntimeDeployment)
 	mux.HandleFunc(api.RouteRuntimeDeploymentLoad, r.handleRuntimeDeployment)
 	mux.HandleFunc(api.RouteRuntimeDeploymentActivate, r.handleRuntimeDeployment)
+	mux.HandleFunc(api.RouteRuntimeDeploymentDrain, r.handleRuntimeDeployment)
 	mux.HandleFunc(api.RouteRuntimeDeploymentUnload, r.handleRuntimeDeployment)
 	mux.HandleFunc(api.RouteRuntimeGeneration, r.handleRuntimeGeneration)
 	mux.HandleFunc("/", r.handleCoordinator)

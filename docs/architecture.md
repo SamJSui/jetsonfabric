@@ -1,8 +1,8 @@
 # Architecture
 
-This page describes the current implementation. Future reconciliation,
-rebalance, and physical-hardware acceptance designs are documented separately
-in [Architecture diagrams](architecture-diagrams.md) and the repository roadmap.
+This page describes the current implementation. Current and target diagrams,
+plus physical-hardware acceptance work, are documented in
+[Architecture diagrams](architecture-diagrams.md) and the repository roadmap.
 
 ## Product shape
 
@@ -71,7 +71,10 @@ diagnostic `/v1/layer-split/run` API.
 ```text
 RuntimeService
   -> ModelManager
-      -> one resident deployment slot (idle, ready, active, or failed)
+      -> resident deployments keyed by immutable deployment ID and epoch
+          -> ready replacement epoch
+          -> active admission epoch
+          -> draining old epoch for pinned sessions
           -> model identity
           -> stage-local model tensor residency
           -> InferenceEngineParts
@@ -83,10 +86,11 @@ RuntimeService
 ```
 
 `ModelManager` is the ownership boundary for model execution state. A runtime can
-start idle, load one assigned partition into the ready state, activate it after
-the coordinator barrier, and explicitly unload it. The coordinator publishes a
-new immutable deployment epoch only after every selected runtime reports the
-expected active identity, layer range, and model-memory accounting.
+start idle and temporarily retain more than one epoch so a replacement partition
+can reach `ready` without evicting the active partition. The coordinator
+activates every replacement stage, atomically changes admission to that epoch,
+marks the previous epoch `draining`, and unloads it only after its admission
+count reaches zero.
 
 ## Stage and session contract
 
@@ -115,9 +119,9 @@ timeout.
 
 Managed requests carry the deployment ID, epoch, model ID, and artifact SHA-256
 through every stage request and response. Each runtime rejects a stage operation
-whose identity differs from its active deployment. Peer node facades also
-require `JETSONFABRIC_CLUSTER_TOKEN`; local runtime proxies strip that credential
-before forwarding to the loopback runtime.
+whose identity does not select an active or draining deployment. Peer node
+facades also require `JETSONFABRIC_CLUSTER_TOKEN`; local runtime proxies strip
+that credential before forwarding to the loopback runtime.
 
 ## Compatibility and topology
 
@@ -134,8 +138,9 @@ Topology describes physical placement:
   pinned `llama.cpp` revision.
 - Residency accounting covers tensor payload bytes, not allocator, compute, or
   context/KV overhead.
-- Deployment replacement is explicit and destructive; automatic reconciliation
-  and safe rebalance are not implemented.
+- Safe rebalance needs temporary memory for old and new partitions on reused
+  nodes; insufficient overlap capacity causes rollback to the old epoch.
+- Reconciliation state is not replicated across coordinator failover yet.
 - Inter-stage activations are F32.
 - Runtime peer calls currently use sequential HTTP/1.1 connections through node
   facades; connection reuse and overlapped microbatches are not implemented.

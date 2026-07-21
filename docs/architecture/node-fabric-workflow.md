@@ -12,7 +12,7 @@ client
        discovery sources
        election selector + local lease tracker
        coordinator.Server when this node is leader
-       runtimegateway.StageProxy
+       runtimebridge deployment, generation, and stage proxies
   -> jetsonfabric-runtime-worker :9090
 ```
 
@@ -23,10 +23,10 @@ There is one product process: `cmd/jetsonfabric-node`. There are no user-facing 
 1. `cmd/jetsonfabric-node/main.go` parses flags into `node.Config`.
 2. `node.NormalizeConfig` trims values, resolves `NODE_ROLE=auto`, normalizes discovery modes, and derives the advertise URL when omitted.
 3. `node.New` loads or creates a stable node ID with `node.LoadOrCreateNodeID`.
-4. `node.New` builds the embedded leader-only coordinator router with `coordinator.NewServer`.
-5. `node.New` builds `runtimegateway.StageProxy` for the node-local runtime URL.
-6. `node.New` wires `facade.NewRouter` with membership, coordinator, and stage runner handlers.
-7. `App.Run` starts mDNS advertising, starts the discovery loop, and serves the public node API.
+4. `App.Run` binds the node API address and starts or connects to the node-local runtime.
+5. `App.configureHTTPServer` builds the embedded coordinator and `runtimebridge` proxies.
+6. `App.configureHTTPServer` wires `facade.NewRouter` with membership, coordinator, deployment, generation, and stage handlers.
+7. `App.Run` starts mDNS advertising, the leader-gated deployment reconciler, the discovery loop, and the public node API.
 
 ## Self member sequence
 
@@ -55,6 +55,7 @@ node.discoveryLoop
            MDNSSource: browse _jetsonfabric._tcp.local
            HydratingSource: announce to mDNS-discovered peers
        merge discovered non-self members into membership.Store
+       notify coordinator reconciler (coalesced)
 ```
 
 mDNS only bootstraps peer addresses. HTTP announce hydrates the full member record through `/v1/cluster/announce`.
@@ -110,15 +111,42 @@ client -> any node
 
 The facade makes the leader location an implementation detail for callers.
 
+## Deployment reconciliation sequence
+
+The first successful `POST /v1/deployments/switch` establishes deployment
+intent: model, automatic or explicit stage count, context size, threads, and GPU
+layer policy. Later membership refreshes trigger leader-only reconciliation.
+
+```text
+membership refresh or retry tick
+  -> coordinator.Server.Reconcile
+       verify this node is the elected coordinator
+       retry any old-epoch cleanup
+       rebuild desired plan from saved intent + fresh members
+       compare model and ordered stage placement with active plan
+       if changed:
+         load every replacement partition to ready
+         activate every replacement partition
+         publish replacement for new admissions
+         drain previous runtime epoch
+         wait for previous epoch admission count to reach zero
+         unload previous partitions
+```
+
+`deploymentState.admit` copies the active immutable plan and increments a count
+for that epoch. Preparing does not stop admission to the old epoch. Publication
+changes only future admissions; releases from earlier requests continue to
+decrement the old epoch until cleanup can proceed.
+
 ## Runtime stage sequence
 
-For the current dopey-only layer-split path:
+For the current runtime stage data path:
 
 ```text
 client/coordinator
   -> POST node:52415/v1/layer-split/stage
   -> facade.Router.handleStageRun
-  -> runtimegateway.StageProxy
+  -> runtimebridge.StageProxy
   -> runtime:9090/v1/layer-split/stage
   -> runtime response returns through node facade
 ```
@@ -138,7 +166,8 @@ internal/node/roles.go
   infers semantic node role from system detection
 
 internal/node/app.go
-  composes the process: membership, discovery, coordinator, facade, runtime gateway
+  composes the process: runtime supervision, membership, discovery, coordinator,
+  reconciliation notifications, facade, and runtime proxies
 
 internal/system/*
   detects OS, WSL/dev environment, device class, compute backends, metrics
@@ -156,13 +185,16 @@ internal/facade/router.go
   exposes public node API, cluster views, leader proxying, and local stage route
 
 internal/coordinator/*
-  handles leader-only planning/routing APIs embedded inside the selected node
+  handles leader-only planning/routing APIs, epoch admission, deployment
+  lifecycle, and automatic reconciliation
 
-internal/runtimegateway/stage.go
-  proxies local stage execution requests from node API to node-local runtime
+internal/runtimebridge/*
+  proxies local deployment, generation, and stage requests between the node API
+  and node-local runtime
 
 runtime/
-  C++ runtime process; owns real model/layer execution boundary
+  C++ runtime process; owns epoch-keyed model residency, generation, and real
+  model/layer execution
 ```
 
 ## What stays out of this source repo

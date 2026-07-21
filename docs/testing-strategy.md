@@ -29,9 +29,10 @@ The highest-value Go tests cover:
   duplicate handling, and coordinator election inputs;
 - `internal/clusterplan`: deterministic placement, physical-host separation,
   compatibility, contiguous layer ranges, and immutable deployment epochs;
-- `internal/coordinator`: admission barriers, incoming-runtime preflight,
-  partial failures, model switching, session pinning, one-call generation,
-  runtime event accounting, and incremental SSE flushing;
+- `internal/coordinator`: epoch-scoped admission, ready and activation barriers,
+  membership/capacity reconciliation, partial failure and timeout rollback,
+  node-loss cleanup retry, session pinning, one-call generation, runtime event
+  accounting, and incremental SSE flushing;
 - `internal/facade`: public API routing, fail-closed peer authentication, and
   node-local runtime forwarding;
 - `internal/stagewire`: frame bounds, metadata validation, payload length, and
@@ -84,8 +85,9 @@ harness calls `/v1/runtime/generate` directly, requires its token IDs to equal
 the full-model baseline, proves authenticated remote stage calls, and requires
 buffered and SSE chat text and finish reasons to match. Stage-call counts must
 also account for the hidden EOS pass when the public response stops naturally.
-The model-switch harness proves managed deployment identity and rejects stale
-generation epochs. CI invokes the colocated harness with the pinned Qwen2
+The model-switch harness proves managed deployment identity, overlapping model
+replacement, stale-epoch rejection, and automatic one-stage recovery after a
+worker is stopped. CI invokes the colocated harness with the pinned Qwen2
 fixture as an additional natural-stop case across the direct runtime, buffered
 chat, and SSE chat paths so EOS is excluded while its final stage pass remains
 accounted for.

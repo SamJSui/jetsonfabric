@@ -112,6 +112,7 @@ struct DeploymentOperationResult {
 
 using LoadDeploymentResult = DeploymentOperationResult;
 using ActivateDeploymentResult = DeploymentOperationResult;
+using DrainDeploymentResult = DeploymentOperationResult;
 using UnloadDeploymentResult = DeploymentOperationResult;
 
 } // namespace jetsonfabric::runtime::deployment

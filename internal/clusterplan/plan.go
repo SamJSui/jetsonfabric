@@ -32,9 +32,8 @@ const (
 )
 
 const (
-	defaultPipelineStageCount = 2
-	warningColocated          = "colocated stages validate orchestration, not distributed physical compute"
-	warningUsingFullReplica   = "no complete explicit pipeline assignment found; using one full-model replica"
+	warningColocated        = "colocated stages validate orchestration, not distributed physical compute"
+	warningUsingFullReplica = "no complete explicit pipeline assignment found; using one full-model replica"
 )
 
 type Policy struct {
@@ -134,10 +133,7 @@ func Preview(req Request) RoutePreview {
 
 	requestedStageCount := req.Policy.StageCount
 	if requestedStageCount == 0 {
-		requestedStageCount = defaultPipelineStageCount
-		if requestedStageCount > req.Model.LayerCount {
-			requestedStageCount = req.Model.LayerCount
-		}
+		requestedStageCount = min(len(candidates), req.Model.LayerCount)
 	}
 	if !pipelineSupported || requestedStageCount <= 1 || len(candidates) == 1 {
 		if !pipelineSupported && requestedStageCount > 1 {

@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/api"
@@ -28,6 +29,12 @@ type Server struct {
 	deployments       *deploymentState
 	deploymentClient  runtimebridge.DeploymentClient
 	generationClient  runtimebridge.GenerationClient
+	transitionTimeout time.Duration
+	cleanupTimeout    time.Duration
+	reconcileInterval time.Duration
+	isLeader          func(time.Time) bool
+	reconcileMu       sync.Mutex
+	reconcileCh       chan struct{}
 }
 
 type Option func(*Server)
@@ -75,6 +82,25 @@ func WithNodeID(nodeID string) Option {
 	}
 }
 
+func WithLeadership(check func(time.Time) bool) Option {
+	return func(s *Server) {
+		s.isLeader = check
+	}
+}
+
+func WithDeploymentTimeouts(transition, cleanup time.Duration) Option {
+	return func(s *Server) {
+		s.transitionTimeout = transition
+		s.cleanupTimeout = cleanup
+	}
+}
+
+func WithReconcileInterval(interval time.Duration) Option {
+	return func(s *Server) {
+		s.reconcileInterval = interval
+	}
+}
+
 func WithClusterToken(token string) Option {
 	return func(s *Server) {
 		s.clusterToken = token
@@ -87,6 +113,10 @@ func NewServer(registry modelregistry.Registry, opts ...Option) *Server {
 		benchmarkRecorder: benchmarks.NoopRecorder{},
 		now:               func() time.Time { return time.Now().UTC() },
 		deployments:       newDeploymentState(),
+		transitionTimeout: deploymentSwitchTimeout,
+		cleanupTimeout:    deploymentCleanupTimeout,
+		reconcileInterval: 5 * time.Second,
+		reconcileCh:       make(chan struct{}, 1),
 	}
 	for _, opt := range opts {
 		opt(server)
@@ -104,6 +134,18 @@ func (s *Server) applyDefaults() {
 	}
 	if s.deployments == nil {
 		s.deployments = newDeploymentState()
+	}
+	if s.transitionTimeout <= 0 {
+		s.transitionTimeout = deploymentSwitchTimeout
+	}
+	if s.cleanupTimeout <= 0 {
+		s.cleanupTimeout = deploymentCleanupTimeout
+	}
+	if s.reconcileInterval <= 0 {
+		s.reconcileInterval = 5 * time.Second
+	}
+	if s.reconcileCh == nil {
+		s.reconcileCh = make(chan struct{}, 1)
 	}
 	if s.deploymentClient == nil {
 		s.deploymentClient = runtimebridge.NewHTTPDeploymentClient(runtimebridge.HTTPDeploymentClientConfig{

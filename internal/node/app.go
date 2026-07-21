@@ -12,6 +12,7 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/benchmarks"
 	"github.com/SamJSui/jetsonfabric/internal/coordinator"
 	"github.com/SamJSui/jetsonfabric/internal/discovery"
+	"github.com/SamJSui/jetsonfabric/internal/election"
 	"github.com/SamJSui/jetsonfabric/internal/facade"
 	"github.com/SamJSui/jetsonfabric/internal/membership"
 	"github.com/SamJSui/jetsonfabric/internal/modelregistry"
@@ -29,6 +30,7 @@ type App struct {
 	mdnsAdvertiser      *discovery.MDNSAdvertiser
 	server              *http.Server
 	runtimeSupervisor   *RuntimeSupervisor
+	coordinatorServer   *coordinator.Server
 }
 
 func New(cfg Config) (*App, error) {
@@ -113,7 +115,13 @@ func (a *App) coordinatorRouter() (http.Handler, error) {
 		coordinator.WithClusterToken(a.cfg.ClusterToken),
 		coordinator.WithBenchmarkRecorder(benchmarks.NewJSONLRecorder(a.cfg.BenchmarksPath)),
 		coordinator.WithMembershipSource(a.store, a.cfg.StaleAfter),
+		coordinator.WithLeadership(func(now time.Time) bool {
+			leader, ok := election.ElectLeader(now, a.store.List(), a.cfg.StaleAfter)
+			return ok && leader.NodeID == a.nodeID
+		}),
+		coordinator.WithReconcileInterval(a.cfg.DiscoveryInterval),
 	)
+	a.coordinatorServer = server
 	return server.Router(), nil
 }
 
@@ -195,6 +203,7 @@ func (a *App) Run(ctx context.Context) error {
 	a.store.Upsert(a.selfMember(time.Now().UTC()))
 	a.configureDiscovery()
 	a.startMDNS(ctx)
+	go a.coordinatorServer.RunReconciler(ctx)
 	go a.discoveryLoop(ctx)
 
 	errCh := make(chan error, 1)
@@ -304,6 +313,11 @@ func (a *App) discoveryLoop(ctx context.Context) {
 }
 
 func (a *App) refreshMembership(ctx context.Context) {
+	defer func() {
+		if a.coordinatorServer != nil {
+			a.coordinatorServer.NotifyMembershipChanged()
+		}
+	}()
 	now := time.Now().UTC()
 	a.store.Upsert(a.selfMember(now))
 	a.store.Prune(now, a.cfg.StaleAfter, a.nodeID)

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/SamJSui/jetsonfabric/internal/api"
@@ -91,6 +92,24 @@ func TestDeploymentProxyRejectsIncompleteLoadIdentity(t *testing.T) {
 		t.Fatalf("incomplete load status=%d body=%s", response.Code, response.Body.String())
 	}
 	assertJSONField(t, response.Body.String(), "error", "invalid_load_identity")
+}
+
+func TestDeploymentProxyForwardsDrainRoute(t *testing.T) {
+	var method, path string
+	runtime := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		method, path = request.Method, request.URL.Path
+		_, _ = w.Write([]byte(`{"drained":true}`))
+	}))
+	defer runtime.Close()
+	proxy, err := NewDeploymentProxy(runtime.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	proxy.ServeHTTP(response, httptest.NewRequest(http.MethodPost, api.PathRuntimeDeploymentDrain, strings.NewReader(`{}`)))
+	if response.Code != http.StatusOK || method != http.MethodPost || path != runtimeDeploymentDrainPath {
+		t.Fatalf("drain forwarding status=%d method=%q path=%q", response.Code, method, path)
+	}
 }
 
 func deploymentLoadProxyRequest(t *testing.T, modelPath, modelSHA256 string) *http.Request {

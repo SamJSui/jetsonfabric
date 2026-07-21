@@ -38,7 +38,8 @@ For direct lifecycle work:
 ```
 
 The coordinator then uses the runtime lifecycle endpoints to load, activate,
-inspect, and unload an exact deployment epoch. Generation enters through
+inspect, drain, and unload exact deployment epochs. A runtime can keep an old
+draining epoch resident beside a replacement epoch during safe handoff. Generation enters through
 `POST /v1/generate` on the stage-0 runtime as newline-delimited JSON events;
 peer activations use binary Stagewire requests through node API gateways.
 Multi-stage runtime workers require the same `JETSONFABRIC_CLUSTER_TOKEN` as
