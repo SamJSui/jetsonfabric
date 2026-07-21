@@ -11,7 +11,7 @@ import (
 var (
 	errDeploymentTransitioning = errors.New("deployment transition is in progress")
 	errModelNotActive          = errors.New("requested model is not active")
-	errDeploymentUnmanaged     = errors.New("no coordinator-managed deployment is active")
+	errDeploymentUnavailable   = errors.New("coordinator deployment is unavailable after a failed transition")
 )
 
 type deploymentPhase string
@@ -85,6 +85,9 @@ func (s *deploymentState) admit(modelID string) (deploymentAdmission, error) {
 	defer s.mu.Unlock()
 	if s.phase == deploymentPhaseTransitioning {
 		return deploymentAdmission{}, errDeploymentTransitioning
+	}
+	if s.phase == deploymentPhaseFailed {
+		return deploymentAdmission{}, errDeploymentUnavailable
 	}
 	if s.active != nil && s.active.Model().ModelID != modelID {
 		return deploymentAdmission{}, errModelNotActive
