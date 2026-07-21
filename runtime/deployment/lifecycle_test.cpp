@@ -66,6 +66,17 @@ runtime::pipeline_parallel::StageAssignment assignment() {
     };
 }
 
+runtime::deployment::ModelResidency residency() {
+    return runtime::deployment::ModelResidency{
+        .layer_start = 0,
+        .layer_end = 4,
+        .layer_count = 8,
+        .resident_weight_bytes = 400,
+        .total_weight_bytes = 800,
+        .resident_tensor_count = 20,
+    };
+}
+
 runtime::protocol::StageRequest request() {
     return runtime::protocol::StageRequest{
         .session_id = "session-lifecycle",
@@ -104,6 +115,7 @@ void test_idle_load_ready_activate_infer_unload_idle() {
                 recording = executor.get();
                 return runtime::InferenceEngineParts{
                     .layer_executor = std::move(executor),
+                    .model_residency = residency(),
                 };
             }
         );
@@ -115,6 +127,13 @@ void test_idle_load_ready_activate_infer_unload_idle() {
     expect(
         manager.resident_deployment_state() == runtime::deployment::ResidentDeploymentState::Ready,
         "loaded deployment did not become ready"
+    );
+    const runtime::deployment::DeploymentStatus ready_status = manager.deployment_status();
+    expect(ready_status.model_residency.has_value(), "ready deployment omitted model residency");
+    expect(ready_status.model_residency->partitioned(), "ready deployment lost partition identity");
+    expect(
+        ready_status.model_residency->resident_weight_bytes == 400,
+        "ready deployment reported the wrong resident bytes"
     );
 
     const runtime::pipeline_parallel::StageRunResult before_activation =
@@ -152,6 +171,10 @@ void test_idle_load_ready_activate_infer_unload_idle() {
         manager.activate_resident_deployment("deployment-a");
     expect(activated.ok, "ready deployment failed to activate");
     expect(manager.has_active_deployment(), "activated deployment was not active");
+    expect(
+        manager.deployment_status().model_residency.has_value(),
+        "activation lost model residency accounting"
+    );
 
     const runtime::deployment::ActivateDeploymentResult repeated_activation =
         manager.activate_resident_deployment("deployment-a");
@@ -168,6 +191,10 @@ void test_idle_load_ready_activate_infer_unload_idle() {
     expect(destruction_count == 1, "unload did not release execution components exactly once");
     expect(!manager.has_resident_deployment(), "unload did not return the runtime to idle");
     expect(!manager.has_active_deployment(), "unload left an active deployment");
+    expect(
+        !manager.deployment_status().model_residency.has_value(),
+        "unload retained model residency accounting"
+    );
 }
 
 void test_failed_load_is_visible_and_recoverable_by_unload() {

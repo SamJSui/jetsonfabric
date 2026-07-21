@@ -105,6 +105,7 @@ func (a *App) coordinatorRouter() (http.Handler, error) {
 	}
 	server := coordinator.NewServer(
 		registry,
+		coordinator.WithNodeID(a.nodeID),
 		coordinator.WithBenchmarkRecorder(benchmarks.NewJSONLRecorder(a.cfg.BenchmarksPath)),
 		coordinator.WithMembershipSource(a.store, a.cfg.StaleAfter),
 	)

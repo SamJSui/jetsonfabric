@@ -26,14 +26,23 @@ members_json="$(curl -fsS "$(api /v1/cluster/members)")"
 
 cuda_hosts="$(jq -r '
   [.members[]
-    | select((.capabilities.compute_backends // []) | index("cuda"))
+    | select(
+        ((.capabilities.compute_backends // []) | index("cuda")) and
+        .capabilities.runtime_compute_backend == "cuda" and
+        .capabilities.runtime_cuda_active == true)
     | (.hostname // .node_name)]
   | unique
   | length
 ' <<<"$members_json")"
 if (( cuda_hosts < 2 )); then
-  echo "expected at least two distinct CUDA-capable physical hosts, found $cuda_hosts" >&2
-  jq '.members | map({node_name, hostname, compute_backends: .capabilities.compute_backends})' <<<"$members_json" >&2
+  echo "expected at least two distinct CUDA-active physical hosts, found $cuda_hosts" >&2
+  jq '.members | map({
+    node_name,
+    hostname,
+    compute_backends: .capabilities.compute_backends,
+    runtime_compute_backend: .capabilities.runtime_compute_backend,
+    runtime_cuda_active: .capabilities.runtime_cuda_active
+  })' <<<"$members_json" >&2
   exit 1
 fi
 
@@ -47,6 +56,17 @@ jq -e --argjson count "$STAGE_COUNT" '
   .physical_host_count >= 2 and
   (.stages | length) == $count
 ' <<<"$preview_json" >/dev/null
+
+jq -e --argjson preview "$preview_json" '
+  .members as $members |
+  all($preview.stages[];
+    .node_id as $node_id |
+    any($members[];
+      .node_id == $node_id and
+      ((.capabilities.compute_backends // []) | index("cuda")) and
+      .capabilities.runtime_compute_backend == "cuda" and
+      .capabilities.runtime_cuda_active == true))
+' <<<"$members_json" >/dev/null
 
 request_file="$(mktemp)"
 response_file="$(mktemp)"
@@ -91,7 +111,18 @@ jq -e --argjson count "$STAGE_COUNT" '
   ([.result.stages[] | select(.phase == "prefill")] | length) == $count and
   ([.result.stages[] | select(.phase == "prefill" and .payload_kind_out == "activation")] | length) >= 1 and
   ([.result.stages[] | select(.payload_kind_in == "activation")] | length) >= 1 and
-  ([.result.stages[] | select(.payload_kind_in == "activation") | .payload_crc32_in] | length) >= 1
+  .result.stages as $traces |
+  all($traces[];
+    if .payload_kind_out == "activation" then
+      . as $source |
+      any($traces[];
+        .phase == $source.phase and
+        .decode_step == $source.decode_step and
+        .stage_index == ($source.stage_index + 1) and
+        .payload_kind_in == "activation" and
+        .payload_in == $source.payload_out and
+        .payload_crc32_in == $source.payload_crc32_out)
+    else true end)
 ' "$response_file" >/dev/null
 
 if (( MAX_TOKENS > 1 )); then

@@ -17,6 +17,7 @@ type MemberSource interface {
 }
 
 type Server struct {
+	nodeID            string
 	registry          modelregistry.Registry
 	benchmarkRecorder benchmarks.Recorder
 	memberSource      MemberSource
@@ -60,6 +61,12 @@ func WithDeploymentClient(client runtimebridge.DeploymentClient) Option {
 	}
 }
 
+func WithNodeID(nodeID string) Option {
+	return func(s *Server) {
+		s.nodeID = nodeID
+	}
+}
+
 func NewServer(registry modelregistry.Registry, opts ...Option) *Server {
 	server := &Server{
 		registry:          registry,
@@ -85,7 +92,7 @@ func (s *Server) applyDefaults() {
 		s.deployments = newDeploymentState()
 	}
 	if s.deploymentClient == nil {
-		s.deploymentClient = runtimebridge.NewHTTPDeploymentClient(10 * time.Minute)
+		s.deploymentClient = runtimebridge.NewHTTPDeploymentClient(10*time.Minute, s.nodeID)
 	}
 }
 

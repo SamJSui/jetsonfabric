@@ -2,6 +2,8 @@ package api
 
 import "net/http"
 
+const HeaderCoordinatorNodeID = "X-JetsonFabric-Coordinator-Node-ID"
+
 const (
 	PathHealth                    = "/healthz"
 	PathModels                    = "/v1/models"

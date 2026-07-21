@@ -26,6 +26,7 @@ const (
 type deploymentSnapshot struct {
 	Phase         deploymentPhase
 	Active        *clusterplan.DeploymentPlan
+	Recovery      *clusterplan.DeploymentPlan
 	InFlight      int
 	LastError     string
 	ProposedEpoch uint64
@@ -47,6 +48,7 @@ type deploymentState struct {
 	changed   chan struct{}
 	phase     deploymentPhase
 	active    *clusterplan.DeploymentPlan
+	recovery  *clusterplan.DeploymentPlan
 	inFlight  int
 	lastError string
 	lastEpoch uint64
@@ -71,9 +73,15 @@ func (s *deploymentState) snapshotLocked() deploymentSnapshot {
 		copy := *s.active
 		active = &copy
 	}
+	var recovery *clusterplan.DeploymentPlan
+	if s.recovery != nil {
+		copy := *s.recovery
+		recovery = &copy
+	}
 	return deploymentSnapshot{
 		Phase:         s.phase,
 		Active:        active,
+		Recovery:      recovery,
 		InFlight:      s.inFlight,
 		LastError:     s.lastError,
 		ProposedEpoch: s.lastEpoch + 1,
@@ -121,11 +129,15 @@ func (s *deploymentState) beginTransition(ctx context.Context, expectedEpoch uin
 		s.mu.Unlock()
 		return nil, errors.New("deployment epoch changed while the plan was being built")
 	}
+	previousPhase := s.phase
 	s.phase = deploymentPhaseTransitioning
 	s.lastError = ""
 	var previous *clusterplan.DeploymentPlan
 	if s.active != nil {
 		copy := *s.active
+		previous = &copy
+	} else if s.recovery != nil {
+		copy := *s.recovery
 		previous = &copy
 	}
 	s.signalLocked()
@@ -135,11 +147,7 @@ func (s *deploymentState) beginTransition(ctx context.Context, expectedEpoch uin
 		select {
 		case <-ctx.Done():
 			s.mu.Lock()
-			if s.active != nil {
-				s.phase = deploymentPhaseActive
-			} else {
-				s.phase = deploymentPhaseUnmanaged
-			}
+			s.phase = previousPhase
 			s.lastError = ctx.Err().Error()
 			s.signalLocked()
 			s.mu.Unlock()
@@ -156,6 +164,7 @@ func (s *deploymentState) publish(plan clusterplan.DeploymentPlan) {
 	s.mu.Lock()
 	copy := plan
 	s.active = &copy
+	s.recovery = nil
 	s.lastEpoch = plan.Identity().Epoch
 	s.phase = deploymentPhaseActive
 	s.lastError = ""
@@ -163,9 +172,14 @@ func (s *deploymentState) publish(plan clusterplan.DeploymentPlan) {
 	s.mu.Unlock()
 }
 
-func (s *deploymentState) fail(err error) {
+func (s *deploymentState) fail(previous *clusterplan.DeploymentPlan, err error) {
 	s.mu.Lock()
 	s.active = nil
+	s.recovery = nil
+	if previous != nil {
+		copy := *previous
+		s.recovery = &copy
+	}
 	s.phase = deploymentPhaseFailed
 	if err != nil {
 		s.lastError = err.Error()

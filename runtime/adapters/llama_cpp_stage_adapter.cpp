@@ -147,6 +147,10 @@ struct LlamaCppStageAdapter::Impl {
             config.layers.end > config.model->n_layer()) {
             throw std::invalid_argument("invalid llama.cpp stage layer range");
         }
+        if (config.layers.start < config.model->loaded_layer_start() ||
+            config.layers.end > config.model->loaded_layer_end()) {
+            throw std::invalid_argument("llama.cpp stage range exceeds resident model layers");
+        }
         if (config.position.is_first() && config.layers.start != 0) {
             throw std::invalid_argument("first llama.cpp stage must start at layer zero");
         }

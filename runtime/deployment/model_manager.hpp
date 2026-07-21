@@ -85,6 +85,7 @@ public:
             .active = active_deployment() != nullptr,
             .state = resident_->state,
             .identity = resident_->identity,
+            .model_residency = resident_->model_residency,
         };
     }
 
@@ -131,6 +132,7 @@ public:
 
         try {
             InferenceEngineParts engine_parts = build_engine_parts();
+            resident_->model_residency = engine_parts.model_residency;
             resident_->execution = std::make_unique<ResidentExecution>(
                 std::move(node_name),
                 resident_->identity.model_id,
@@ -355,6 +357,7 @@ private:
         )
             : identity(ModelManager::require_identity(std::move(deployment_identity))),
               state(ResidentDeploymentState::Active),
+              model_residency(loaded_engine_parts.model_residency),
               execution(std::make_unique<ResidentExecution>(
                   std::move(node_name),
                   identity.model_id,
@@ -369,6 +372,7 @@ private:
 
         DeploymentIdentity identity;
         ResidentDeploymentState state;
+        std::optional<ModelResidency> model_residency;
         std::unique_ptr<ResidentExecution> execution;
     };
 

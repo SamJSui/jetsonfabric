@@ -1,6 +1,8 @@
 # Deployment invariants
 
-This page records target architecture constraints for dynamic model deployment. It does not claim that the complete lifecycle is implemented.
+This page records deployment constraints. The single-resident-slot lifecycle,
+manual versioned plans, and stage-local model tensor loading are implemented.
+Automatic reconciliation and non-disruptive rebalance remain target behavior.
 
 ## Ownership
 

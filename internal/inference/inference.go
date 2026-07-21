@@ -62,14 +62,14 @@ func (s SessionState) Terminal() bool {
 type Event string
 
 const (
-	EventStartPrefill Event = "start_prefill"
-	EventBeginDecode  Event = "begin_decode"
+	EventStartPrefill  Event = "start_prefill"
+	EventBeginDecode   Event = "begin_decode"
 	EventAdvanceDecode Event = "advance_decode"
-	EventBeginFinish  Event = "begin_finish"
-	EventComplete     Event = "complete"
-	EventCancel       Event = "cancel"
-	EventFail         Event = "fail"
-	EventExpire       Event = "expire"
+	EventBeginFinish   Event = "begin_finish"
+	EventComplete      Event = "complete"
+	EventCancel        Event = "cancel"
+	EventFail          Event = "fail"
+	EventExpire        Event = "expire"
 )
 
 func (e Event) Valid() bool {

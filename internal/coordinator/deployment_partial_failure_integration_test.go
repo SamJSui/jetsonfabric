@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -57,6 +58,108 @@ func TestCoordinatorDeploymentSwitchCleansPartialActivationFailure(t *testing.T)
 	}
 	if client.wasActivated(nodeB.URL) {
 		t.Fatal("failing runtime was incorrectly recorded as activated")
+	}
+}
+
+func TestDeploymentSwitchRejectsBusyIncomingRuntimeBeforeUnloadingActivePlan(t *testing.T) {
+	client := newPartialFailureDeploymentClient("")
+	previous := deploymentTestPlan(t, "deployment-a", 1, []deploymentTestStage{
+		{nodeID: "node-a", apiURL: "http://node-a", layerStart: 0, layerEnd: 2},
+		{nodeID: "node-b", apiURL: "http://node-b", layerStart: 2, layerEnd: 4},
+	})
+	next := deploymentTestPlan(t, "deployment-b", 2, []deploymentTestStage{
+		{nodeID: "node-a", apiURL: "http://node-a", layerStart: 0, layerEnd: 2},
+		{nodeID: "node-c", apiURL: "http://node-c", layerStart: 2, layerEnd: 4},
+	})
+	client.setStatus("http://node-a", activeDeploymentStatus(previous, 0))
+	client.setStatus("http://node-b", activeDeploymentStatus(previous, 1))
+	client.setStatus("http://node-c", runtimebridge.DeploymentStatus{
+		Resident: true,
+		Active:   true,
+		State:    "active",
+		Deployment: &runtimebridge.DeploymentIdentity{
+			DeploymentID: "unmanaged",
+			ModelID:      "other-model",
+		},
+	})
+
+	server := NewServer(deploymentSwitchRegistry(), WithDeploymentClient(client))
+	err := server.applyDeploymentSwitch(
+		context.Background(),
+		&previous,
+		next,
+		deploymentSwitchModel("model-b", strings.Repeat("b", 64)),
+		nil,
+		deploymentSwitchRequest{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "node-c") {
+		t.Fatalf("applyDeploymentSwitch() error=%v, want busy node-c", err)
+	}
+	for _, nodeURL := range []string{"http://node-a", "http://node-b"} {
+		status, unloadCount := client.snapshot(nodeURL)
+		if !status.Resident || !status.Active || unloadCount != 0 {
+			t.Fatalf("active runtime %s changed before incoming preflight: status=%+v unloads=%d", nodeURL, status, unloadCount)
+		}
+	}
+}
+
+type deploymentTestStage struct {
+	nodeID     string
+	apiURL     string
+	layerStart int
+	layerEnd   int
+}
+
+func deploymentTestPlan(t *testing.T, deploymentID string, epoch uint64, stages []deploymentTestStage) clusterplan.DeploymentPlan {
+	t.Helper()
+	planStages := make([]clusterplan.Stage, 0, len(stages))
+	for index, stage := range stages {
+		planStages = append(planStages, clusterplan.Stage{
+			StageIndex:     index,
+			StageCount:     len(stages),
+			NodeID:         stage.nodeID,
+			NodeName:       stage.nodeID,
+			Hostname:       stage.nodeID,
+			PhysicalHostID: stage.nodeID,
+			APIURL:         stage.apiURL,
+			LayerStart:     stage.layerStart,
+			LayerEnd:       stage.layerEnd,
+		})
+	}
+	plan, err := clusterplan.NewDeploymentPlan(clusterplan.DeploymentPlanSpec{
+		Identity: clusterplan.DeploymentIdentity{DeploymentID: deploymentID, Epoch: epoch},
+		Model: clusterplan.DeploymentModelIdentity{
+			ModelID:       "model-a",
+			ModelSHA256:   strings.Repeat("a", 64),
+			Engine:        cluster.EngineLlamaCPP,
+			ExecutionMode: cluster.ExecutionModePipelineParallel,
+			LayerCount:    4,
+		},
+		Stages: planStages,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan
+}
+
+func activeDeploymentStatus(plan clusterplan.DeploymentPlan, stageIndex int) runtimebridge.DeploymentStatus {
+	stage := plan.Stages()[stageIndex]
+	request := runtimebridge.LoadDeploymentRequest{
+		DeploymentID: plan.Identity().DeploymentID,
+		ModelID:      plan.Model().ModelID,
+		LayerStart:   stage.LayerStart,
+		LayerEnd:     stage.LayerEnd,
+	}
+	return runtimebridge.DeploymentStatus{
+		Resident: true,
+		Active:   true,
+		State:    "active",
+		Deployment: &runtimebridge.DeploymentIdentity{
+			DeploymentID: plan.Identity().DeploymentID,
+			ModelID:      plan.Model().ModelID,
+		},
+		ModelMemory: deploymentTestModelMemory(request, true),
 	}
 }
 
@@ -116,6 +219,7 @@ func (c *partialFailureDeploymentClient) Load(_ context.Context, nodeURL string,
 			DeploymentID: request.DeploymentID,
 			ModelID:      request.ModelID,
 		},
+		ModelMemory: deploymentTestModelMemory(request, false),
 	}
 	c.mu.Lock()
 	c.statuses[nodeURL] = status
@@ -135,6 +239,7 @@ func (c *partialFailureDeploymentClient) Activate(_ context.Context, nodeURL str
 	}
 	status.Active = true
 	status.State = "active"
+	status.ModelMemory.Pinned = true
 	c.statuses[nodeURL] = status
 	c.activated[nodeURL] = true
 	return runtimebridge.DeploymentOperationResponse{DeploymentStatus: copyDeploymentStatus(status), Activated: true}, nil
@@ -162,6 +267,12 @@ func (c *partialFailureDeploymentClient) snapshot(nodeURL string) (runtimebridge
 	return copyDeploymentStatus(c.statuses[nodeURL]), c.unloadCounts[nodeURL]
 }
 
+func (c *partialFailureDeploymentClient) setStatus(nodeURL string, status runtimebridge.DeploymentStatus) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.statuses[nodeURL] = copyDeploymentStatus(status)
+}
+
 func (c *partialFailureDeploymentClient) wasActivated(nodeURL string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -173,6 +284,10 @@ func copyDeploymentStatus(status runtimebridge.DeploymentStatus) runtimebridge.D
 	if status.Deployment != nil {
 		identity := *status.Deployment
 		copy.Deployment = &identity
+	}
+	if status.ModelMemory != nil {
+		memory := *status.ModelMemory
+		copy.ModelMemory = &memory
 	}
 	return copy
 }

@@ -206,6 +206,9 @@ func memberDeploymentCompatibility(
 	if cluster.ExecutionMode(capabilityText(member.Capabilities, cluster.CapabilityRuntimeExecutionMode)) != cluster.ExecutionModePipelineParallel {
 		return DeploymentCompatibility{}, false
 	}
+	if !capabilityBool(member.Capabilities, cluster.CapabilityRuntimeStartsIdle) {
+		return DeploymentCompatibility{}, false
+	}
 	if engine == cluster.EngineLlamaCPP && llamaRevision == "" {
 		return DeploymentCompatibility{}, false
 	}

@@ -77,6 +77,43 @@ func TestLayerSplitStageRoutesToLocalStageRunner(t *testing.T) {
 	}
 }
 
+func TestRuntimeLifecycleWritesRequireElectedCoordinatorIdentity(t *testing.T) {
+	store := membership.NewStore()
+	store.Upsert(testFacadeMember("leader", "leader", membership.NodeRoleCoordinator, time.Now().UTC()))
+
+	forwarded := 0
+	router := NewRouter(Config{
+		SelfID:     "leader",
+		Store:      store,
+		StaleAfter: 30 * time.Second,
+		RuntimeDeployment: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			forwarded++
+			writeJSON(w, http.StatusOK, map[string]string{"status": "forwarded"})
+		}),
+	})
+
+	statusResponse := httptest.NewRecorder()
+	router.ServeHTTP(statusResponse, httptest.NewRequest(http.MethodGet, api.PathRuntimeDeploymentStatus, nil))
+	if statusResponse.Code != http.StatusOK || forwarded != 1 {
+		t.Fatalf("read-only runtime status was not forwarded: status=%d forwarded=%d", statusResponse.Code, forwarded)
+	}
+
+	deniedResponse := httptest.NewRecorder()
+	router.ServeHTTP(deniedResponse, httptest.NewRequest(http.MethodPost, api.PathRuntimeDeploymentUnload, nil))
+	if deniedResponse.Code != http.StatusForbidden || forwarded != 1 {
+		t.Fatalf("unguarded lifecycle write status=%d forwarded=%d", deniedResponse.Code, forwarded)
+	}
+	assertJSONField(t, deniedResponse.Body.String(), "error", "coordinator_identity_required")
+
+	allowedRequest := httptest.NewRequest(http.MethodPost, api.PathRuntimeDeploymentUnload, nil)
+	allowedRequest.Header.Set(api.HeaderCoordinatorNodeID, "leader")
+	allowedResponse := httptest.NewRecorder()
+	router.ServeHTTP(allowedResponse, allowedRequest)
+	if allowedResponse.Code != http.StatusOK || forwarded != 2 {
+		t.Fatalf("coordinator lifecycle write status=%d forwarded=%d", allowedResponse.Code, forwarded)
+	}
+}
+
 func TestFollowerProxiesCoordinatorRequestsToLeader(t *testing.T) {
 	leaderCalled := false
 	leaderServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

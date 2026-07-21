@@ -1,66 +1,37 @@
-diff --git a/src/llama-cparams.h b/src/llama-cparams.h
-index 58520caa..c53929a1 100644
---- a/src/llama-cparams.h
-+++ b/src/llama-cparams.h
-@@ -20,6 +20,9 @@ struct llama_cparams {
-     int32_t  n_threads;       // number of threads to use for generation
-     int32_t  n_threads_batch; // number of threads to use for batch processing
+diff --git a/include/llama.h b/include/llama.h
+index a311ac20..51600e52 100644
+--- a/include/llama.h
++++ b/include/llama.h
+@@ -300,6 +300,8 @@ extern "C" {
+         const struct llama_model_tensor_buft_override * tensor_buft_overrides;
  
-+    uint32_t layer_start;     // first transformer layer to execute, inclusive
-+    uint32_t layer_end;       // transformer layer end, exclusive
-+
-     int32_t  nextn_layer_offset = 0;
+         int32_t n_gpu_layers; // number of layers to store in VRAM, a negative value means all layers
++        uint32_t layer_start; // first transformer layer to load, inclusive
++        uint32_t layer_end;   // transformer layer end, exclusive; 0 loads the full model
+         enum llama_split_mode split_mode; // how to split the model across multiple GPUs
  
-     float rope_freq_base;
-diff --git a/src/llama-context.h b/src/llama-context.h
-index bf91daa8..9b16050d 100644
---- a/src/llama-context.h
-+++ b/src/llama-context.h
-@@ -117,6 +117,7 @@ struct llama_context {
-     void set_embeddings (bool value);
-     void set_embeddings_nextn(bool value, bool masked);
-     void set_embeddings_layer_inp(uint32_t lid, bool enable);
-+    bool set_layer_range(uint32_t layer_start, uint32_t layer_end);
-     void set_nextn_layer_offset(int32_t offset);
-     void set_causal_attn(bool value);
-     void set_warmup(bool value);
-diff --git a/src/llama-ext.h b/src/llama-ext.h
-index 348bbae9..850252c4 100644
---- a/src/llama-ext.h
-+++ b/src/llama-ext.h
-@@ -115,6 +115,12 @@ LLAMA_API void llama_set_embeddings_layer_inp(struct llama_context * ctx, uint3
- // LLAMA_API float * llama_get_embeddings(struct llama_context * ctx);
- LLAMA_API float * llama_get_embeddings_layer_inp(struct llama_context * ctx, uint32_t lid);
- 
-+// Restrict graph execution to [layer_start, layer_end). The first range may
-+// consume token IDs; later ranges consume raw F32 hidden states through
-+// llama_batch.embd. Non-final ranges return hidden states through embeddings.
-+// JetsonFabric pins this WIP extension to one llama.cpp revision.
-+LLAMA_API bool llama_set_layer_range(struct llama_context * ctx, uint32_t layer_start, uint32_t layer_end);
-+
- LLAMA_API llama_context * llama_get_ctx_other(struct llama_context * ctx);
- 
- //
+         // the GPU that is used for the entire model when split_mode is LLAMA_SPLIT_MODE_NONE
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index 3a469bc9..eb2b477a 100644
+index 3a469bc9..4a013676 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
-@@ -105,6 +105,8 @@ llama_context::llama_context(
+@@ -104,6 +104,8 @@ llama_context::llama_context(
  
      cparams.embeddings_layer_inp.resize(hparams.n_layer(), false);
      embd_layer_inp.resize(hparams.n_layer());
-+    cparams.layer_start = 0;
-+    cparams.layer_end   = hparams.n_layer();
++    cparams.layer_start = model.loaded_layer_start();
++    cparams.layer_end   = model.loaded_layer_end();
  
      cparams.ctx_type     = params.ctx_type;
      cparams.pooling_type = params.pooling_type;
-@@ -1141,6 +1143,23 @@ void llama_context::set_embeddings_layer_inp(uint32_t lid, bool enable) {
+@@ -1138,6 +1140,24 @@ void llama_context::set_embeddings_layer_inp(uint32_t lid, bool enable) {
      sched_need_reserve = true;
  }
  
 +bool llama_context::set_layer_range(uint32_t layer_start, uint32_t layer_end) {
 +    const uint32_t n_layer = model.hparams.n_layer();
-+    if (layer_start >= layer_end || layer_end > n_layer) {
++    if (layer_start >= layer_end || layer_end > n_layer ||
++            layer_start < model.loaded_layer_start() || layer_end > model.loaded_layer_end()) {
 +        LLAMA_LOG_ERROR("%s: invalid layer range [%u:%u) for %u layers\n",
 +                __func__, layer_start, layer_end, n_layer);
 +        return false;
@@ -78,7 +49,7 @@ index 3a469bc9..eb2b477a 100644
  void llama_context::set_nextn_layer_offset(int32_t offset) {
      cparams.nextn_layer_offset = offset;
  }
-@@ -1679,6 +1698,11 @@ int llama_context::decode(const llama_batch & batch_inp) {
+@@ -1680,6 +1700,11 @@ int llama_context::decode(const llama_batch & batch_inp) {
      const int64_t n_vocab = vocab.n_tokens();
      const int64_t n_embd  = hparams.n_embd_inp();
  
@@ -90,7 +61,7 @@ index 3a469bc9..eb2b477a 100644
      // when computing embeddings, all tokens are output
      const bool output_all   = cparams.embeddings;
      const bool has_samplers = !sampling.samplers.empty();
-@@ -3679,6 +3703,10 @@ void llama_set_embeddings_layer_inp(llama_context * ctx, uint32_t lid, bool val
+@@ -3689,6 +3714,26 @@ void llama_set_embeddings_layer_inp(llama_context * ctx, uint32_t lid, bool valu
      ctx->set_embeddings_layer_inp(lid, value);
  }
  
@@ -98,14 +69,134 @@ index 3a469bc9..eb2b477a 100644
 +    return ctx->set_layer_range(layer_start, layer_end);
 +}
 +
++uint32_t llama_model_loaded_layer_start(const llama_model * model) {
++    return model->loaded_layer_start();
++}
++
++uint32_t llama_model_loaded_layer_end(const llama_model * model) {
++    return model->loaded_layer_end();
++}
++
++uint64_t llama_model_resident_tensor_bytes(const llama_model * model) {
++    return model->resident_tensor_bytes();
++}
++
++uint64_t llama_model_resident_tensor_count(const llama_model * model) {
++    return model->n_tensors();
++}
++
  void llama_set_nextn_layer_offset(llama_context * ctx, int32_t offset) {
      ctx->set_nextn_layer_offset(offset);
  }
+diff --git a/src/llama-context.h b/src/llama-context.h
+index bf91daa8..c6d6d161 100644
+--- a/src/llama-context.h
++++ b/src/llama-context.h
+@@ -115,6 +115,7 @@ struct llama_context {
+     void set_embeddings (bool value);
+     void set_embeddings_nextn(bool value, bool masked);
+     void set_embeddings_layer_inp(uint32_t lid, bool enable);
++    bool set_layer_range(uint32_t layer_start, uint32_t layer_end);
+     void set_nextn_layer_offset(int32_t offset);
+     void set_causal_attn(bool value);
+     void set_warmup(bool value);
+diff --git a/src/llama-cparams.h b/src/llama-cparams.h
+index 58520caa..d58b3daa 100644
+--- a/src/llama-cparams.h
++++ b/src/llama-cparams.h
+@@ -18,6 +18,9 @@ struct llama_cparams {
+     int32_t  n_threads;       // number of threads to use for generation
+     int32_t  n_threads_batch; // number of threads to use for batch processing
+ 
++    uint32_t layer_start;     // first transformer layer to execute, inclusive
++    uint32_t layer_end;       // transformer layer end, exclusive
++
+     int32_t  nextn_layer_offset = 0;
+ 
+     float rope_freq_base;
+diff --git a/src/llama-ext.h b/src/llama-ext.h
+index 348bbae9..8860855b 100644
+--- a/src/llama-ext.h
++++ b/src/llama-ext.h
+@@ -114,6 +114,18 @@ LLAMA_API void llama_set_embeddings_layer_inp(struct llama_context * ctx, uint32
+ // LLAMA_API float * llama_get_embeddings(struct llama_context * ctx);
+ LLAMA_API float * llama_get_embeddings_layer_inp(struct llama_context * ctx, uint32_t lid);
+ 
++// Restrict graph execution to [layer_start, layer_end). The first range may
++// consume token IDs; later ranges consume raw F32 hidden states through
++// llama_batch.embd. Non-final ranges return hidden states through embeddings.
++// JetsonFabric pins this WIP extension to one llama.cpp revision.
++LLAMA_API bool llama_set_layer_range(struct llama_context * ctx, uint32_t layer_start, uint32_t layer_end);
++
++// Report the exact tensor residency created by a stage-scoped model load.
++LLAMA_API uint32_t llama_model_loaded_layer_start(const struct llama_model * model);
++LLAMA_API uint32_t llama_model_loaded_layer_end(const struct llama_model * model);
++LLAMA_API uint64_t llama_model_resident_tensor_bytes(const struct llama_model * model);
++LLAMA_API uint64_t llama_model_resident_tensor_count(const struct llama_model * model);
++
+ LLAMA_API llama_context * llama_get_ctx_other(struct llama_context * ctx);
+ 
+ //
+diff --git a/src/llama-graph.cpp b/src/llama-graph.cpp
+index c8ecb0a2..c529e698 100644
+--- a/src/llama-graph.cpp
++++ b/src/llama-graph.cpp
+@@ -2172,29 +2172,32 @@ ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd) const {
+     // token embeddings path (ubatch.token != nullptr)
+     {
+         auto & cur = inps[0];
++        if (tok_embd == nullptr) {
++            cur = inp->embd;
++        } else {
++            cur = ggml_get_rows(ctx0, tok_embd, inp->tokens);
+ 
+-        cur = ggml_get_rows(ctx0, tok_embd, inp->tokens);
+-
+-        // apply lora for embedding tokens if needed
+-        for (const auto & lora : *loras) {
+-            llama_adapter_lora_weight * lw = lora.first->get_weight(tok_embd);
+-            if (lw == nullptr) {
+-                continue;
+-            }
++            // apply lora for embedding tokens if needed
++            for (const auto & lora : *loras) {
++                llama_adapter_lora_weight * lw = lora.first->get_weight(tok_embd);
++                if (lw == nullptr) {
++                    continue;
++                }
+ 
+-            const float adapter_scale = lora.second;
+-            const float scale = lw->get_scale(lora.first->alpha, adapter_scale);
++                const float adapter_scale = lora.second;
++                const float scale = lw->get_scale(lora.first->alpha, adapter_scale);
+ 
+-            ggml_tensor * inpL_delta = ggml_scale(ctx0, ggml_mul_mat(
+-                        ctx0, lw->b, // non-transposed lora_b
+-                        ggml_get_rows(ctx0, lw->a, inp->tokens)
+-                        ), scale);
++                ggml_tensor * inpL_delta = ggml_scale(ctx0, ggml_mul_mat(
++                            ctx0, lw->b, // non-transposed lora_b
++                            ggml_get_rows(ctx0, lw->a, inp->tokens)
++                            ), scale);
+ 
+-            cur = ggml_add(ctx0, cur, inpL_delta);
+-        }
++                cur = ggml_add(ctx0, cur, inpL_delta);
++            }
+ 
+-        if (n_embd_inp != n_embd) {
+-            cur = ggml_pad(ctx0, cur, hparams.n_embd_inp() - n_embd, 0, 0, 0);
++            if (n_embd_inp != n_embd) {
++                cur = ggml_pad(ctx0, cur, hparams.n_embd_inp() - n_embd, 0, 0, 0);
++            }
+         }
+     }
+ 
 diff --git a/src/llama-graph.h b/src/llama-graph.h
-index c84cb6a4..c03cf25c 100644
+index c84cb6a4..11acef16 100644
 --- a/src/llama-graph.h
 +++ b/src/llama-graph.h
-@@ -774,6 +774,8 @@ struct llm_graph_params {
+@@ -773,6 +773,8 @@ struct llm_graph_params {
              cparams.embeddings              == other.cparams.embeddings              &&
              cparams.embeddings_nextn        == other.cparams.embeddings_nextn        &&
              cparams.embeddings_nextn_masked == other.cparams.embeddings_nextn_masked &&
@@ -114,11 +205,181 @@ index c84cb6a4..c03cf25c 100644
              cparams.causal_attn             == other.cparams.causal_attn             &&
              arch  == other.arch  &&
              gtype == other.gtype &&
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+index 28f8bb79..5e547ff9 100644
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -1321,7 +1321,7 @@ struct ggml_tensor * llama_model_loader::create_tensor_as_view(struct ggml_conte
+     return tensor;
+ }
+ 
+-void llama_model_loader::done_getting_tensors(bool partial) const {
++void llama_model_loader::done_getting_tensors(bool partial) {
+     if (n_created > n_tensors) {
+         throw std::runtime_error(format("%s: too many tensors created; expected %d, got %d", __func__, n_tensors, n_created));
+     }
+@@ -1332,6 +1332,17 @@ void llama_model_loader::done_getting_tensors(bool partial) const {
+         LLAMA_LOG_INFO("%s: partial load — used %d of %d tensors in the file (rest belong to a sibling model on the same .gguf)\n",
+                 __func__, n_created, n_tensors);
+     }
++    if (partial) {
++        size_data = 0;
++        size_done = 0;
++        for (const auto & [_, ctx] : ctx_map) {
++            for (ggml_tensor * tensor = ggml_get_first_tensor(ctx.get());
++                    tensor != nullptr;
++                    tensor = ggml_get_next_tensor(ctx.get(), tensor)) {
++                size_data += ggml_nbytes(tensor);
++            }
++        }
++    }
+     if (n_tensors_moved > 0) {
+         LLAMA_LOG_DEBUG("%s: tensor '%s' (%s) (and %zu others) cannot be used with preferred buffer type %s, using %s instead\n",
+             __func__, first_tensor_moved_name.c_str(), first_tensor_moved_type_name.c_str(), n_tensors_moved - 1,
+diff --git a/src/llama-model-loader.h b/src/llama-model-loader.h
+index c476026d..e04dbbfe 100644
+--- a/src/llama-model-loader.h
++++ b/src/llama-model-loader.h
+@@ -184,7 +184,7 @@ struct llama_model_loader {
+ 
+     struct ggml_tensor * create_tensor_as_view(struct ggml_context * ctx, struct ggml_tensor * base, const std::string & name, const std::initializer_list<int64_t> & ne, size_t offset, bool required = true);
+ 
+-    void done_getting_tensors(bool partial = false) const;
++    void done_getting_tensors(bool partial = false);
+ 
+     void init_mappings(bool prefetch = true, llama_mlocks * mlock_mmaps = nullptr);
+ 
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index eaf3f35d..5c71aa35 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1234,6 +1234,16 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+     const auto & tensor_split = params.tensor_split;
+ 
+     const int n_layer_all = hparams.n_layer_all;
++    const uint32_t layer_start = loaded_layer_start();
++    const uint32_t layer_end = loaded_layer_end();
++    const bool layer_partition = is_layer_partition();
++    if (layer_start >= layer_end || layer_end > static_cast<uint32_t>(hparams.n_layer())) {
++        throw std::runtime_error(format("invalid model layer range [%u, %u) for %d layers",
++                layer_start, layer_end, hparams.n_layer()));
++    }
++    if (layer_partition && arch != LLM_ARCH_LLAMA && arch != LLM_ARCH_QWEN2) {
++        throw std::runtime_error("partial model residency currently supports llama and qwen2 architectures");
++    }
+     const int n_gpu_layers = this->n_gpu_layers();
+ 
+     const bool use_mmap_buffer = true;
+@@ -1489,7 +1499,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+             }
+         }
+     }
+-    ml.done_getting_tensors();
++    ml.done_getting_tensors(layer_partition);
+ 
+     // Tied NVFP4 output is valid when no separate LM-head scale tensors are present.
+     // If sidecar scales exist, the output weight must be an actual output tensor.
+@@ -1504,7 +1514,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+         }
+     }
+ 
+-    ml.init_mappings(true, use_mlock ? &pimpl->mlock_mmaps : nullptr);
++    ml.init_mappings(!layer_partition, use_mlock ? &pimpl->mlock_mmaps : nullptr);
+     pimpl->mappings.reserve(ml.mappings.size());
+ 
+     // create the backend buffers
+@@ -1690,6 +1700,26 @@ llama_split_mode llama_model::split_mode() const {
+     return params.split_mode;
+ }
+ 
++uint32_t llama_model::loaded_layer_start() const {
++    return params.layer_start;
++}
++
++uint32_t llama_model::loaded_layer_end() const {
++    return params.layer_end == 0 ? hparams.n_layer() : params.layer_end;
++}
++
++bool llama_model::is_layer_partition() const {
++    return loaded_layer_start() != 0 || loaded_layer_end() != hparams.n_layer();
++}
++
++uint64_t llama_model::resident_tensor_bytes() const {
++    uint64_t bytes = 0;
++    for (const auto & [_, tensor] : tensors_by_name) {
++        bytes += ggml_nbytes(tensor);
++    }
++    return bytes;
++}
++
+ std::map<ggml_backend_buffer_type_t, size_t> llama_model::memory_breakdown() const {
+     std::map<ggml_backend_buffer_type_t, size_t> ret;
+     for (const auto & [ctx, bufs] : pimpl->ctxs_bufs) {
+@@ -2304,6 +2334,8 @@ llama_model_params llama_model_default_params() {
+         /*.devices                     =*/ nullptr,
+         /*.tensor_buft_overrides       =*/ nullptr,
+         /*.n_gpu_layers                =*/ -1,
++        /*.layer_start                 =*/ 0,
++        /*.layer_end                   =*/ 0,
+         /*.split_mode                  =*/ LLAMA_SPLIT_MODE_LAYER,
+         /*.main_gpu                    =*/ 0,
+         /*.tensor_split                =*/ nullptr,
+diff --git a/src/llama-model.h b/src/llama-model.h
+index 45b054ce..7e2a40ea 100644
+--- a/src/llama-model.h
++++ b/src/llama-model.h
+@@ -647,6 +647,11 @@ struct llama_model {
+     uint32_t n_gpu_layers() const;
+     llama_split_mode split_mode() const;
+ 
++    uint32_t loaded_layer_start() const;
++    uint32_t loaded_layer_end() const;
++    bool is_layer_partition() const;
++    uint64_t resident_tensor_bytes() const;
++
+     std::map<ggml_backend_buffer_type_t, size_t> memory_breakdown() const;
+ 
+     // total number of parameters in the model
 diff --git a/src/models/llama.cpp b/src/models/llama.cpp
-index 4bfebc88..fa5ec6dc 100644
+index 4bfebc88..6d79fbfa 100644
 --- a/src/models/llama.cpp
 +++ b/src/models/llama.cpp
-@@ -125,7 +125,7 @@ llama_model_llama::graph<embed>::graph(const llama_model & model, const llm_grap
+@@ -34,18 +34,25 @@ void llama_model_llama::load_arch_hparams(llama_model_loader & ml) {
+ void llama_model_llama::load_arch_tensors(llama_model_loader &) {
+     LLAMA_LOAD_LOCALS;
+ 
+-    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
++    const int layer_start = static_cast<int>(loaded_layer_start());
++    const int layer_end = static_cast<int>(loaded_layer_end());
++
++    if (layer_start == 0) {
++        tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
++    }
+ 
+     // output
+-    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+-    output      = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
++    if (layer_end == n_layer) {
++        output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
++        output      = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+ 
+-    // if output is NULL, init from the input tok embed
+-    if (output == NULL) {
+-        output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
++        // if output is NULL, init from the input tok embed
++        if (output == NULL) {
++            output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
++        }
+     }
+ 
+-    for (int i = 0; i < n_layer; ++i) {
++    for (int i = layer_start; i < layer_end; ++i) {
+         auto & layer = layers[i];
+ 
+         layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+@@ -121,9 +128,9 @@ llama_model_llama::graph<embed>::graph(const llama_model & model, const llm_grap
+ 
+     const float kq_scale = hparams.f_attention_scale == 0.0f ? 1.0f/sqrtf(float(n_embd_head)) : hparams.f_attention_scale;
  
 -    ggml_tensor * inp_out_ids = build_inp_out_ids();
 +    ggml_tensor * inp_out_ids = cparams.layer_end == (uint32_t) n_layer ? build_inp_out_ids() : nullptr;
@@ -128,9 +389,7 @@ index 4bfebc88..fa5ec6dc 100644
          res->t_layer_inp[il] = inpL;
  
          ggml_tensor * inpSA = inpL;
-@@ -173,9 +173,9 @@ llama_model_llama::graph<embed>::graph(const llama_model & model, const llm_grap
-             cur = build_attn(inp_attn,
-                     model.layers[il].wo, model.layers[il].wo_b, model.layers[il].wo_s,
+@@ -171,7 +178,7 @@ llama_model_llama::graph<embed>::graph(const llama_model & model, const llm_grap
                      Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, kq_scale, il);
              cb(cur, "attn_out", il);
          }
@@ -139,24 +398,60 @@ index 4bfebc88..fa5ec6dc 100644
              cur   = ggml_get_rows(ctx0,   cur, inp_out_ids);
              inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
          }
-@@ -228,6 +228,12 @@ llama_model_llama::graph<embed>::graph(const llama_model & model, const llm_grap
-         inpL = cur;
+@@ -228,6 +235,12 @@ llama_model_llama::graph<embed>::graph(const llama_model & model, const llm_grap
      }
      cur = inpL;
-+
+ 
 +    if (cparams.layer_end < (uint32_t) n_layer) {
 +        res->t_embd = cur;
 +        ggml_build_forward_expand(gf, cur);
 +        return;
 +    }
- 
++
      cur = build_norm(cur,
              model.output_norm, NULL,
+             LLM_NORM_RMS, -1);
 diff --git a/src/models/qwen2.cpp b/src/models/qwen2.cpp
-index e9c2ea80..1a627d57 100644
+index e9c2ea80..a89954b6 100644
 --- a/src/models/qwen2.cpp
 +++ b/src/models/qwen2.cpp
-@@ -70,7 +70,7 @@ llama_model_qwen2::graph::graph(const llama_model & model, const llm_graph_param
+@@ -19,18 +19,25 @@ void llama_model_qwen2::load_arch_hparams(llama_model_loader & ml) {
+ void llama_model_qwen2::load_arch_tensors(llama_model_loader &) {
+     LLAMA_LOAD_LOCALS;
+ 
+-    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
++    const int layer_start = static_cast<int>(loaded_layer_start());
++    const int layer_end = static_cast<int>(loaded_layer_end());
++
++    if (layer_start == 0) {
++        tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
++    }
+ 
+     // output
+-    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+-    output      = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+-    output_b    = create_tensor(tn(LLM_TENSOR_OUTPUT,      "bias"),   {n_vocab}, TENSOR_NOT_REQUIRED);
+-    // if output is NULL, init from the input tok embed
+-    if (output == NULL) {
+-        output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
++    if (layer_end == n_layer) {
++        output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
++        output      = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
++        output_b    = create_tensor(tn(LLM_TENSOR_OUTPUT,      "bias"),   {n_vocab}, TENSOR_NOT_REQUIRED);
++        // if output is NULL, init from the input tok embed
++        if (output == NULL) {
++            output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
++        }
+     }
+ 
+-    for (int i = 0; i < n_layer; ++i) {
++    for (int i = layer_start; i < layer_end; ++i) {
+         auto & layer = layers[i];
+ 
+         layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
+@@ -66,9 +73,9 @@ llama_model_qwen2::graph::graph(const llama_model & model, const llm_graph_param
+ 
+     auto * inp_attn = build_attn_inp_kv();
  
 -    ggml_tensor * inp_out_ids = build_inp_out_ids();
 +    ggml_tensor * inp_out_ids = cparams.layer_end == (uint32_t) n_layer ? build_inp_out_ids() : nullptr;
@@ -166,8 +461,7 @@ index e9c2ea80..1a627d57 100644
          ggml_tensor * inpSA = inpL;
  
          // norm
-@@ -105,8 +105,8 @@ llama_model_qwen2::graph::graph(const llama_model & model, const llm_graph_param
-             cur = build_attn(inp_attn,
+@@ -103,7 +110,7 @@ llama_model_qwen2::graph::graph(const llama_model & model, const llm_graph_param
                      model.layers[il].wo, model.layers[il].wo_b, model.layers[il].wo_s,
                      Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, 1.0f/sqrtf(float(n_embd_head)), il);
          }
@@ -176,16 +470,16 @@ index e9c2ea80..1a627d57 100644
              cur   = ggml_get_rows(ctx0,   cur, inp_out_ids);
              inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
          }
-@@ -134,6 +134,12 @@ llama_model_qwen2::graph::graph(const llama_model & model, const llm_graph_param
-         inpL = cur;
+@@ -134,6 +141,12 @@ llama_model_qwen2::graph::graph(const llama_model & model, const llm_graph_param
      }
      cur = inpL;
-+
+ 
 +    if (cparams.layer_end < (uint32_t) n_layer) {
 +        res->t_embd = cur;
 +        ggml_build_forward_expand(gf, cur);
 +        return;
 +    }
- 
++
      cur = build_norm(cur,
              model.output_norm, NULL,
+             LLM_NORM_RMS, -1);

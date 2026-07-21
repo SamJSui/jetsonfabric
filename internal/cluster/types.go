@@ -7,7 +7,7 @@ import "time"
 type Engine string
 
 const (
-	EngineLlamaCPP Engine = "llama.cpp"
+	EngineLlamaCPP  Engine = "llama.cpp"
 	EngineSynthetic Engine = "synthetic"
 )
 
@@ -91,14 +91,14 @@ const (
 // BaseURL should usually be the node URL, not the raw local runtime URL, because
 // cluster requests should go through the node facade and runtime gateway.
 type EngineEndpoint struct {
-	InstanceID       string          `json:"instance_id,omitempty"`
-	Engine           Engine          `json:"engine"`
-	BaseURL          string          `json:"base_url"`
-	Models           []string        `json:"models,omitempty"`
-	ModelSHA256      string          `json:"model_sha256,omitempty"`
-	ComputeBackend   ComputeBackend  `json:"compute_backend,omitempty"`
-	ExecutionMode    ExecutionMode   `json:"execution_mode,omitempty"`
-	OpenAICompatible bool            `json:"openai_compatible"`
+	InstanceID       string         `json:"instance_id,omitempty"`
+	Engine           Engine         `json:"engine"`
+	BaseURL          string         `json:"base_url"`
+	Models           []string       `json:"models,omitempty"`
+	ModelSHA256      string         `json:"model_sha256,omitempty"`
+	ComputeBackend   ComputeBackend `json:"compute_backend,omitempty"`
+	ExecutionMode    ExecutionMode  `json:"execution_mode,omitempty"`
+	OpenAICompatible bool           `json:"openai_compatible"`
 }
 
 type NodeRecord struct {

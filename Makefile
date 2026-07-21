@@ -59,6 +59,7 @@ LAYER_END ?= 28
 JF_NODE0_PORT ?= 19180
 JF_NODE1_PORT ?= 19181
 JF_RUNTIME_PORT ?= 19190
+JF_RUNTIME0_PORT ?= $(JF_RUNTIME_PORT)
 JF_RUNTIME1_PORT ?= 19191
 JF_DEV_WORK_DIR ?= .cache/jetsonfabric/dev
 DEV_NODE_URL ?= http://127.0.0.1:$(JF_NODE0_PORT)
@@ -82,7 +83,8 @@ help:
 	@printf '  make test-integration-single     Run one-stage real-model CPU integration\n'
 	@printf '  make test-integration-pipeline   Run two-stage colocated CPU integration\n'
 	@printf '  make build                       Build node binaries and runtime\n'
-	@printf '  make node                        Build node binaries\n'
+	@printf '  make node                        Build amd64 and arm64 node binaries\n'
+	@printf '  make node-linux-arm64            Cross-compile the node for Linux ARM64\n'
 	@printf '  make runtime                     Build runtime with llama.cpp\n'
 	@printf '  make runtime-cuda                Build runtime with llama.cpp + CUDA\n\n'
 	@printf 'Run:\n'
@@ -101,7 +103,8 @@ help:
 	@printf '  RUNTIME_BUILD_JOBS=1             Safer on Jetson; try 2 or 4 if memory allows\n'
 	@printf '  RUNTIME_CUDA_ARCH=87             Jetson Orin default\n'
 	@printf '  JF_NODE0_PORT=19180              Fixed local node port\n'
-	@printf '  JF_RUNTIME_PORT=19190            Fixed supervised runtime port\n'
+	@printf '  JF_RUNTIME_PORT=19190            Default supervised runtime port\n'
+	@printf '  JF_RUNTIME0_PORT=19190           Colocated stage-0 runtime port\n'
 	@printf '  JF_RUNTIME1_PORT=19191           Colocated stage-1 runtime port\n'
 	@printf '  CUDA_NVCC=/usr/local/cuda/bin/nvcc\n'
 
@@ -121,6 +124,7 @@ test-integration-single:
 	NODE_BIN="$(NODE_BIN)" \
 	RUNTIME_BUILD_JOBS="$(RUNTIME_BUILD_JOBS)" \
 	JF_NODE0_PORT="$(JF_NODE0_PORT)" \
+	JF_EXPECTED_TOKENS="$(JF_EXPECTED_TOKENS)" \
 	bash scripts/local/validate-single-node.sh
 
 .PHONY: test-integration-pipeline
@@ -133,17 +137,25 @@ test-integration-pipeline:
 	RUNTIME_BUILD_JOBS="$(RUNTIME_BUILD_JOBS)" \
 	JF_NODE0_PORT="$(JF_NODE0_PORT)" \
 	JF_NODE1_PORT="$(JF_NODE1_PORT)" \
-	JF_RUNTIME0_PORT="$(JF_RUNTIME_PORT)" \
+	JF_RUNTIME0_PORT="$(JF_RUNTIME0_PORT)" \
 	JF_RUNTIME1_PORT="$(JF_RUNTIME1_PORT)" \
+	JF_EXPECTED_TOKENS="$(JF_EXPECTED_TOKENS)" \
 	bash scripts/local/validate-colocated-pipeline.sh
 
 .PHONY: build
 build: test node runtime
 
 .PHONY: node
-node:
+node: node-linux-amd64 node-linux-arm64
+
+.PHONY: node-linux-amd64
+node-linux-amd64:
 	mkdir -p $(DIST_DIR)
 	GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-node-linux-amd64 ./cmd/jetsonfabric-node
+
+.PHONY: node-linux-arm64
+node-linux-arm64:
+	mkdir -p $(DIST_DIR)
 	GOOS=linux GOARCH=arm64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-node-linux-arm64 ./cmd/jetsonfabric-node
 
 .PHONY: setup

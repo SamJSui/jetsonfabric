@@ -277,15 +277,15 @@ func (e *Executor) callStage(ctx context.Context, stage clusterplan.Stage, stage
 	outbound.ContentLength = int64(len(body))
 
 	baseTrace := StageTrace{
-		RequestID:       stageReq.RequestID,
-		SessionID:       stageReq.SessionID,
-		PayloadKindIn:   stageReq.PayloadKind,
-		PayloadIn:       len(stageReq.Payload),
-		PayloadCRC32In:  crc32.ChecksumIEEE(stageReq.Payload),
-		Transport:       stagewire.Transport,
-		Operation:       stageReq.Operation,
-		Phase:           stageReq.Phase,
-		DecodeStep:      stageReq.DecodeStep,
+		RequestID:      stageReq.RequestID,
+		SessionID:      stageReq.SessionID,
+		PayloadKindIn:  stageReq.PayloadKind,
+		PayloadIn:      len(stageReq.Payload),
+		PayloadCRC32In: crc32.ChecksumIEEE(stageReq.Payload),
+		Transport:      stagewire.Transport,
+		Operation:      stageReq.Operation,
+		Phase:          stageReq.Phase,
+		DecodeStep:     stageReq.DecodeStep,
 	}
 	resp, err := e.client.Do(outbound)
 	if err != nil {

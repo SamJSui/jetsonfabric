@@ -67,5 +67,6 @@ The llama.cpp stage executor:
 - Chat completions are non-streaming and greedy-only.
 - Partial-layer support is limited to Llama and Qwen2-family graphs.
 - Inter-stage activations are F32.
-- Each runtime still loads the complete GGUF.
+- Llama and Qwen2 runtimes load only the model tensors assigned to their stage;
+  context/KV and allocator overhead are accounted separately.
 - Runtime revision attestation and physical CUDA proof remain incomplete.

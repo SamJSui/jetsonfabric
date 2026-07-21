@@ -19,11 +19,23 @@ type DeploymentIdentity struct {
 	ModelID      string `json:"model_id"`
 }
 
+type ModelMemory struct {
+	LayerStart          int    `json:"layer_start"`
+	LayerEnd            int    `json:"layer_end"`
+	LayerCount          int    `json:"layer_count"`
+	ResidentWeightBytes uint64 `json:"resident_weight_bytes"`
+	TotalWeightBytes    uint64 `json:"total_weight_bytes"`
+	ResidentTensorCount uint64 `json:"resident_tensor_count"`
+	Partitioned         bool   `json:"partitioned"`
+	Pinned              bool   `json:"pinned"`
+}
+
 type DeploymentStatus struct {
-	Resident   bool                `json:"resident"`
-	Active     bool                `json:"active"`
-	State      string              `json:"state"`
-	Deployment *DeploymentIdentity `json:"deployment"`
+	Resident    bool                `json:"resident"`
+	Active      bool                `json:"active"`
+	State       string              `json:"state"`
+	Deployment  *DeploymentIdentity `json:"deployment"`
+	ModelMemory *ModelMemory        `json:"model_memory"`
 }
 
 type DeploymentOperationResponse struct {
@@ -57,14 +69,19 @@ type DeploymentClient interface {
 }
 
 type HTTPDeploymentClient struct {
-	client *http.Client
+	client            *http.Client
+	coordinatorNodeID string
 }
 
-func NewHTTPDeploymentClient(timeout time.Duration) *HTTPDeploymentClient {
+func NewHTTPDeploymentClient(timeout time.Duration, coordinatorNodeID ...string) *HTTPDeploymentClient {
 	if timeout <= 0 {
 		timeout = 10 * time.Minute
 	}
-	return &HTTPDeploymentClient{client: &http.Client{Timeout: timeout}}
+	client := &HTTPDeploymentClient{client: &http.Client{Timeout: timeout}}
+	if len(coordinatorNodeID) > 0 {
+		client.coordinatorNodeID = strings.TrimSpace(coordinatorNodeID[0])
+	}
+	return client
 }
 
 func (c *HTTPDeploymentClient) Status(ctx context.Context, nodeURL string) (DeploymentStatus, error) {
@@ -119,6 +136,9 @@ func (c *HTTPDeploymentClient) do(ctx context.Context, method string, nodeURL st
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.coordinatorNodeID != "" {
+		req.Header.Set(api.HeaderCoordinatorNodeID, c.coordinatorNodeID)
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {

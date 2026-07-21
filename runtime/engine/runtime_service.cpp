@@ -150,12 +150,31 @@ DecodedLoadRequest decode_load_request(const Config& base, const std::string& re
     return request;
 }
 
+void append_model_residency(
+    std::ostringstream& body,
+    const deployment::DeploymentStatus& status
+) {
+    body << ",\"model_memory\":";
+    if (!status.model_residency.has_value()) {
+        body << "null";
+        return;
+    }
+    const deployment::ModelResidency& memory = *status.model_residency;
+    body << "{\"layer_start\":" << memory.layer_start
+         << ",\"layer_end\":" << memory.layer_end
+         << ",\"layer_count\":" << memory.layer_count
+         << ",\"resident_weight_bytes\":" << memory.resident_weight_bytes
+         << ",\"total_weight_bytes\":" << memory.total_weight_bytes
+         << ",\"resident_tensor_count\":" << memory.resident_tensor_count
+         << ",\"partitioned\":" << (memory.partitioned() ? "true" : "false")
+         << ",\"pinned\":" << (status.active ? "true" : "false")
+         << "}";
+}
+
 RuntimeResponse operation_response(
     const char* operation,
     const deployment::DeploymentOperationResult& result,
-    bool resident,
-    bool active,
-    std::string_view state
+    const deployment::DeploymentStatus& status
 ) {
     if (!result.identity.has_value()) {
         return json_error(
@@ -165,14 +184,19 @@ RuntimeResponse operation_response(
         );
     }
 
+    const std::string_view state = status.state.has_value()
+        ? deployment::resident_deployment_state_string(*status.state)
+        : "idle";
     std::ostringstream body;
     body << "{\"" << operation << "\":true,\"deployment\":{\"deployment_id\":\""
          << protocol::json_escape(result.identity->deployment_id)
          << "\",\"model_id\":\""
          << protocol::json_escape(result.identity->model_id)
-         << "\"},\"resident\":" << (resident ? "true" : "false")
-         << ",\"active\":" << (active ? "true" : "false")
-         << ",\"state\":\"" << state << "\"}";
+         << "\"},\"resident\":" << (status.resident ? "true" : "false")
+         << ",\"active\":" << (status.active ? "true" : "false")
+         << ",\"state\":\"" << state << "\"";
+    append_model_residency(body, status);
+    body << "}";
     return RuntimeResponse{result.status, "application/json", body.str()};
 }
 
@@ -234,7 +258,7 @@ RuntimeResponse RuntimeService::deployment_status() const {
          << ",\"active\":" << (status.active ? "true" : "false");
 
     if (!status.resident) {
-        body << ",\"state\":\"idle\",\"deployment\":null}";
+        body << ",\"state\":\"idle\",\"deployment\":null,\"model_memory\":null}";
         return RuntimeResponse{"200 OK", "application/json", body.str()};
     }
 
@@ -252,7 +276,9 @@ RuntimeResponse RuntimeService::deployment_status() const {
          << protocol::json_escape(status.identity->deployment_id)
          << "\",\"model_id\":\""
          << protocol::json_escape(status.identity->model_id)
-         << "\"}}";
+         << "\"}";
+    append_model_residency(body, status);
+    body << "}";
 
     return RuntimeResponse{"200 OK", "application/json", body.str()};
 }
@@ -279,7 +305,7 @@ RuntimeResponse RuntimeService::load_deployment(const std::string& request_body)
     }
 
     config_ = deployment_config;
-    return operation_response("loaded", result, true, false, "ready");
+    return operation_response("loaded", result, model_manager_.deployment_status());
 }
 
 RuntimeResponse RuntimeService::activate_deployment(const std::string& request_body) {
@@ -295,7 +321,7 @@ RuntimeResponse RuntimeService::activate_deployment(const std::string& request_b
     if (!result.ok) {
         return json_error(result.status, result.error_code, result.error_message);
     }
-    return operation_response("activated", result, true, true, "active");
+    return operation_response("activated", result, model_manager_.deployment_status());
 }
 
 RuntimeResponse RuntimeService::unload_deployment(const std::string& request_body) {
@@ -311,7 +337,7 @@ RuntimeResponse RuntimeService::unload_deployment(const std::string& request_bod
     if (!result.ok) {
         return json_error(result.status, result.error_code, result.error_message);
     }
-    return operation_response("unloaded", result, false, false, "idle");
+    return operation_response("unloaded", result, model_manager_.deployment_status());
 }
 
 RuntimeResponse RuntimeService::chat_completion(const std::string& /*request_body*/) const {

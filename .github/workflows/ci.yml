@@ -19,9 +19,16 @@ env:
   CI_LLAMA_CPP_DIR: runtime/third_party/llama.cpp
   CI_RUNTIME_BUILD_DIR: runtime/build-ci-cpu
   CI_MODEL_PATH: ${{ github.workspace }}/.cache/models/stories15M-q4_0.gguf
-  CI_MODEL_URL: https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories15M-q4_0.gguf
+  CI_MODEL_URL: https://huggingface.co/ggml-org/models/resolve/499bc8821c6b12b4e53c5bffcb21ec206f212d81/tinyllamas/stories15M-q4_0.gguf
+  CI_MODEL_SHA256: 66967fbece6dbe97886593fdbb73589584927e29119ec31f08090732d1861739
+  CI_MODEL_EXPECTED_TOKENS: '[29892,727,471,263]'
   CI_MODEL_B_PATH: ${{ github.workspace }}/.cache/models/stories15M-q8_0.gguf
-  CI_MODEL_B_URL: https://huggingface.co/ggml-org/tiny-llamas/resolve/main/stories15M-q8_0.gguf
+  CI_MODEL_B_URL: https://huggingface.co/ggml-org/tiny-llamas/resolve/99dd1a73db5a37100bd4ae633f4cfce6560e1567/stories15M-q8_0.gguf
+  CI_MODEL_B_SHA256: 2eda49203f2f044f3dddf29a7dd7cc861ef5a0340f518a19613d73ba6d9c06b6
+  CI_MODEL_B_EXPECTED_TOKENS: '[29892,727,471,263]'
+  CI_QWEN_MODEL_PATH: ${{ github.workspace }}/.cache/models/qwen2.5-0.5b-instruct-q4_k_m.gguf
+  CI_QWEN_MODEL_URL: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/9217f5db79a29953eb74d5343926648285ec7e67/qwen2.5-0.5b-instruct-q4_k_m.gguf
+  CI_QWEN_MODEL_SHA256: 74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db
 
 jobs:
   ci:
@@ -42,11 +49,17 @@ jobs:
       - name: Run unit tests
         run: go test ./...
 
+      - name: Cross-compile Linux ARM64 node
+        run: make node-linux-arm64
+
       - name: Validate shell syntax
         shell: bash
         run: |
           find scripts -type f -name '*.sh' -print0 \
             | xargs -0 -r -n1 bash -n
+
+      - name: Test distributed CUDA acceptance contract
+        run: bash scripts/ci/test-distributed-cuda-harness.sh
 
       - name: Install native build dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build jq
@@ -55,8 +68,8 @@ jobs:
         id: model-cache
         uses: actions/cache@v4
         with:
-          path: .cache/models
-          key: ci-model-${{ runner.os }}-stories15m-q4-0-v1
+          path: ${{ env.CI_MODEL_PATH }}
+          key: ci-model-${{ runner.os }}-${{ env.CI_MODEL_SHA256 }}
 
       - name: Download CI model
         if: steps.model-cache.outputs.cache-hit != 'true'
@@ -68,21 +81,48 @@ jobs:
         run: |
           test -s "$CI_MODEL_PATH"
           test "$(head -c 4 "$CI_MODEL_PATH")" = "GGUF"
+          printf '%s  %s\n' "$CI_MODEL_SHA256" "$CI_MODEL_PATH" | sha256sum -c -
           ls -lh "$CI_MODEL_PATH"
 
+      - name: Cache second CI model
+        id: model-b-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CI_MODEL_B_PATH }}
+          key: ci-model-${{ runner.os }}-${{ env.CI_MODEL_B_SHA256 }}
+
       - name: Download second CI model
+        if: steps.model-b-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p "$(dirname "$CI_MODEL_B_PATH")"
-          if [[ ! -s "$CI_MODEL_B_PATH" ]]; then
-            curl -fL --retry 3 --retry-delay 2 "$CI_MODEL_B_URL" -o "$CI_MODEL_B_PATH"
-          fi
+          curl -fL --retry 3 --retry-delay 2 "$CI_MODEL_B_URL" -o "$CI_MODEL_B_PATH"
 
       - name: Verify second CI model
         run: |
           test -s "$CI_MODEL_B_PATH"
           test "$(head -c 4 "$CI_MODEL_B_PATH")" = "GGUF"
-          test "$(sha256sum "$CI_MODEL_PATH" | awk '{print $1}')" != "$(sha256sum "$CI_MODEL_B_PATH" | awk '{print $1}')"
+          printf '%s  %s\n' "$CI_MODEL_B_SHA256" "$CI_MODEL_B_PATH" | sha256sum -c -
           ls -lh "$CI_MODEL_B_PATH"
+
+      - name: Cache Qwen2 CI model
+        id: qwen-model-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CI_QWEN_MODEL_PATH }}
+          key: ci-model-${{ runner.os }}-${{ env.CI_QWEN_MODEL_SHA256 }}
+
+      - name: Download Qwen2 CI model
+        if: steps.qwen-model-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$(dirname "$CI_QWEN_MODEL_PATH")"
+          curl -fL --retry 3 --retry-delay 2 "$CI_QWEN_MODEL_URL" -o "$CI_QWEN_MODEL_PATH"
+
+      - name: Verify Qwen2 CI model
+        run: |
+          test -s "$CI_QWEN_MODEL_PATH"
+          test "$(head -c 4 "$CI_QWEN_MODEL_PATH")" = "GGUF"
+          printf '%s  %s\n' "$CI_QWEN_MODEL_SHA256" "$CI_QWEN_MODEL_PATH" | sha256sum -c -
+          ls -lh "$CI_QWEN_MODEL_PATH"
 
       - name: Cache llama.cpp checkout and CPU build
         uses: actions/cache@v4
@@ -105,6 +145,7 @@ jobs:
             INTEGRATION_RUNTIME_BIN=dist/jetsonfabric-runtime-worker-ci-cpu \
             RUNTIME_BUILD_JOBS=2 \
             JF_NODE0_PORT=18180 \
+            JF_EXPECTED_TOKENS="$CI_MODEL_EXPECTED_TOKENS" \
             2>&1 | tee .ci-logs/single-runtime/step.log
 
       - name: Run runtime lifecycle real CPU E2E
@@ -121,6 +162,7 @@ jobs:
           JF_SKIP_BUILD=true \
           JF_NODE0_PORT=18280 \
           JF_RUNTIME0_PORT=18290 \
+          JF_EXPECTED_TOKENS="$CI_MODEL_EXPECTED_TOKENS" \
           bash scripts/local/validate-runtime-lifecycle.sh \
             2>&1 | tee .ci-logs/runtime-lifecycle/step.log
 
@@ -140,6 +182,8 @@ jobs:
           JF_NODE1_PORT=18381 \
           JF_RUNTIME0_PORT=18390 \
           JF_RUNTIME1_PORT=18391 \
+          JF_EXPECTED_TOKENS_A="$CI_MODEL_EXPECTED_TOKENS" \
+          JF_EXPECTED_TOKENS_B="$CI_MODEL_B_EXPECTED_TOKENS" \
           bash scripts/local/validate-coordinator-model-switch.sh \
             2>&1 | tee .ci-logs/coordinator-model-switch/step.log
 
@@ -159,11 +203,15 @@ jobs:
             JF_NODE1_PORT=18181 \
             JF_RUNTIME0_PORT=18190 \
             JF_RUNTIME1_PORT=18191 \
+            JF_EXPECTED_TOKENS="$CI_MODEL_EXPECTED_TOKENS" \
             JF_REPORT_PATH=.ci-logs/real-runtime/report.json \
             2>&1 | tee .ci-logs/real-runtime/step.log
 
       - name: Run native runtime unit tests
         run: ctest --test-dir "$CI_RUNTIME_BUILD_DIR" --output-on-failure
+
+      - name: Run Qwen2 partition residency equivalence
+        run: CI_MODEL_PATH="$CI_QWEN_MODEL_PATH" "$CI_RUNTIME_BUILD_DIR/jetsonfabric-llama-stage-test"
 
       - name: Run two-node binary activation E2E
         run: bash scripts/ci/smoke-binary-activation.sh

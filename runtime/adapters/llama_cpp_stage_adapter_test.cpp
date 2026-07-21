@@ -22,12 +22,32 @@ using jetsonfabric::runtime::adapters::LlamaCppStageAdapter;
 using jetsonfabric::runtime::adapters::LlamaCppStageConfig;
 using namespace jetsonfabric::runtime::inference;
 
+constexpr int integration_max_tokens = 4;
+
 std::string model_path_from_environment() {
     const char* value = std::getenv("CI_MODEL_PATH");
     if (value == nullptr || *value == '\0') {
         throw std::runtime_error("CI_MODEL_PATH is required");
     }
     return value;
+}
+
+std::string baseline_prompt_from_environment() {
+    const char* value = std::getenv("JF_BASELINE_PROMPT");
+    return value == nullptr || *value == '\0' ? "Once upon a time" : value;
+}
+
+int baseline_max_tokens_from_environment() {
+    const char* value = std::getenv("JF_BASELINE_MAX_TOKENS");
+    if (value == nullptr || *value == '\0') {
+        return integration_max_tokens;
+    }
+    char* end = nullptr;
+    const long parsed = std::strtol(value, &end, 10);
+    if (end == value || *end != '\0' || parsed < 1 || parsed > 256) {
+        throw std::runtime_error("JF_BASELINE_MAX_TOKENS must be an integer between 1 and 256");
+    }
+    return static_cast<int>(parsed);
 }
 
 Payload text_payload(const std::string& text) {
@@ -56,7 +76,7 @@ StageInput input_for(
         .position = position,
         .layers = layers,
         .payload = std::move(payload),
-        .max_tokens = 2,
+        .max_tokens = integration_max_tokens,
     };
 }
 
@@ -103,22 +123,27 @@ void verify_single_stage_equivalence(
     });
 
     const std::string session = "native-single-stage-test";
-    ExecutionResult first_token = stage.execute(input_for(
+    ExecutionResult result = stage.execute(input_for(
         session, "single-prefill", Phase::Prefill, 0,
         {.index = 0, .count = 1}, {.start = 0, .end = model->n_layer()}, text_payload(prompt)
     ));
-    require_success(first_token, "single stage prefill");
-    if (sampled_token(first_token.output.payload) != baseline_tokens[0]) {
+    require_success(result, "single stage prefill");
+    if (sampled_token(result.output.payload) != baseline_tokens[0]) {
         throw std::runtime_error("single-stage prefill token does not match full-model greedy baseline");
     }
 
-    ExecutionResult second_token = stage.execute(input_for(
-        session, "single-decode", Phase::Decode, 1,
-        {.index = 0, .count = 1}, {.start = 0, .end = model->n_layer()}, first_token.output.payload
-    ));
-    require_success(second_token, "single stage decode");
-    if (sampled_token(second_token.output.payload) != baseline_tokens[1]) {
-        throw std::runtime_error("single-stage decode token does not match full-model greedy baseline");
+    Payload payload = std::move(result.output.payload);
+    for (std::size_t token_index = 1; token_index < baseline_tokens.size(); ++token_index) {
+        const std::string request_id = "single-decode-" + std::to_string(token_index);
+        result = stage.execute(input_for(
+            session, request_id, Phase::Decode, static_cast<int>(token_index),
+            {.index = 0, .count = 1}, {.start = 0, .end = model->n_layer()}, std::move(payload)
+        ));
+        require_success(result, request_id.c_str());
+        if (sampled_token(result.output.payload) != baseline_tokens[token_index]) {
+            throw std::runtime_error("single-stage decode token does not match full-model greedy baseline");
+        }
+        payload = std::move(result.output.payload);
     }
 
     if (stage.session_count() != 1U) {
@@ -159,89 +184,153 @@ void verify_idle_session_expiry(const std::shared_ptr<LlamaCppModel>& model, int
     }
 }
 
-int run_test(const std::shared_ptr<LlamaCppModel>& model) {
-    if (model->n_layer() < 2) {
-        throw std::runtime_error("partial-layer test requires at least two transformer layers");
+std::vector<LayerRange> balanced_layer_ranges(int layer_count, int stage_count) {
+    std::vector<LayerRange> ranges;
+    ranges.reserve(static_cast<std::size_t>(stage_count));
+    const int width = layer_count / stage_count;
+    const int remainder = layer_count % stage_count;
+    int start = 0;
+    for (int index = 0; index < stage_count; ++index) {
+        const int end = start + width + (index < remainder ? 1 : 0);
+        ranges.push_back({.start = start, .end = end});
+        start = end;
     }
-    const int split = model->n_layer() / 2;
-    const std::string prompt = "Once upon a time";
+    return ranges;
+}
 
+void verify_partition_residency(
+    const std::shared_ptr<LlamaCppModel>& full_model,
+    const std::vector<std::shared_ptr<LlamaCppModel>>& stage_models,
+    const std::vector<LayerRange>& ranges
+) {
+    const std::uint64_t full_bytes = full_model->resident_weight_bytes();
+    if (full_bytes == 0) {
+        throw std::runtime_error("model residency accounting returned zero bytes");
+    }
+    std::uint64_t per_device_capacity = 0;
+    for (std::size_t index = 0; index < stage_models.size(); ++index) {
+        const auto& stage_model = stage_models[index];
+        const LayerRange range = ranges[index];
+        if (stage_model->loaded_layer_start() != range.start ||
+            stage_model->loaded_layer_end() != range.end) {
+            throw std::runtime_error("partial model did not retain its assigned layer range");
+        }
+        const std::uint64_t stage_bytes = stage_model->resident_weight_bytes();
+        if (stage_bytes == 0 || stage_bytes >= full_bytes) {
+            throw std::runtime_error("a stage partition is not smaller than the full-model residency");
+        }
+        if (stage_model->total_weight_bytes() != full_bytes) {
+            throw std::runtime_error("partial model did not retain full-model weight accounting");
+        }
+        if (stage_model->resident_tensor_count() >= full_model->resident_tensor_count()) {
+            throw std::runtime_error("a stage partition retained every full-model tensor");
+        }
+        per_device_capacity = std::max(per_device_capacity, stage_bytes);
+    }
+    if (full_bytes <= per_device_capacity) {
+        throw std::runtime_error("partition capacity proof did not exclude the full model");
+    }
+    std::cout << "model residency: full_bytes=" << full_bytes
+              << " stages=" << stage_models.size()
+              << " per_device_capacity=" << per_device_capacity << '\n';
+}
+
+void verify_pipeline_equivalence(
+    const std::shared_ptr<LlamaCppModel>& model,
+    const std::string& model_path,
+    const std::string& prompt,
+    const std::vector<std::int32_t>& baseline_tokens,
+    int stage_count
+) {
+    if (model->n_layer() < stage_count) {
+        throw std::runtime_error("model has fewer layers than the requested real-model stage count");
+    }
+    const std::vector<LayerRange> ranges = balanced_layer_ranges(model->n_layer(), stage_count);
+    std::vector<std::shared_ptr<LlamaCppModel>> stage_models;
+    std::vector<std::unique_ptr<LlamaCppStageAdapter>> stages;
+    stage_models.reserve(static_cast<std::size_t>(stage_count));
+    stages.reserve(static_cast<std::size_t>(stage_count));
+    for (int index = 0; index < stage_count; ++index) {
+        const LayerRange range = ranges[static_cast<std::size_t>(index)];
+        auto stage_model = std::make_shared<LlamaCppModel>(LlamaCppModelConfig{
+            .model_path = model_path,
+            .n_gpu_layers = 0,
+            .layer_start = range.start,
+            .layer_end = range.end,
+        });
+        stages.push_back(std::make_unique<LlamaCppStageAdapter>(LlamaCppStageConfig{
+            .model = stage_model,
+            .ctx_size = 256,
+            .threads = 2,
+            .position = {.index = index, .count = stage_count},
+            .layers = range,
+        }));
+        stage_models.push_back(std::move(stage_model));
+    }
+    verify_partition_residency(model, stage_models, ranges);
+
+    const std::string session = "native-" + std::to_string(stage_count) + "-stage-test";
+    Payload payload = text_payload(prompt);
+    for (std::size_t token_index = 0; token_index < baseline_tokens.size(); ++token_index) {
+        const Phase phase = token_index == 0U ? Phase::Prefill : Phase::Decode;
+        for (int stage_index = 0; stage_index < stage_count; ++stage_index) {
+            const std::string request_id =
+                (phase == Phase::Prefill ? "prefill-" : "decode-") +
+                std::to_string(token_index) + "-stage-" + std::to_string(stage_index);
+            ExecutionResult result = stages[static_cast<std::size_t>(stage_index)]->execute(input_for(
+                session,
+                request_id,
+                phase,
+                static_cast<int>(token_index),
+                {.index = stage_index, .count = stage_count},
+                ranges[static_cast<std::size_t>(stage_index)],
+                std::move(payload)
+            ));
+            require_success(result, request_id.c_str());
+            payload = std::move(result.output.payload);
+            if (stage_index < stage_count - 1 &&
+                (payload.kind != PayloadKind::Activation || payload.tensor.dtype != "f32" ||
+                 payload.tensor.shape.size() != 2 || payload.tensor.shape[1] != model->n_embd())) {
+                throw std::runtime_error("non-final stage returned an invalid activation descriptor");
+            }
+        }
+        if (sampled_token(payload) != baseline_tokens[token_index]) {
+            throw std::runtime_error("pipeline token does not match full-model greedy baseline");
+        }
+    }
+
+    for (const auto& stage : stages) {
+        if (stage->session_count() != 1U) {
+            throw std::runtime_error("pipeline stage session context was not retained");
+        }
+        stage->close_session(session);
+        if (stage->session_count() != 0U) {
+            throw std::runtime_error("pipeline stage session cleanup failed");
+        }
+    }
+    if (stage_count == 2) {
+        verify_idle_session_expiry(stage_models.front(), ranges.front().end);
+    }
+}
+
+int run_test(const std::shared_ptr<LlamaCppModel>& model, const std::string& model_path) {
+    if (model->n_layer() < 3) {
+        throw std::runtime_error("partial-layer test requires at least three transformer layers");
+    }
+    const std::string prompt = "Once upon a time";
     LlamaCppAdapter baseline(model, 256, 2);
-    const auto baseline_response = baseline.generate({.prompt = prompt, .max_tokens = 2});
-    if (baseline_response.token_ids.size() < 2U) {
-        throw std::runtime_error("baseline must generate two tokens to validate persistent decode");
+    const auto baseline_response = baseline.generate({.prompt = prompt, .max_tokens = integration_max_tokens});
+    if (baseline_response.token_ids.size() != integration_max_tokens) {
+        throw std::runtime_error("baseline must generate four tokens to validate repeated decode");
     }
 
     verify_single_stage_equivalence(model, prompt, baseline_response.token_ids);
+    verify_pipeline_equivalence(model, model_path, prompt, baseline_response.token_ids, 2);
+    verify_pipeline_equivalence(model, model_path, prompt, baseline_response.token_ids, 3);
 
-    LlamaCppStageAdapter stage0(LlamaCppStageConfig{
-        .model = model,
-        .ctx_size = 256,
-        .threads = 2,
-        .position = {.index = 0, .count = 2},
-        .layers = {.start = 0, .end = split},
-    });
-    LlamaCppStageAdapter stage1(LlamaCppStageConfig{
-        .model = model,
-        .ctx_size = 256,
-        .threads = 2,
-        .position = {.index = 1, .count = 2},
-        .layers = {.start = split, .end = model->n_layer()},
-    });
-
-    const std::string session = "native-split-test";
-    ExecutionResult first_activation = stage0.execute(input_for(
-        session, "prefill-0", Phase::Prefill, 0,
-        {.index = 0, .count = 2}, {.start = 0, .end = split}, text_payload(prompt)
-    ));
-    require_success(first_activation, "stage 0 prefill");
-    if (first_activation.output.payload.kind != PayloadKind::Activation ||
-        first_activation.output.payload.tensor.dtype != "f32" ||
-        first_activation.output.payload.tensor.shape.size() != 2 ||
-        first_activation.output.payload.tensor.shape[1] != model->n_embd()) {
-        throw std::runtime_error("stage 0 returned an invalid activation descriptor");
-    }
-
-    ExecutionResult first_token = stage1.execute(input_for(
-        session, "prefill-1", Phase::Prefill, 0,
-        {.index = 1, .count = 2}, {.start = split, .end = model->n_layer()},
-        first_activation.output.payload
-    ));
-    require_success(first_token, "stage 1 prefill");
-    if (sampled_token(first_token.output.payload) != baseline_response.token_ids[0]) {
-        throw std::runtime_error("split prefill token does not match full-model greedy baseline");
-    }
-
-    ExecutionResult decode_activation = stage0.execute(input_for(
-        session, "decode-0", Phase::Decode, 1,
-        {.index = 0, .count = 2}, {.start = 0, .end = split}, first_token.output.payload
-    ));
-    require_success(decode_activation, "stage 0 decode");
-
-    ExecutionResult second_token = stage1.execute(input_for(
-        session, "decode-1", Phase::Decode, 1,
-        {.index = 1, .count = 2}, {.start = split, .end = model->n_layer()},
-        decode_activation.output.payload
-    ));
-    require_success(second_token, "stage 1 decode");
-    if (sampled_token(second_token.output.payload) != baseline_response.token_ids[1]) {
-        throw std::runtime_error("split decode token does not match full-model greedy baseline");
-    }
-
-    if (stage0.session_count() != 1U || stage1.session_count() != 1U) {
-        throw std::runtime_error("stage session contexts were not retained");
-    }
-    stage0.close_session(session);
-    stage1.close_session(session);
-    if (stage0.session_count() != 0U || stage1.session_count() != 0U) {
-        throw std::runtime_error("stage session cleanup failed");
-    }
-
-    verify_idle_session_expiry(model, split);
-
-    std::cout << "llama.cpp single-stage and split-stage equivalence passed: architecture=" << model->architecture()
-              << " layers=" << model->n_layer() << " split=" << split
-              << " tokens=" << baseline_response.token_ids[0] << ',' << baseline_response.token_ids[1] << '\n';
+    std::cout << "llama.cpp single-stage, two-stage, and three-stage equivalence passed: architecture="
+              << model->architecture() << " layers=" << model->n_layer()
+              << " tokens=" << baseline_response.token_ids.size() << '\n';
     return 0;
 }
 
@@ -260,7 +349,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string(argv[1]) == "--baseline-token") {
             LlamaCppAdapter baseline(model, 256, 2);
-            const auto response = baseline.generate({.prompt = "Once upon a time", .max_tokens = 1});
+            const auto response = baseline.generate({.prompt = baseline_prompt_from_environment(), .max_tokens = 1});
             if (response.token_ids.empty()) {
                 throw std::runtime_error("baseline did not generate a token");
             }
@@ -269,14 +358,15 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string(argv[1]) == "--baseline-tokens") {
             LlamaCppAdapter baseline(model, 256, 2);
-            const auto response = baseline.generate({.prompt = "Once upon a time", .max_tokens = 2});
-            if (response.token_ids.size() < 2U) {
-                throw std::runtime_error("baseline did not generate two tokens");
+            const int max_tokens = baseline_max_tokens_from_environment();
+            const auto response = baseline.generate({.prompt = baseline_prompt_from_environment(), .max_tokens = max_tokens});
+            if (response.token_ids.size() != static_cast<std::size_t>(max_tokens)) {
+                throw std::runtime_error("baseline ended before the requested token count");
             }
             print_token_ids(response.token_ids);
             return 0;
         }
-        return run_test(model);
+        return run_test(model, model_path);
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

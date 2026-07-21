@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/api"
@@ -160,6 +161,23 @@ func (r *Router) handleRuntimeDeployment(w http.ResponseWriter, req *http.Reques
 			"message": "this node has no runtime deployment gateway configured",
 		})
 		return
+	}
+	if req.Method != http.MethodGet {
+		leader, ok := r.leader()
+		if !ok {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"error":   "coordinator_unavailable",
+				"message": "runtime lifecycle writes require an elected coordinator",
+			})
+			return
+		}
+		if strings.TrimSpace(req.Header.Get(api.HeaderCoordinatorNodeID)) != leader.NodeID {
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error":   "coordinator_identity_required",
+				"message": "runtime lifecycle writes are restricted to the elected coordinator",
+			})
+			return
+		}
 	}
 	r.runtimeDeployment.ServeHTTP(w, req)
 }

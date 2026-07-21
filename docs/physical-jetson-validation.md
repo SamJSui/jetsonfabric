@@ -14,6 +14,7 @@ The logical nodes must advertise:
 
 - different physical hostnames;
 - `compute_backends` containing `cuda`;
+- `runtime_compute_backend=cuda` and `runtime_cuda_active=true`;
 - the same model ID and model artifact;
 - `pipeline_parallel` mode;
 - contiguous, non-overlapping layer ranges;
@@ -68,11 +69,12 @@ bash scripts/jetson/validate-distributed-cuda.sh
 
 The harness requires:
 
-- at least two distinct CUDA-capable physical hosts in membership;
+- at least two distinct CUDA-active physical hosts in membership;
+- every stage selected by the plan resolves to a CUDA-active member;
 - a valid `pipeline_parallel` route with `topology=distributed`;
 - at least two physical hosts in the selected plan;
 - real activation payloads between stages;
-- activation byte-count and CRC continuity;
+- exact activation byte-count and CRC continuity between every adjacent stage;
 - a sampled token from the final stage;
 - decode-step traces when more than one token is produced;
 - optional exact greedy-token equality with a one-runtime baseline.

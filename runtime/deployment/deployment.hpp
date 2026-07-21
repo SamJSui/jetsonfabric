@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -75,11 +76,25 @@ struct DeploymentIdentity {
     std::string model_id;
 };
 
+struct ModelResidency {
+    int layer_start = 0;
+    int layer_end = 0;
+    int layer_count = 0;
+    std::uint64_t resident_weight_bytes = 0;
+    std::uint64_t total_weight_bytes = 0;
+    std::uint64_t resident_tensor_count = 0;
+
+    bool partitioned() const noexcept {
+        return layer_start != 0 || layer_end != layer_count;
+    }
+};
+
 struct DeploymentStatus {
     bool resident = false;
     bool active = false;
     std::optional<ResidentDeploymentState> state;
     std::optional<DeploymentIdentity> identity;
+    std::optional<ModelResidency> model_residency;
 };
 
 struct DeploymentOperationResult {

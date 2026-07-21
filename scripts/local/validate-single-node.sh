@@ -6,7 +6,8 @@ MODEL_PATH="${MODEL_PATH:?MODEL_PATH must point to the GGUF to validate}"
 MODEL_ID="${MODEL_ID:-qwen2.5-coder-1.5b-q4}"
 RAW_PROMPT="${JF_RAW_PROMPT:-Once upon a time}"
 CHAT_PROMPT="${JF_CHAT_PROMPT:-Hi}"
-MAX_TOKENS="${JF_MAX_TOKENS:-2}"
+MAX_TOKENS="${JF_MAX_TOKENS:-4}"
+EXPECTED_TOKENS="${JF_EXPECTED_TOKENS:-}"
 NODE_PORT="${JF_NODE0_PORT:-19180}"
 RUNTIME_BUILD_DIR="${RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build-single-cpu}"
 RUNTIME_BIN="${RUNTIME_BIN:-$ROOT_DIR/dist/jetsonfabric-runtime-worker-single-cpu}"
@@ -76,13 +77,22 @@ for binary in "$RUNTIME_BIN" "$NODE_BIN" "$STAGE_TEST_BIN"; do
 done
 
 LAYER_COUNT="$(CI_MODEL_PATH="$MODEL_PATH" "$STAGE_TEST_BIN" --print-layer-count)"
-BASELINE_TOKENS="$(CI_MODEL_PATH="$MODEL_PATH" "$STAGE_TEST_BIN" --baseline-tokens)"
+BASELINE_TOKENS="$(
+  CI_MODEL_PATH="$MODEL_PATH" \
+  JF_BASELINE_PROMPT="$RAW_PROMPT" \
+  JF_BASELINE_MAX_TOKENS="$MAX_TOKENS" \
+  "$STAGE_TEST_BIN" --baseline-tokens
+)"
 if [[ ! "$LAYER_COUNT" =~ ^[0-9]+$ || "$LAYER_COUNT" -lt 1 ]]; then
   echo "invalid layer count: $LAYER_COUNT" >&2
   exit 1
 fi
-if ! jq -e 'type == "array" and length == 2 and all(.[]; type == "number")' <<<"$BASELINE_TOKENS" >/dev/null; then
+if ! jq -e --argjson count "$MAX_TOKENS" 'type == "array" and length == $count and all(.[]; type == "number")' <<<"$BASELINE_TOKENS" >/dev/null; then
   echo "invalid baseline tokens: $BASELINE_TOKENS" >&2
+  exit 1
+fi
+if [[ -n "$EXPECTED_TOKENS" ]] && ! jq -e --argjson actual "$BASELINE_TOKENS" --argjson expected "$EXPECTED_TOKENS" '$actual == $expected' <<<null >/dev/null; then
+  echo "baseline tokens do not match JF_EXPECTED_TOKENS: expected=$EXPECTED_TOKENS actual=$BASELINE_TOKENS" >&2
   exit 1
 fi
 
@@ -163,7 +173,7 @@ if [[ "$HTTP_CODE" != "200" ]]; then
   jq . "$DIAGNOSTIC_FILE" >&2 2>/dev/null || cat "$DIAGNOSTIC_FILE" >&2
   exit 1
 fi
-jq -e --argjson baseline "$BASELINE_TOKENS" '
+jq -e --argjson baseline "$BASELINE_TOKENS" --argjson max_tokens "$MAX_TOKENS" '
   .plan.valid == true and
   .plan.mode == "pipeline_parallel" and
   .plan.stage_count == 1 and
@@ -173,9 +183,9 @@ jq -e --argjson baseline "$BASELINE_TOKENS" '
   .result.payload_kind == "sampled_token" and
   .result.sampled_tokens == $baseline and
   .result.prompt_tokens > 0 and
-  (.result.stages | length) == 2 and
+  (.result.stages | length) == $max_tokens and
   .result.stages[0].phase == "prefill" and
-  .result.stages[1].phase == "decode"
+  all(.result.stages[1:][]; .phase == "decode")
 ' "$DIAGNOSTIC_FILE" >/dev/null
 
 CHAT_FILE="$WORK_DIR/chat.json"

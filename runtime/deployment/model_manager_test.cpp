@@ -232,7 +232,10 @@ void test_loaded_manager() {
             .model_id = "model-a",
         },
         assignment(),
-        runtime::InferenceEngineParts{.layer_executor = std::move(executor)}
+        runtime::InferenceEngineParts{
+            .layer_executor = std::move(executor),
+            .model_residency = std::nullopt,
+        }
     );
 
     expect(manager.has_resident_deployment(), "configured manager did not report a resident deployment");
@@ -294,7 +297,10 @@ void test_guarded_unload() {
             .model_id = "model-a",
         },
         assignment(),
-        runtime::InferenceEngineParts{.layer_executor = std::move(executor)}
+        runtime::InferenceEngineParts{
+            .layer_executor = std::move(executor),
+            .model_residency = std::nullopt,
+        }
     );
 
     const runtime::deployment::UnloadDeploymentResult missing_id =
@@ -349,6 +355,7 @@ void test_invalid_identity_rejected() {
                 assignment(),
                 runtime::InferenceEngineParts{
                     .layer_executor = std::make_unique<RecordingExecutor>(),
+                    .model_residency = std::nullopt,
                 }
             );
             (void) invalid;

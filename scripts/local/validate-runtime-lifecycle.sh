@@ -7,7 +7,8 @@ MODEL_ID="${MODEL_ID:-qwen2.5-coder-1.5b-q4}"
 DEPLOYMENT_ID="${JF_DEPLOYMENT_ID:-lifecycle-deployment-1}"
 NODE_NAME="${JF_NODE_NAME:-lifecycle-node}"
 RAW_PROMPT="${JF_RAW_PROMPT:-Once upon a time}"
-MAX_TOKENS="${JF_MAX_TOKENS:-2}"
+MAX_TOKENS="${JF_MAX_TOKENS:-4}"
+EXPECTED_TOKENS="${JF_EXPECTED_TOKENS:-}"
 NODE_PORT="${JF_NODE0_PORT:-19280}"
 RUNTIME_PORT="${JF_RUNTIME0_PORT:-19290}"
 RUNTIME_BUILD_DIR="${RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build-lifecycle-cpu}"
@@ -83,13 +84,22 @@ for binary in "$RUNTIME_BIN" "$NODE_BIN" "$STAGE_TEST_BIN"; do
 done
 
 LAYER_COUNT="$(CI_MODEL_PATH="$MODEL_PATH" "$STAGE_TEST_BIN" --print-layer-count)"
-BASELINE_TOKENS="$(CI_MODEL_PATH="$MODEL_PATH" "$STAGE_TEST_BIN" --baseline-tokens)"
+BASELINE_TOKENS="$(
+  CI_MODEL_PATH="$MODEL_PATH" \
+  JF_BASELINE_PROMPT="$RAW_PROMPT" \
+  JF_BASELINE_MAX_TOKENS="$MAX_TOKENS" \
+  "$STAGE_TEST_BIN" --baseline-tokens
+)"
 if [[ ! "$LAYER_COUNT" =~ ^[0-9]+$ || "$LAYER_COUNT" -lt 1 ]]; then
   echo "invalid layer count: $LAYER_COUNT" >&2
   exit 1
 fi
-if ! jq -e 'type == "array" and length == 2 and all(.[]; type == "number")' <<<"$BASELINE_TOKENS" >/dev/null; then
+if ! jq -e --argjson count "$MAX_TOKENS" 'type == "array" and length == $count and all(.[]; type == "number")' <<<"$BASELINE_TOKENS" >/dev/null; then
   echo "invalid baseline tokens: $BASELINE_TOKENS" >&2
+  exit 1
+fi
+if [[ -n "$EXPECTED_TOKENS" ]] && ! jq -e --argjson actual "$BASELINE_TOKENS" --argjson expected "$EXPECTED_TOKENS" '$actual == $expected' <<<null >/dev/null; then
+  echo "baseline tokens do not match JF_EXPECTED_TOKENS: expected=$EXPECTED_TOKENS actual=$BASELINE_TOKENS" >&2
   exit 1
 fi
 
@@ -148,7 +158,8 @@ jq -e '
   .resident == false and
   .active == false and
   .state == "idle" and
-  .deployment == null
+  .deployment == null and
+  .model_memory == null
 ' "$IDLE_FILE" >/dev/null
 
 LOAD_FILE="$WORK_DIR/load.json"
@@ -168,13 +179,21 @@ if [[ "$LOAD_CODE" != "200" ]]; then
   jq . "$LOAD_FILE" >&2 2>/dev/null || cat "$LOAD_FILE" >&2
   exit 1
 fi
-jq -e --arg deployment "$DEPLOYMENT_ID" --arg model "$MODEL_ID" '
+jq -e --arg deployment "$DEPLOYMENT_ID" --arg model "$MODEL_ID" --argjson layer_count "$LAYER_COUNT" '
   .loaded == true and
   .resident == true and
   .active == false and
   .state == "ready" and
   .deployment.deployment_id == $deployment and
-  .deployment.model_id == $model
+  .deployment.model_id == $model and
+  .model_memory.layer_start == 0 and
+  .model_memory.layer_end == $layer_count and
+  .model_memory.layer_count == $layer_count and
+  .model_memory.resident_weight_bytes > 0 and
+  .model_memory.resident_weight_bytes == .model_memory.total_weight_bytes and
+  .model_memory.resident_tensor_count > 0 and
+  .model_memory.partitioned == false and
+  .model_memory.pinned == false
 ' "$LOAD_FILE" >/dev/null
 
 READY_STATUS="$WORK_DIR/ready-status.json"
@@ -183,7 +202,8 @@ jq -e --arg deployment "$DEPLOYMENT_ID" '
   .resident == true and
   .active == false and
   .state == "ready" and
-  .deployment.deployment_id == $deployment
+  .deployment.deployment_id == $deployment and
+  .model_memory.pinned == false
 ' "$READY_STATUS" >/dev/null
 
 ACTIVATE_FILE="$WORK_DIR/activate.json"
@@ -201,7 +221,8 @@ jq -e --arg deployment "$DEPLOYMENT_ID" '
   .resident == true and
   .active == true and
   .state == "active" and
-  .deployment.deployment_id == $deployment
+  .deployment.deployment_id == $deployment and
+  .model_memory.pinned == true
 ' "$ACTIVATE_FILE" >/dev/null
 
 "$NODE_BIN" \
@@ -248,12 +269,15 @@ if [[ "$INFERENCE_CODE" != "200" ]]; then
   jq . "$INFERENCE_FILE" >&2 2>/dev/null || cat "$INFERENCE_FILE" >&2
   exit 1
 fi
-jq -e --argjson baseline "$BASELINE_TOKENS" '
+jq -e --argjson baseline "$BASELINE_TOKENS" --argjson max_tokens "$MAX_TOKENS" '
   .plan.valid == true and
   .plan.stage_count == 1 and
   .result.payload_kind == "sampled_token" and
   .result.sampled_tokens == $baseline and
-  .result.prompt_tokens > 0
+  .result.prompt_tokens > 0 and
+  (.result.stages | length) == $max_tokens and
+  .result.stages[0].phase == "prefill" and
+  all(.result.stages[1:][]; .phase == "decode")
 ' "$INFERENCE_FILE" >/dev/null
 
 UNLOAD_FILE="$WORK_DIR/unload.json"
@@ -271,7 +295,8 @@ jq -e --arg deployment "$DEPLOYMENT_ID" '
   .resident == false and
   .active == false and
   .state == "idle" and
-  .deployment.deployment_id == $deployment
+  .deployment.deployment_id == $deployment and
+  .model_memory == null
 ' "$UNLOAD_FILE" >/dev/null
 
 FINAL_STATUS="$WORK_DIR/final-status.json"
@@ -280,7 +305,8 @@ jq -e '
   .resident == false and
   .active == false and
   .state == "idle" and
-  .deployment == null
+  .deployment == null and
+  .model_memory == null
 ' "$FINAL_STATUS" >/dev/null
 
 echo "Runtime deployment lifecycle validation passed"
