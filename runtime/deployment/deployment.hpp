@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace jetsonfabric::runtime::deployment {
 
@@ -13,6 +14,26 @@ enum class ResidentDeploymentState {
     Unloading,
     Failed,
 };
+
+constexpr std::string_view resident_deployment_state_string(
+    ResidentDeploymentState state
+) noexcept {
+    switch (state) {
+        case ResidentDeploymentState::Loading:
+            return "loading";
+        case ResidentDeploymentState::Ready:
+            return "ready";
+        case ResidentDeploymentState::Active:
+            return "active";
+        case ResidentDeploymentState::Draining:
+            return "draining";
+        case ResidentDeploymentState::Unloading:
+            return "unloading";
+        case ResidentDeploymentState::Failed:
+            return "failed";
+    }
+    return "unknown";
+}
 
 constexpr bool is_valid_resident_deployment_transition(
     std::optional<ResidentDeploymentState> from,
@@ -52,6 +73,13 @@ constexpr bool is_valid_resident_deployment_transition(
 struct DeploymentIdentity {
     std::string deployment_id;
     std::string model_id;
+};
+
+struct DeploymentStatus {
+    bool resident = false;
+    bool active = false;
+    std::optional<ResidentDeploymentState> state;
+    std::optional<DeploymentIdentity> identity;
 };
 
 } // namespace jetsonfabric::runtime::deployment
