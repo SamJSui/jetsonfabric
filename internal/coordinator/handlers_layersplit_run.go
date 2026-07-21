@@ -152,6 +152,8 @@ func writeInferenceAdmissionError(w http.ResponseWriter, err error, openAI bool)
 	if errors.Is(err, errModelNotActive) {
 		status = http.StatusConflict
 		code = errorModelNotActive
+	} else if errors.Is(err, errDeploymentUnavailable) {
+		code = errorDeploymentUnavailable
 	}
 	if openAI {
 		writeOpenAIError(w, status, "server_error", string(code), nil, err.Error())
