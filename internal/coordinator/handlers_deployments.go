@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -40,64 +41,57 @@ type deploymentPlanResponse struct {
 }
 
 type deploymentStatusResponse struct {
-	Phase     deploymentPhase         `json:"phase"`
-	InFlight  int                     `json:"in_flight"`
-	LastError string                  `json:"last_error,omitempty"`
-	Active    *deploymentPlanResponse `json:"active"`
-	Recovery  *deploymentPlanResponse `json:"recovery,omitempty"`
+	Phase           deploymentPhase          `json:"phase"`
+	InFlight        int                      `json:"in_flight"`
+	InFlightByEpoch map[uint64]int           `json:"in_flight_by_epoch,omitempty"`
+	LastError       string                   `json:"last_error,omitempty"`
+	Active          *deploymentPlanResponse  `json:"active"`
+	Preparing       *deploymentPlanResponse  `json:"preparing,omitempty"`
+	Draining        []deploymentPlanResponse `json:"draining,omitempty"`
 }
 
 type deploymentSwitchResponse struct {
 	Phase         deploymentPhase                     `json:"phase"`
 	Active        deploymentPlanResponse              `json:"active"`
 	Compatibility clusterplan.DeploymentCompatibility `json:"compatibility"`
+	CleanupError  string                              `json:"cleanup_error,omitempty"`
+}
+
+type deploymentBuild struct {
+	model   cluster.ModelProfile
+	members []membership.Member
+	policy  clusterplan.Policy
+	result  clusterplan.DeploymentBuildResult
 }
 
 func (s *Server) handleDeploymentStatus(w http.ResponseWriter, _ *http.Request) {
 	snapshot := s.deployments.snapshot()
 	response := deploymentStatusResponse{
-		Phase:     snapshot.Phase,
-		InFlight:  snapshot.InFlight,
-		LastError: snapshot.LastError,
+		Phase:           snapshot.Phase,
+		InFlight:        snapshot.InFlight,
+		InFlightByEpoch: snapshot.InFlightByEpoch,
+		LastError:       snapshot.LastError,
 	}
 	if snapshot.Active != nil {
 		active := newDeploymentPlanResponse(*snapshot.Active)
 		response.Active = &active
 	}
-	if snapshot.Recovery != nil {
-		recovery := newDeploymentPlanResponse(*snapshot.Recovery)
-		response.Recovery = &recovery
+	if snapshot.Preparing != nil {
+		preparing := newDeploymentPlanResponse(*snapshot.Preparing)
+		response.Preparing = &preparing
+	}
+	for _, plan := range snapshot.Draining {
+		response.Draining = append(response.Draining, newDeploymentPlanResponse(plan))
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleDeploymentSwitch(w http.ResponseWriter, r *http.Request) {
-	defer r.Body.Close()
-	var request deploymentSwitchRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, errorInvalidJSON, err.Error())
-		return
-	}
-	request.Model = strings.TrimSpace(request.Model)
-	request.DeploymentID = strings.TrimSpace(request.DeploymentID)
-	if request.Model == "" {
-		writeError(w, http.StatusBadRequest, errorMissingModel, "model is required")
-		return
-	}
-	if request.StageCount < 0 {
-		writeError(w, http.StatusBadRequest, errorInvalidStageCount, "stage_count must be greater than zero")
-		return
-	}
-	if request.ContextSize < 0 || request.Threads < 0 {
-		writeError(w, http.StatusBadRequest, errorDeploymentConfigInvalid, "ctx_size and threads cannot be negative")
-		return
-	}
-	if request.NGPULayers != nil && *request.NGPULayers < 0 {
-		writeError(w, http.StatusBadRequest, errorDeploymentConfigInvalid, "n_gpu_layers cannot be negative")
-		return
-	}
-	model, ok := s.registry.Find(request.Model)
+	request, ok := decodeDeploymentSwitchRequest(w, r)
 	if !ok {
+		return
+	}
+	if _, exists := s.registry.Find(request.Model); !exists {
 		writeError(w, http.StatusNotFound, errorUnknownModel, fmt.Sprintf("model %q is not in the registry", request.Model))
 		return
 	}
@@ -106,6 +100,94 @@ func (s *Server) handleDeploymentSwitch(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), s.transitionTimeout)
+	defer cancel()
+	s.reconcileMu.Lock()
+	build, cleanupErr, err := s.switchDeployment(ctx, request, true)
+	s.reconcileMu.Unlock()
+	if err != nil {
+		writeDeploymentSwitchError(w, err)
+		return
+	}
+	snapshot := s.deployments.snapshot()
+	response := deploymentSwitchResponse{
+		Phase:         snapshot.Phase,
+		Active:        newDeploymentPlanResponse(build.result.Plan),
+		Compatibility: build.result.Compatibility,
+	}
+	if cleanupErr != nil {
+		response.CleanupError = cleanupErr.Error()
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func decodeDeploymentSwitchRequest(w http.ResponseWriter, r *http.Request) (deploymentSwitchRequest, bool) {
+	defer r.Body.Close()
+	var request deploymentSwitchRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, errorInvalidJSON, err.Error())
+		return deploymentSwitchRequest{}, false
+	}
+	request.Model = strings.TrimSpace(request.Model)
+	request.DeploymentID = strings.TrimSpace(request.DeploymentID)
+	switch {
+	case request.Model == "":
+		writeError(w, http.StatusBadRequest, errorMissingModel, "model is required")
+	case request.StageCount < 0:
+		writeError(w, http.StatusBadRequest, errorInvalidStageCount, "stage_count cannot be negative")
+	case request.ContextSize < 0 || request.Threads < 0:
+		writeError(w, http.StatusBadRequest, errorDeploymentConfigInvalid, "ctx_size and threads cannot be negative")
+	case request.NGPULayers != nil && *request.NGPULayers < 0:
+		writeError(w, http.StatusBadRequest, errorDeploymentConfigInvalid, "n_gpu_layers cannot be negative")
+	default:
+		return request, true
+	}
+	return deploymentSwitchRequest{}, false
+}
+
+func writeDeploymentSwitchError(w http.ResponseWriter, err error) {
+	status := http.StatusBadGateway
+	code := errorDeploymentSwitchFailed
+	switch {
+	case errors.Is(err, errDeploymentTransitioning):
+		status = http.StatusConflict
+		code = errorDeploymentTransitioning
+	case errors.Is(err, errDeploymentPlanInvalid):
+		status = http.StatusConflict
+		code = errorDeploymentPlanInvalid
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		status = http.StatusRequestTimeout
+	case errors.Is(err, errDeploymentUnavailable):
+		status = http.StatusServiceUnavailable
+	}
+	writeError(w, status, code, err.Error())
+}
+
+func (s *Server) switchDeployment(
+	ctx context.Context,
+	request deploymentSwitchRequest,
+	force bool,
+) (deploymentBuild, error, error) {
+	build, err := s.buildDeployment(request)
+	if err != nil {
+		return deploymentBuild{}, nil, fmt.Errorf("%w: %v", errDeploymentPlanInvalid, err)
+	}
+	current := s.deployments.snapshot()
+	if !force && current.Active != nil && plansEquivalent(*current.Active, build.result.Plan) {
+		return build, nil, nil
+	}
+	cleanupErr, err := s.transitionDeployment(ctx, build, request)
+	return build, cleanupErr, err
+}
+
+func (s *Server) buildDeployment(request deploymentSwitchRequest) (deploymentBuild, error) {
+	model, ok := s.registry.Find(request.Model)
+	if !ok {
+		return deploymentBuild{}, fmt.Errorf("model %q is not in the registry", request.Model)
+	}
+	if s.memberSource == nil {
+		return deploymentBuild{}, errDeploymentUnavailable
+	}
 	snapshot := s.deployments.snapshot()
 	identity := clusterplan.DeploymentIdentity{
 		DeploymentID: request.DeploymentID,
@@ -114,136 +196,122 @@ func (s *Server) handleDeploymentSwitch(w http.ResponseWriter, r *http.Request) 
 	if identity.DeploymentID == "" {
 		identity.DeploymentID = fmt.Sprintf("deployment-%d-%d", identity.Epoch, s.now().UnixNano())
 	}
-	policy := s.clusterPlanPolicy
+	policy := deploymentPolicy(s.clusterPlanPolicy, request)
+	members := append([]membership.Member(nil), s.memberSource.List()...)
+	result, err := clusterplan.BuildDeploymentPlan(clusterplan.DeploymentBuildRequest{
+		Identity: identity, Model: model, Members: members,
+		Now: s.now(), StaleAfter: s.memberStaleAfter, Policy: policy,
+	})
+	if err != nil {
+		return deploymentBuild{}, err
+	}
+	return deploymentBuild{model: model, members: members, policy: policy, result: result}, nil
+}
+
+func deploymentPolicy(base clusterplan.Policy, request deploymentSwitchRequest) clusterplan.Policy {
+	policy := base
 	if request.StageCount > 0 {
 		policy.StageCount = request.StageCount
 	}
 	if request.AllowColocatedStages {
 		policy.AllowColocatedStages = true
 	}
-	members := append([]membership.Member(nil), s.memberSource.List()...)
-	build, err := clusterplan.BuildDeploymentPlan(clusterplan.DeploymentBuildRequest{
-		Identity:   identity,
-		Model:      model,
-		Members:    members,
-		Now:        s.now(),
-		StaleAfter: s.memberStaleAfter,
-		Policy:     policy,
-	})
-	if err != nil {
-		writeError(w, http.StatusConflict, errorDeploymentPlanInvalid, err.Error())
-		return
-	}
-
-	transitionCtx, cancelTransition := context.WithTimeout(context.Background(), deploymentSwitchTimeout)
-	defer cancelTransition()
-	previous, err := s.deployments.beginTransition(transitionCtx, identity.Epoch)
-	if err != nil {
-		status := http.StatusConflict
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			status = http.StatusRequestTimeout
-		}
-		writeError(w, status, errorDeploymentTransitioning, err.Error())
-		return
-	}
-	if err := s.ensureIncomingPlanRuntimesIdle(transitionCtx, previous, build.Plan); err != nil {
-		s.deployments.abortTransition(err)
-		writeError(w, http.StatusBadGateway, errorDeploymentSwitchFailed, err.Error())
-		return
-	}
-	if err := s.applyDeploymentSwitch(transitionCtx, previous, build.Plan, model, members, request); err != nil {
-		s.deployments.fail(previous, err)
-		writeError(w, http.StatusBadGateway, errorDeploymentSwitchFailed, err.Error())
-		return
-	}
-	s.deployments.publish(build.Plan)
-	writeJSON(w, http.StatusOK, deploymentSwitchResponse{
-		Phase:         deploymentPhaseActive,
-		Active:        newDeploymentPlanResponse(build.Plan),
-		Compatibility: build.Compatibility,
-	})
+	return policy
 }
 
-func (s *Server) applyDeploymentSwitch(
+func (s *Server) transitionDeployment(
 	ctx context.Context,
-	previous *clusterplan.DeploymentPlan,
-	next clusterplan.DeploymentPlan,
-	model cluster.ModelProfile,
-	members []membership.Member,
+	build deploymentBuild,
+	request deploymentSwitchRequest,
+) (error, error) {
+	previous, err := s.deployments.beginTransition(build.result.Plan)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.preparePlan(ctx, build, request); err != nil {
+		failure := s.rollbackPreparedPlan(build.result.Plan, previous, err)
+		return nil, failure
+	}
+
+	intent := intentFromSwitch(request, build.policy)
+	previous = s.deployments.publish(build.result.Plan, intent)
+	if previous == nil {
+		return nil, nil
+	}
+	if err := s.retirePlan(ctx, *previous); err != nil {
+		s.deployments.recordReconcileError(err, true)
+		return err, nil
+	}
+	return nil, nil
+}
+
+func (s *Server) preparePlan(
+	ctx context.Context,
+	build deploymentBuild,
 	request deploymentSwitchRequest,
 ) error {
-	if previous != nil {
-		if err := s.unloadPlan(ctx, *previous); err != nil {
-			return fmt.Errorf("unload active deployment %q: %w", previous.Identity().DeploymentID, err)
-		}
+	if err := s.loadPlan(ctx, build.result.Plan, build.model, build.members, request); err != nil {
+		return fmt.Errorf("prepare deployment: %w", err)
 	}
-	if err := s.ensurePlanRuntimesIdle(ctx, next); err != nil {
-		return err
-	}
-	if err := s.loadPlan(ctx, next, model, members, request); err != nil {
-		return s.cleanupFailedPlan(next, err)
-	}
-	if err := s.waitForPlanState(ctx, next, "ready", false); err != nil {
-		return s.cleanupFailedPlan(next, fmt.Errorf("ready barrier: %w", err))
-	}
-	if err := s.activatePlan(ctx, next); err != nil {
-		return s.cleanupFailedPlan(next, err)
-	}
-	if err := s.waitForPlanState(ctx, next, "active", true); err != nil {
-		return s.cleanupFailedPlan(next, fmt.Errorf("active barrier: %w", err))
+	if err := s.activatePlan(ctx, build.result.Plan); err != nil {
+		return fmt.Errorf("activate deployment: %w", err)
 	}
 	return nil
 }
 
-func (s *Server) cleanupFailedPlan(plan clusterplan.DeploymentPlan, cause error) error {
-	ctx, cancel := context.WithTimeout(context.Background(), deploymentCleanupTimeout)
+func (s *Server) rollbackPreparedPlan(
+	plan clusterplan.DeploymentPlan,
+	previous *clusterplan.DeploymentPlan,
+	cause error,
+) error {
+	ctx, cancel := context.WithTimeout(context.Background(), s.cleanupTimeout)
 	defer cancel()
-	if err := s.unloadPlan(ctx, plan); err != nil {
-		return fmt.Errorf("%w; cleanup deployment %q: %v", cause, plan.Identity().DeploymentID, err)
+	cleanupErr := s.cleanupPlan(ctx, plan)
+	healthy := previous == nil || activePlanHealthy(*previous, s.memberSource.List(), s.now(), s.memberStaleAfter)
+	if cleanupErr != nil {
+		cause = fmt.Errorf("%w; rollback cleanup: %v", cause, cleanupErr)
 	}
+	s.deployments.rollback(cause, healthy)
 	return cause
 }
 
-func (s *Server) ensureIncomingPlanRuntimesIdle(
-	ctx context.Context,
-	previous *clusterplan.DeploymentPlan,
-	next clusterplan.DeploymentPlan,
-) error {
-	previousNodes := make(map[string]struct{})
-	if previous != nil {
-		for _, stage := range previous.Stages() {
-			previousNodes[stage.NodeID] = struct{}{}
-		}
+func (s *Server) retirePlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
+	drainErr := s.drainPlan(ctx, plan)
+	if err := s.deployments.waitForEpoch(ctx, plan.Identity().Epoch); err != nil {
+		return errors.Join(
+			drainErr,
+			fmt.Errorf("wait for deployment %q sessions: %w", plan.Identity().DeploymentID, err),
+		)
 	}
-	for _, stage := range next.Stages() {
-		if _, reused := previousNodes[stage.NodeID]; reused {
-			continue
-		}
-		if err := s.ensureRuntimeIdle(ctx, stage); err != nil {
-			return err
-		}
+	unloadErr := s.unloadPlan(ctx, plan)
+	if drainErr != nil || unloadErr != nil {
+		return errors.Join(
+			wrappedPlanError("drain", plan, drainErr),
+			wrappedPlanError("unload", plan, unloadErr),
+		)
 	}
+	s.deployments.finishDraining(plan.Identity().Epoch)
 	return nil
 }
 
-func (s *Server) ensurePlanRuntimesIdle(ctx context.Context, plan clusterplan.DeploymentPlan) error {
-	for _, stage := range plan.Stages() {
-		if err := s.ensureRuntimeIdle(ctx, stage); err != nil {
-			return err
-		}
+func wrappedPlanError(operation string, plan clusterplan.DeploymentPlan, err error) error {
+	if err == nil {
+		return nil
 	}
-	return nil
+	return fmt.Errorf("%s deployment %q: %w", operation, plan.Identity().DeploymentID, err)
 }
 
-func (s *Server) ensureRuntimeIdle(ctx context.Context, stage clusterplan.Stage) error {
-	status, err := s.deploymentClient.Status(ctx, stage.APIURL)
-	if err != nil {
-		return fmt.Errorf("read runtime status for node %q: %w", stage.NodeID, err)
+func (s *Server) cleanupPlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
+	drainErr := s.drainPlan(ctx, plan)
+	unloadErr := s.unloadPlan(ctx, plan)
+	switch {
+	case drainErr != nil && unloadErr != nil:
+		return fmt.Errorf("drain: %v; unload: %v", drainErr, unloadErr)
+	case drainErr != nil:
+		return drainErr
+	default:
+		return unloadErr
 	}
-	if status.Resident {
-		return fmt.Errorf("runtime on node %q is not idle; resident deployment must be coordinator-managed before replacement", stage.NodeID)
-	}
-	return nil
 }
 
 func (s *Server) loadPlan(
@@ -257,40 +325,13 @@ func (s *Server) loadPlan(
 	for _, member := range members {
 		byNode[member.NodeID] = member
 	}
-	ctxSize := request.ContextSize
-	if ctxSize == 0 {
-		ctxSize = defaultDeploymentContextSize
-	}
 	for _, stage := range plan.Stages() {
 		member, ok := byNode[stage.NodeID]
 		if !ok {
 			return fmt.Errorf("deployment member %q disappeared from the immutable snapshot", stage.NodeID)
 		}
-		backend := cluster.ComputeBackend(capabilityString(member.Capabilities, cluster.CapabilityRuntimeComputeBackend))
-		nGPULayers := 0
-		if backend == cluster.ComputeBackendCUDA {
-			nGPULayers = 999
-		}
-		if request.NGPULayers != nil {
-			nGPULayers = *request.NGPULayers
-		}
-		response, err := s.deploymentClient.Load(ctx, stage.APIURL, runtimebridge.LoadDeploymentRequest{
-			DeploymentID:   plan.Identity().DeploymentID,
-			Epoch:          plan.Identity().Epoch,
-			ModelID:        model.ID,
-			ModelSHA256:    plan.Model().ModelSHA256,
-			Engine:         string(plan.Model().Engine),
-			ComputeBackend: string(backend),
-			ModelPath:      model.ArtifactPath,
-			CtxSize:        ctxSize,
-			NGPULayers:     nGPULayers,
-			Threads:        request.Threads,
-			Mode:           string(plan.Model().ExecutionMode),
-			StageIndex:     stage.StageIndex,
-			StageCount:     stage.StageCount,
-			LayerStart:     stage.LayerStart,
-			LayerEnd:       stage.LayerEnd,
-		})
+		loadRequest := newRuntimeLoadRequest(plan, model, member, stage, request)
+		response, err := s.deploymentClient.Load(ctx, stage.APIURL, loadRequest)
 		if err != nil {
 			return fmt.Errorf("load deployment on node %q: %w", stage.NodeID, err)
 		}
@@ -301,44 +342,70 @@ func (s *Server) loadPlan(
 	return nil
 }
 
+func newRuntimeLoadRequest(
+	plan clusterplan.DeploymentPlan,
+	model cluster.ModelProfile,
+	member membership.Member,
+	stage clusterplan.Stage,
+	request deploymentSwitchRequest,
+) runtimebridge.LoadDeploymentRequest {
+	ctxSize := request.ContextSize
+	if ctxSize == 0 {
+		ctxSize = defaultDeploymentContextSize
+	}
+	backend := cluster.ComputeBackend(capabilityString(member.Capabilities, cluster.CapabilityRuntimeComputeBackend))
+	nGPULayers := 0
+	if backend == cluster.ComputeBackendCUDA {
+		nGPULayers = 999
+	}
+	if request.NGPULayers != nil {
+		nGPULayers = *request.NGPULayers
+	}
+	return runtimebridge.LoadDeploymentRequest{
+		DeploymentID: plan.Identity().DeploymentID, Epoch: plan.Identity().Epoch,
+		ModelID: model.ID, ModelSHA256: plan.Model().ModelSHA256,
+		Engine: string(plan.Model().Engine), ComputeBackend: string(backend),
+		ModelPath: model.ArtifactPath, CtxSize: ctxSize, NGPULayers: nGPULayers,
+		Threads: request.Threads, Mode: string(plan.Model().ExecutionMode),
+		StageIndex: stage.StageIndex, StageCount: stage.StageCount,
+		LayerStart: stage.LayerStart, LayerEnd: stage.LayerEnd,
+	}
+}
+
 func (s *Server) activatePlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
 	identity := runtimeDeploymentIdentity(plan)
 	for _, stage := range plan.Stages() {
 		response, err := s.deploymentClient.Activate(ctx, stage.APIURL, identity)
 		if err != nil {
-			return fmt.Errorf("activate deployment on node %q: %w", stage.NodeID, err)
+			return fmt.Errorf("node %q: %w", stage.NodeID, err)
 		}
 		if err := validateRuntimeStatus(response.DeploymentStatus, plan, stage, "active", true); err != nil {
-			return fmt.Errorf("activate deployment on node %q: %w", stage.NodeID, err)
+			return fmt.Errorf("node %q: %w", stage.NodeID, err)
 		}
 	}
 	return nil
 }
 
+func (s *Server) drainPlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
+	identity := runtimeDeploymentIdentity(plan)
+	var failures []string
+	for _, stage := range plan.Stages() {
+		response, err := s.deploymentClient.Drain(ctx, stage.APIURL, identity)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("node %q: %v", stage.NodeID, err))
+			continue
+		}
+		if !runtimeDeploymentIdentityMatches(response.Deployment, identity) {
+			failures = append(failures, fmt.Sprintf("node %q acknowledged a different deployment identity", stage.NodeID))
+		}
+	}
+	return joinedFailures(failures)
+}
+
 func (s *Server) unloadPlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
 	identity := runtimeDeploymentIdentity(plan)
-	stages := plan.Stages()
-	toUnload := make([]clusterplan.Stage, 0, len(stages))
 	var failures []string
-	for _, stage := range stages {
-		status, err := s.deploymentClient.Status(ctx, stage.APIURL)
-		if err != nil {
-			failures = append(failures, fmt.Sprintf("node %q status: %v", stage.NodeID, err))
-			continue
-		}
-		if !status.Resident && status.State == "idle" {
-			continue
-		}
-		if !runtimeDeploymentIdentityMatches(status.Deployment, identity) {
-			failures = append(failures, fmt.Sprintf("node %q hosts a different or unidentified deployment", stage.NodeID))
-			continue
-		}
-		toUnload = append(toUnload, stage)
-	}
-	if len(failures) > 0 {
-		return errors.New(strings.Join(failures, "; "))
-	}
-	for _, stage := range toUnload {
+	for _, stage := range plan.Stages() {
 		response, err := s.deploymentClient.Unload(ctx, stage.APIURL, identity)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("node %q: %v", stage.NodeID, err))
@@ -349,27 +416,44 @@ func (s *Server) unloadPlan(ctx context.Context, plan clusterplan.DeploymentPlan
 			continue
 		}
 		if response.Resident || response.Active || response.State != "idle" {
-			failures = append(failures, fmt.Sprintf("node %q did not return to idle", stage.NodeID))
+			failures = append(failures, fmt.Sprintf("node %q did not release the deployment", stage.NodeID))
 		}
 	}
-	if len(failures) > 0 {
-		sort.Strings(failures)
-		return errors.New(strings.Join(failures, "; "))
-	}
-	return nil
+	return joinedFailures(failures)
 }
 
-func (s *Server) waitForPlanState(ctx context.Context, plan clusterplan.DeploymentPlan, state string, active bool) error {
-	for _, stage := range plan.Stages() {
-		status, err := s.deploymentClient.Status(ctx, stage.APIURL)
-		if err != nil {
-			return fmt.Errorf("read runtime status for node %q: %w", stage.NodeID, err)
-		}
-		if err := validateRuntimeStatus(status, plan, stage, state, active); err != nil {
-			return fmt.Errorf("node %q: %w", stage.NodeID, err)
+func joinedFailures(failures []string) error {
+	if len(failures) == 0 {
+		return nil
+	}
+	sort.Strings(failures)
+	return errors.New(strings.Join(failures, "; "))
+}
+
+func plansEquivalent(left, right clusterplan.DeploymentPlan) bool {
+	return left.Model() == right.Model() && slices.Equal(left.Stages(), right.Stages())
+}
+
+func activePlanHealthy(
+	plan clusterplan.DeploymentPlan,
+	members []membership.Member,
+	now time.Time,
+	staleAfter time.Duration,
+) bool {
+	fresh := make(map[string]membership.Member, len(members))
+	for _, member := range members {
+		member = membership.Normalize(member)
+		if member.Valid() && !member.IsStale(now, staleAfter) {
+			fresh[member.NodeID] = member
 		}
 	}
-	return nil
+	for _, stage := range plan.Stages() {
+		member, ok := fresh[stage.NodeID]
+		if !ok || member.APIURL != stage.APIURL {
+			return false
+		}
+	}
+	return true
 }
 
 func validateRuntimeStatus(
@@ -386,15 +470,10 @@ func validateRuntimeStatus(
 	if !runtimeDeploymentIdentityMatches(status.Deployment, wantIdentity) {
 		return fmt.Errorf(
 			"runtime reports deployment %q epoch %d model %q sha256 %q, want deployment %q epoch %d model %q sha256 %q for stage %d",
-			status.Deployment.DeploymentID,
-			status.Deployment.Epoch,
-			status.Deployment.ModelID,
-			status.Deployment.ModelSHA256,
-			wantIdentity.DeploymentID,
-			wantIdentity.Epoch,
-			wantIdentity.ModelID,
-			wantIdentity.ModelSHA256,
-			stage.StageIndex,
+			status.Deployment.DeploymentID, status.Deployment.Epoch,
+			status.Deployment.ModelID, status.Deployment.ModelSHA256,
+			wantIdentity.DeploymentID, wantIdentity.Epoch,
+			wantIdentity.ModelID, wantIdentity.ModelSHA256, stage.StageIndex,
 		)
 	}
 	if err := validateRuntimeModelMemory(status, plan, stage, active); err != nil {

@@ -21,14 +21,13 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/stagewire"
 )
 
-func TestCoordinatorDeploymentSwitchAdmissionBarrierAndFailureIsolation(t *testing.T) {
-	inferenceStarted := make(chan struct{})
-	releaseInference := make(chan struct{})
-	var inferenceOnce sync.Once
+func TestCoordinatorPublishesNewEpochWhileOldSessionsDrain(t *testing.T) {
+	oldCalls := make(chan struct{}, 8)
+	releaseOld := make(chan struct{})
 	stage := newCoordinatorFrameServer(t, func(req stagewire.StageRequest) stagewire.StageResponse {
 		if req.ModelID == "model-a" {
-			inferenceOnce.Do(func() { close(inferenceStarted) })
-			<-releaseInference
+			oldCalls <- struct{}{}
+			<-releaseOld
 		}
 		payload := make([]byte, 4)
 		binary.LittleEndian.PutUint32(payload, 17)
@@ -40,8 +39,81 @@ func TestCoordinatorDeploymentSwitchAdmissionBarrierAndFailureIsolation(t *testi
 	defer stage.Close()
 
 	now := time.Date(2026, 7, 21, 4, 0, 0, 0, time.UTC)
-	member := deploymentSwitchMember(stage.URL, now)
-	client := newBlockingDeploymentClient()
+	client := newMultiDeploymentClient()
+	server := NewServer(
+		deploymentSwitchRegistry(),
+		WithMembershipSource(staticMemberSource{members: []membership.Member{deploymentSwitchMember(stage.URL, now)}}, time.Minute),
+		WithClusterPlanPolicy(clusterplan.Policy{StageCount: 1}),
+		WithClock(func() time.Time { return now }),
+		WithDeploymentClient(client),
+	)
+
+	assertSwitchStatus(t, server, `{"deployment_id":"deployment-a","model":"model-a","stage_count":1,"ctx_size":256,"n_gpu_layers":0}`, http.StatusOK, "model-a", 1)
+	oldDone := make(chan *httptest.ResponseRecorder, 2)
+	go func() { oldDone <- performLayerRun(server, "model-a", "old-1") }()
+	waitForSignal(t, oldCalls, "first old-epoch generation")
+	go func() { oldDone <- performLayerRun(server, "model-a", "old-2") }()
+	waitForSignal(t, oldCalls, "second old-epoch generation")
+
+	client.blockLoad("model-b")
+	switchDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		switchDone <- performSwitch(server, `{"deployment_id":"deployment-b","model":"model-b","stage_count":1,"ctx_size":256,"n_gpu_layers":0}`)
+	}()
+	client.waitForLoad(t, "model-b")
+	waitForCoordinatorPhase(t, server, deploymentPhasePreparing)
+
+	status := readDeploymentStatus(t, server)
+	if status.Active == nil || status.Active.Epoch != 1 || status.InFlightByEpoch[1] != 2 {
+		t.Fatalf("old epoch was not serving during prepare: %+v", status)
+	}
+	rejected := performLayerRun(server, "model-b", "too-early")
+	assertErrorCode(t, rejected, http.StatusConflict, string(errorModelNotActive))
+
+	client.releaseLoad("model-b")
+	waitForCoordinatorPhase(t, server, deploymentPhaseDraining)
+	status = readDeploymentStatus(t, server)
+	if status.Active == nil || status.Active.Epoch != 2 || len(status.Draining) != 1 || status.Draining[0].Epoch != 1 {
+		t.Fatalf("new epoch was not published beside the draining epoch: %+v", status)
+	}
+	if status.InFlightByEpoch[1] != 2 {
+		t.Fatalf("old epoch admission count changed during publication: %+v", status.InFlightByEpoch)
+	}
+	if response := performLayerRun(server, "model-b", "new-during-drain"); response.Code != http.StatusOK {
+		t.Fatalf("new epoch inference status=%d body=%s", response.Code, response.Body.String())
+	}
+	select {
+	case response := <-switchDone:
+		t.Fatalf("switch completed before old sessions drained: status=%d body=%s", response.Code, response.Body.String())
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	close(releaseOld)
+	for range 2 {
+		if response := <-oldDone; response.Code != http.StatusOK {
+			t.Fatalf("old pinned generation status=%d body=%s", response.Code, response.Body.String())
+		}
+	}
+	response := <-switchDone
+	if response.Code != http.StatusOK {
+		t.Fatalf("model-b switch status=%d body=%s", response.Code, response.Body.String())
+	}
+	status = readDeploymentStatus(t, server)
+	if status.Phase != deploymentPhaseActive || status.Active == nil || status.Active.Epoch != 2 || len(status.Draining) != 0 {
+		t.Fatalf("old epoch did not finish cleanup: %+v", status)
+	}
+	if !client.operationBefore("load:model-b", "drain:model-a") {
+		t.Fatal("old epoch drained before the replacement was prepared")
+	}
+	if !client.operationBefore("drain:model-a", "unload:model-a") {
+		t.Fatal("old epoch unloaded before entering draining state")
+	}
+}
+
+func TestFailedPrepareKeepsPreviousEpochServing(t *testing.T) {
+	now := time.Date(2026, 7, 21, 4, 30, 0, 0, time.UTC)
+	member := deploymentSwitchMember("http://node-a", now)
+	client := newMultiDeploymentClient()
 	server := NewServer(
 		deploymentSwitchRegistry(),
 		WithMembershipSource(staticMemberSource{members: []membership.Member{member}}, time.Minute),
@@ -49,95 +121,26 @@ func TestCoordinatorDeploymentSwitchAdmissionBarrierAndFailureIsolation(t *testi
 		WithClock(func() time.Time { return now }),
 		WithDeploymentClient(client),
 	)
+	assertSwitchStatus(t, server, `{"deployment_id":"deployment-a","model":"model-a","stage_count":1}`, http.StatusOK, "model-a", 1)
 
-	assertSwitchStatus(t, server, `{"deployment_id":"deployment-a","model":"model-a","stage_count":1,"ctx_size":256,"n_gpu_layers":0}`, http.StatusOK, "model-a", 1)
-	invalidGPU := performSwitch(server, `{"deployment_id":"invalid-gpu","model":"model-b","stage_count":1,"n_gpu_layers":-1}`)
-	assertErrorCode(t, invalidGPU, http.StatusBadRequest, string(errorDeploymentConfigInvalid))
-	if status := readDeploymentStatus(t, server); status.Phase != deploymentPhaseActive || status.Active == nil || status.Active.Model.ModelID != "model-a" {
-		t.Fatalf("invalid deployment request changed the active deployment: %+v", status)
-	}
-
-	firstInferenceDone := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		firstInferenceDone <- performLayerRun(server, "model-a", "active-request")
-	}()
-	select {
-	case <-inferenceStarted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("active inference did not reach the stage")
-	}
-
-	client.blockLoad("model-b")
-	switchContext, cancelSwitchRequest := context.WithCancel(context.Background())
-	switchDone := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		switchDone <- performSwitchWithContext(
-			server,
-			switchContext,
-			`{"deployment_id":"deployment-b","model":"model-b","stage_count":1,"ctx_size":256,"n_gpu_layers":0}`,
-		)
-	}()
-	waitForCoordinatorPhase(t, server, deploymentPhaseTransitioning)
-
-	rejected := performLayerRun(server, "model-a", "rejected-during-drain")
-	assertErrorCode(t, rejected, http.StatusServiceUnavailable, string(errorDeploymentTransitioning))
-
-	close(releaseInference)
-	if response := <-firstInferenceDone; response.Code != http.StatusOK {
-		t.Fatalf("drained inference status=%d body=%s", response.Code, response.Body.String())
-	}
-	client.waitForLoad(t, "model-b")
-	cancelSwitchRequest()
-	select {
-	case response := <-switchDone:
-		t.Fatalf("client cancellation stopped the coordinator-owned transition: status=%d body=%s", response.Code, response.Body.String())
-	case <-time.After(25 * time.Millisecond):
-	}
-
-	statusDuringLoad := readDeploymentStatus(t, server)
-	if statusDuringLoad.Phase != deploymentPhaseTransitioning || statusDuringLoad.Active == nil || statusDuringLoad.Active.Model.ModelID != "model-a" {
-		t.Fatalf("replacement was partially published during ready barrier: %+v", statusDuringLoad)
-	}
-	rejected = performLayerRun(server, "model-b", "rejected-during-load")
-	assertErrorCode(t, rejected, http.StatusServiceUnavailable, string(errorDeploymentTransitioning))
-
-	client.releaseLoad("model-b")
-	response := <-switchDone
-	if response.Code != http.StatusOK {
-		t.Fatalf("model-b switch status=%d body=%s", response.Code, response.Body.String())
-	}
-	status := readDeploymentStatus(t, server)
-	if status.Phase != deploymentPhaseActive || status.Active == nil || status.Active.Model.ModelID != "model-b" || status.Active.Epoch != 2 {
-		t.Fatalf("unexpected active deployment after switch: %+v", status)
-	}
-
-	rejected = performLayerRun(server, "model-a", "old-model")
-	assertErrorCode(t, rejected, http.StatusConflict, string(errorModelNotActive))
-	if response := performLayerRun(server, "model-b", "new-model"); response.Code != http.StatusOK {
-		t.Fatalf("new model inference status=%d body=%s", response.Code, response.Body.String())
-	}
-
-	client.failLoad("model-c")
-	failed := performSwitch(server, `{"deployment_id":"deployment-c","model":"model-c","stage_count":1,"ctx_size":256,"n_gpu_layers":0}`)
+	client.failLoad("model-b")
+	failed := performSwitch(server, `{"deployment_id":"deployment-b","model":"model-b","stage_count":1}`)
 	assertErrorCode(t, failed, http.StatusBadGateway, string(errorDeploymentSwitchFailed))
-	status = readDeploymentStatus(t, server)
-	if status.Phase != deploymentPhaseFailed || status.Active != nil || status.Recovery == nil || status.Recovery.Model.ModelID != "model-b" || status.LastError == "" {
-		t.Fatalf("failed transition left a publishable deployment: %+v", status)
+	status := readDeploymentStatus(t, server)
+	if status.Phase != deploymentPhaseActive || status.Active == nil || status.Active.Epoch != 1 || status.LastError == "" {
+		t.Fatalf("failed prepare displaced the previous epoch: %+v", status)
 	}
-	rejected = performLayerRun(server, "model-b", "after-failed-transition")
-	assertErrorCode(t, rejected, http.StatusServiceUnavailable, string(errorDeploymentUnavailable))
-
-	client.clearLoadFailure()
-	assertSwitchStatus(t, server, `{"deployment_id":"deployment-c-retry","model":"model-c","stage_count":1,"ctx_size":256,"n_gpu_layers":0}`, http.StatusOK, "model-c", 3)
-
-	client.failNextUnload()
-	unloadFailure := performSwitch(server, `{"deployment_id":"deployment-a-after-unload-failure","model":"model-a","stage_count":1,"ctx_size":256,"n_gpu_layers":0}`)
-	assertErrorCode(t, unloadFailure, http.StatusBadGateway, string(errorDeploymentSwitchFailed))
-	status = readDeploymentStatus(t, server)
-	if status.Phase != deploymentPhaseFailed || status.Recovery == nil || status.Recovery.Model.ModelID != "model-c" {
-		t.Fatalf("unload failure did not retain recovery plan: %+v", status)
+	admission, err := server.deployments.admit("model-a")
+	if err != nil {
+		t.Fatalf("previous epoch was not admissible after rollback: %v", err)
 	}
-	assertSwitchStatus(t, server, `{"deployment_id":"deployment-a-retry","model":"model-a","stage_count":1,"ctx_size":256,"n_gpu_layers":0}`, http.StatusOK, "model-a", 4)
+	admission.Release()
+	if runtimeStatus := client.snapshot("http://node-a", runtimeDeploymentIdentity(*server.deployments.snapshot().Active)); !runtimeStatus.Active {
+		t.Fatalf("previous runtime was not left active: %+v", runtimeStatus)
+	}
+
+	client.clearFailures()
+	assertSwitchStatus(t, server, `{"deployment_id":"deployment-b-retry","model":"model-b","stage_count":1}`, http.StatusOK, "model-b", 3)
 }
 
 func deploymentSwitchRegistry() modelregistry.Registry {
@@ -150,27 +153,18 @@ func deploymentSwitchRegistry() modelregistry.Registry {
 
 func deploymentSwitchModel(id, sha string) cluster.ModelProfile {
 	return cluster.ModelProfile{
-		ID:               id,
-		Family:           "llm",
-		SupportedEngines: []cluster.Engine{cluster.EngineLlamaCPP},
-		LayerCount:       4,
-		PlacementModes:   []cluster.ExecutionMode{cluster.ExecutionModePipelineParallel},
-		ArtifactPath:     "/models/" + id + ".gguf",
-		ArtifactSHA256:   sha,
+		ID: id, Family: "llm", SupportedEngines: []cluster.Engine{cluster.EngineLlamaCPP},
+		LayerCount: 4, PlacementModes: []cluster.ExecutionMode{cluster.ExecutionModePipelineParallel},
+		ArtifactPath: "/models/" + id + ".gguf", ArtifactSHA256: sha,
 	}
 }
 
 func deploymentSwitchMember(apiURL string, now time.Time) membership.Member {
 	return membership.Member{
-		ClusterID: "deployment-test",
-		NodeID:    "node-a",
-		NodeName:  "node-a",
-		Hostname:  "host-a",
-		APIURL:    apiURL,
-		Arch:      "amd64",
+		ClusterID: "deployment-test", NodeID: "node-a", NodeName: "node-a",
+		Hostname: "host-a", APIURL: apiURL, Arch: "amd64",
 		Capabilities: map[string]any{
-			cluster.CapabilityMemoryGB:                64.0,
-			cluster.CapabilityComputeBackends:         []string{"cpu"},
+			cluster.CapabilityMemoryGB: 64.0, cluster.CapabilityComputeBackends: []string{"cpu"},
 			cluster.CapabilityRuntimeEngine:           string(cluster.EngineLlamaCPP),
 			cluster.CapabilityRuntimeComputeBackend:   string(cluster.ComputeBackendCPU),
 			cluster.CapabilityRuntimeExecutionMode:    string(cluster.ExecutionModePipelineParallel),
@@ -179,17 +173,12 @@ func deploymentSwitchMember(apiURL string, now time.Time) membership.Member {
 			cluster.CapabilityRuntimeCUDAActive:       false,
 			cluster.CapabilityRuntimeStartsIdle:       true,
 		},
-		StartedAt: now.Add(-time.Hour),
-		LastSeen:  now,
+		StartedAt: now.Add(-time.Hour), LastSeen: now,
 	}
 }
 
 func performSwitch(server *Server, body string) *httptest.ResponseRecorder {
-	return performSwitchWithContext(server, context.Background(), body)
-}
-
-func performSwitchWithContext(server *Server, ctx context.Context, body string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodPost, api.PathDeploymentSwitch, strings.NewReader(body)).WithContext(ctx)
+	request := httptest.NewRequest(http.MethodPost, api.PathDeploymentSwitch, strings.NewReader(body))
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
 	return response
@@ -243,6 +232,15 @@ func waitForCoordinatorPhase(t *testing.T, server *Server, want deploymentPhase)
 	t.Fatalf("coordinator did not reach phase %q", want)
 }
 
+func waitForSignal(t *testing.T, signal <-chan struct{}, description string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for %s", description)
+	}
+}
+
 func readDeploymentStatus(t *testing.T, server *Server) deploymentStatusResponse {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, api.PathDeploymentStatus, nil)
@@ -258,36 +256,57 @@ func readDeploymentStatus(t *testing.T, server *Server) deploymentStatusResponse
 	return status
 }
 
-type blockingDeploymentClient struct {
-	mu          sync.Mutex
-	status      runtimebridge.DeploymentStatus
-	blockModel  string
-	loadStarted chan string
-	release     map[string]chan struct{}
-	failModel   string
-	failUnload  bool
+type runtimeDeploymentKey struct {
+	DeploymentID string
+	Epoch        uint64
 }
 
-func newBlockingDeploymentClient() *blockingDeploymentClient {
-	return &blockingDeploymentClient{
-		status:      runtimebridge.DeploymentStatus{State: "idle"},
-		loadStarted: make(chan string, 8),
-		release:     make(map[string]chan struct{}),
+type fakeRuntimeDeployments struct {
+	deployments map[runtimeDeploymentKey]runtimebridge.DeploymentStatus
+	preferred   runtimeDeploymentKey
+}
+
+type multiDeploymentClient struct {
+	mu              sync.Mutex
+	runtimes        map[string]*fakeRuntimeDeployments
+	blockModel      string
+	loadStarted     chan string
+	releaseLoadByID map[string]chan struct{}
+	failLoadModel   string
+	failActivateURL string
+	failUnload      bool
+	unreachable     map[string]bool
+	operations      []string
+}
+
+func newMultiDeploymentClient() *multiDeploymentClient {
+	return &multiDeploymentClient{
+		runtimes: make(map[string]*fakeRuntimeDeployments), loadStarted: make(chan string, 8),
+		releaseLoadByID: make(map[string]chan struct{}), unreachable: make(map[string]bool),
 	}
 }
 
-func (c *blockingDeploymentClient) Status(context.Context, string) (runtimebridge.DeploymentStatus, error) {
+func (c *multiDeploymentClient) Status(_ context.Context, nodeURL string) (runtimebridge.DeploymentStatus, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return cloneRuntimeStatus(c.status), nil
+	if c.unreachable[nodeURL] {
+		return runtimebridge.DeploymentStatus{}, errors.New("injected node loss")
+	}
+	runtime := c.runtime(nodeURL)
+	return cloneRuntimeStatus(runtime.deployments[runtime.preferred]), nil
 }
 
-func (c *blockingDeploymentClient) Load(ctx context.Context, _ string, request runtimebridge.LoadDeploymentRequest) (runtimebridge.DeploymentOperationResponse, error) {
+func (c *multiDeploymentClient) Load(ctx context.Context, nodeURL string, request runtimebridge.LoadDeploymentRequest) (runtimebridge.DeploymentOperationResponse, error) {
 	c.mu.Lock()
-	fail := c.failModel == request.ModelID
+	fail := c.failLoadModel == request.ModelID
+	unreachable := c.unreachable[nodeURL]
 	block := c.blockModel == request.ModelID
-	release := c.release[request.ModelID]
+	release := c.releaseLoadByID[request.ModelID]
+	c.operations = append(c.operations, "load:"+request.ModelID)
 	c.mu.Unlock()
+	if unreachable {
+		return runtimebridge.DeploymentOperationResponse{}, errors.New("injected node loss")
+	}
 	if fail {
 		return runtimebridge.DeploymentOperationResponse{}, errors.New("injected load failure")
 	}
@@ -299,62 +318,105 @@ func (c *blockingDeploymentClient) Load(ctx context.Context, _ string, request r
 		case <-release:
 		}
 	}
-	status := runtimebridge.DeploymentStatus{
-		Resident: true,
-		Active:   false,
-		State:    "ready",
-		Deployment: &runtimebridge.DeploymentIdentity{
-			DeploymentID: request.DeploymentID,
-			Epoch:        request.Epoch,
-			ModelID:      request.ModelID,
-			ModelSHA256:  request.ModelSHA256,
-		},
-		ModelMemory: deploymentTestModelMemory(request, false),
-	}
+	status := readyRuntimeStatus(request)
 	c.mu.Lock()
-	c.status = status
+	runtime := c.runtime(nodeURL)
+	key := keyForRuntimeIdentity(*status.Deployment)
+	runtime.deployments[key] = status
+	if len(runtime.deployments) == 1 {
+		runtime.preferred = key
+	}
 	c.mu.Unlock()
 	return runtimebridge.DeploymentOperationResponse{DeploymentStatus: cloneRuntimeStatus(status), Loaded: true}, nil
 }
 
-func (c *blockingDeploymentClient) Activate(_ context.Context, _ string, identity runtimebridge.DeploymentIdentity) (runtimebridge.DeploymentOperationResponse, error) {
+func (c *multiDeploymentClient) Activate(_ context.Context, nodeURL string, identity runtimebridge.DeploymentIdentity) (runtimebridge.DeploymentOperationResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !runtimeDeploymentIdentityMatches(c.status.Deployment, identity) {
-		return runtimebridge.DeploymentOperationResponse{}, errors.New("deployment mismatch")
+	c.operations = append(c.operations, "activate:"+identity.ModelID)
+	if c.unreachable[nodeURL] {
+		return runtimebridge.DeploymentOperationResponse{}, errors.New("injected node loss")
 	}
-	c.status.Active = true
-	c.status.State = "active"
-	c.status.ModelMemory.Pinned = true
-	return runtimebridge.DeploymentOperationResponse{DeploymentStatus: cloneRuntimeStatus(c.status), Activated: true}, nil
+	if nodeURL == c.failActivateURL {
+		return runtimebridge.DeploymentOperationResponse{}, errors.New("injected activation failure")
+	}
+	runtime := c.runtime(nodeURL)
+	key := keyForRuntimeIdentity(identity)
+	status, ok := runtime.deployments[key]
+	if !ok || !runtimeDeploymentIdentityMatches(status.Deployment, identity) {
+		return runtimebridge.DeploymentOperationResponse{}, errors.New("deployment not found")
+	}
+	status.Active, status.State, status.ModelMemory.Pinned = true, "active", true
+	runtime.deployments[key], runtime.preferred = status, key
+	return runtimebridge.DeploymentOperationResponse{DeploymentStatus: cloneRuntimeStatus(status), Activated: true}, nil
 }
 
-func (c *blockingDeploymentClient) Unload(_ context.Context, _ string, expected runtimebridge.DeploymentIdentity) (runtimebridge.DeploymentOperationResponse, error) {
+func (c *multiDeploymentClient) Drain(_ context.Context, nodeURL string, identity runtimebridge.DeploymentIdentity) (runtimebridge.DeploymentOperationResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.operations = append(c.operations, "drain:"+identity.ModelID)
+	if c.unreachable[nodeURL] {
+		return runtimebridge.DeploymentOperationResponse{}, errors.New("injected node loss")
+	}
+	runtime := c.runtime(nodeURL)
+	key := keyForRuntimeIdentity(identity)
+	status, ok := runtime.deployments[key]
+	if !ok {
+		return idleOperationResponse(identity, "drain"), nil
+	}
+	if status.State == "active" {
+		status.State = "draining"
+		runtime.deployments[key] = status
+	}
+	return runtimebridge.DeploymentOperationResponse{DeploymentStatus: cloneRuntimeStatus(status), Drained: true}, nil
+}
+
+func (c *multiDeploymentClient) Unload(_ context.Context, nodeURL string, identity runtimebridge.DeploymentIdentity) (runtimebridge.DeploymentOperationResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.operations = append(c.operations, "unload:"+identity.ModelID)
+	if c.unreachable[nodeURL] {
+		return runtimebridge.DeploymentOperationResponse{}, errors.New("injected node loss")
+	}
 	if c.failUnload {
-		c.failUnload = false
 		return runtimebridge.DeploymentOperationResponse{}, errors.New("injected unload failure")
 	}
-	if !runtimeDeploymentIdentityMatches(c.status.Deployment, expected) {
-		return runtimebridge.DeploymentOperationResponse{}, errors.New("deployment mismatch")
+	runtime := c.runtime(nodeURL)
+	key := keyForRuntimeIdentity(identity)
+	status, ok := runtime.deployments[key]
+	if ok && status.State == "active" {
+		return runtimebridge.DeploymentOperationResponse{}, errors.New("active deployment was not drained")
 	}
-	identity := *c.status.Deployment
-	c.status = runtimebridge.DeploymentStatus{State: "idle"}
-	return runtimebridge.DeploymentOperationResponse{
-		DeploymentStatus: runtimebridge.DeploymentStatus{State: "idle", Deployment: &identity},
-		Unloaded:         true,
-	}, nil
+	delete(runtime.deployments, key)
+	if runtime.preferred == key {
+		runtime.preferred = newestRuntimeKey(runtime.deployments)
+	}
+	return idleOperationResponse(identity, "unload"), nil
 }
 
-func (c *blockingDeploymentClient) blockLoad(model string) {
+func (c *multiDeploymentClient) runtime(nodeURL string) *fakeRuntimeDeployments {
+	runtime := c.runtimes[nodeURL]
+	if runtime == nil {
+		runtime = &fakeRuntimeDeployments{deployments: make(map[runtimeDeploymentKey]runtimebridge.DeploymentStatus)}
+		c.runtimes[nodeURL] = runtime
+	}
+	return runtime
+}
+
+func (c *multiDeploymentClient) snapshot(nodeURL string, identity runtimebridge.DeploymentIdentity) runtimebridge.DeploymentStatus {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return cloneRuntimeStatus(c.runtime(nodeURL).deployments[keyForRuntimeIdentity(identity)])
+}
+
+func (c *multiDeploymentClient) blockLoad(model string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.blockModel = model
-	c.release[model] = make(chan struct{})
+	c.releaseLoadByID[model] = make(chan struct{})
 }
 
-func (c *blockingDeploymentClient) waitForLoad(t *testing.T, model string) {
+func (c *multiDeploymentClient) waitForLoad(t *testing.T, model string) {
 	t.Helper()
 	select {
 	case got := <-c.loadStarted:
@@ -366,29 +428,81 @@ func (c *blockingDeploymentClient) waitForLoad(t *testing.T, model string) {
 	}
 }
 
-func (c *blockingDeploymentClient) releaseLoad(model string) {
+func (c *multiDeploymentClient) releaseLoad(model string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	close(c.release[model])
+	close(c.releaseLoadByID[model])
 	c.blockModel = ""
 }
 
-func (c *blockingDeploymentClient) failLoad(model string) {
+func (c *multiDeploymentClient) failLoad(model string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.failModel = model
+	c.failLoadModel = model
 }
 
-func (c *blockingDeploymentClient) clearLoadFailure() {
+func (c *multiDeploymentClient) clearFailures() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.failModel = ""
+	c.failLoadModel, c.failActivateURL, c.failUnload = "", "", false
 }
 
-func (c *blockingDeploymentClient) failNextUnload() {
+func (c *multiDeploymentClient) setUnreachable(nodeURL string, unreachable bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.failUnload = true
+	c.unreachable[nodeURL] = unreachable
+}
+
+func (c *multiDeploymentClient) operationBefore(first, second string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	firstIndex, secondIndex := -1, -1
+	for index, operation := range c.operations {
+		if operation == first && firstIndex < 0 {
+			firstIndex = index
+		}
+		if operation == second && secondIndex < 0 {
+			secondIndex = index
+		}
+	}
+	return firstIndex >= 0 && secondIndex > firstIndex
+}
+
+func readyRuntimeStatus(request runtimebridge.LoadDeploymentRequest) runtimebridge.DeploymentStatus {
+	return runtimebridge.DeploymentStatus{
+		Resident: true, State: "ready",
+		Deployment: &runtimebridge.DeploymentIdentity{
+			DeploymentID: request.DeploymentID, Epoch: request.Epoch,
+			ModelID: request.ModelID, ModelSHA256: request.ModelSHA256,
+		},
+		ModelMemory: deploymentTestModelMemory(request, false),
+	}
+}
+
+func idleOperationResponse(identity runtimebridge.DeploymentIdentity, operation string) runtimebridge.DeploymentOperationResponse {
+	response := runtimebridge.DeploymentOperationResponse{
+		DeploymentStatus: runtimebridge.DeploymentStatus{State: "idle", Deployment: &identity},
+	}
+	if operation == "drain" {
+		response.Drained = true
+	} else {
+		response.Unloaded = true
+	}
+	return response
+}
+
+func keyForRuntimeIdentity(identity runtimebridge.DeploymentIdentity) runtimeDeploymentKey {
+	return runtimeDeploymentKey{DeploymentID: identity.DeploymentID, Epoch: identity.Epoch}
+}
+
+func newestRuntimeKey(deployments map[runtimeDeploymentKey]runtimebridge.DeploymentStatus) runtimeDeploymentKey {
+	var newest runtimeDeploymentKey
+	for key := range deployments {
+		if key.Epoch > newest.Epoch {
+			newest = key
+		}
+	}
+	return newest
 }
 
 func cloneRuntimeStatus(status runtimebridge.DeploymentStatus) runtimebridge.DeploymentStatus {
@@ -404,19 +518,12 @@ func cloneRuntimeStatus(status runtimebridge.DeploymentStatus) runtimebridge.Dep
 }
 
 func deploymentTestModelMemory(request runtimebridge.LoadDeploymentRequest, pinned bool) *runtimebridge.ModelMemory {
-	const (
-		layerCount       = 4
-		totalWeightBytes = 400
-	)
+	const layerCount, totalWeightBytes = 4, 400
 	assignedLayers := request.LayerEnd - request.LayerStart
 	return &runtimebridge.ModelMemory{
-		LayerStart:          request.LayerStart,
-		LayerEnd:            request.LayerEnd,
-		LayerCount:          layerCount,
+		LayerStart: request.LayerStart, LayerEnd: request.LayerEnd, LayerCount: layerCount,
 		ResidentWeightBytes: uint64(assignedLayers * (totalWeightBytes / layerCount)),
-		TotalWeightBytes:    totalWeightBytes,
-		ResidentTensorCount: uint64(assignedLayers),
-		Partitioned:         request.LayerStart != 0 || request.LayerEnd != layerCount,
-		Pinned:              pinned,
+		TotalWeightBytes:    totalWeightBytes, ResidentTensorCount: uint64(assignedLayers),
+		Partitioned: request.LayerStart != 0 || request.LayerEnd != layerCount, Pinned: pinned,
 	}
 }

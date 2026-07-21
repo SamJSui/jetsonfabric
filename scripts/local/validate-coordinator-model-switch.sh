@@ -20,7 +20,7 @@ RUNTIME_BUILD_DIR="${RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build-switch-cpu}"
 RUNTIME_BIN="${RUNTIME_BIN:-$ROOT_DIR/dist/jetsonfabric-runtime-worker-switch-cpu}"
 NODE_BIN="${NODE_BIN:-$ROOT_DIR/dist/jetsonfabric-node}"
 LLAMA_CPP_COMMIT="${LLAMA_CPP_COMMIT:-unknown}"
-RUNTIME_REVISION="${JF_RUNTIME_REVISION:-milestone-5-ci}"
+RUNTIME_REVISION="${JF_RUNTIME_REVISION:-milestone-6-ci}"
 CLUSTER_TOKEN="${JF_CLUSTER_TOKEN:-jetsonfabric-integration-token}"
 WORK_DIR="$(mktemp -d)"
 LOG_DIR="$WORK_DIR/logs"
@@ -226,22 +226,22 @@ switch_model() {
   code="$(curl -sS -o "$output" -w '%{http_code}' \
     -X POST "$NODE0_URL/v1/deployments/switch" \
     -H 'Content-Type: application/json' \
-    --data-binary "$(jq -nc --arg deployment "$deployment" --arg model "$model" '{deployment_id:$deployment,model:$model,stage_count:2,allow_colocated_stages:true,ctx_size:256,threads:2,n_gpu_layers:0}')")"
+    --data-binary "$(jq -nc --arg deployment "$deployment" --arg model "$model" '{deployment_id:$deployment,model:$model,allow_colocated_stages:true,ctx_size:256,threads:2,n_gpu_layers:0}')")"
   [[ "$code" == "200" ]] || { echo "switch to $model returned HTTP $code" >&2; cat "$output" >&2; exit 1; }
   jq -e --arg deployment "$deployment" --arg model "$model" --argjson epoch "$expected_epoch" \
     '.phase == "active" and .active.deployment_id == $deployment and .active.epoch == $epoch and .active.model.model_id == $model and (.active.stages | length) == 2' "$output" >/dev/null
 }
 
 run_model() {
-  local model=$1 deployment=$2 epoch=$3 baseline=$4 output=$5
+  local model=$1 deployment=$2 epoch=$3 baseline=$4 output=$5 stage_count=${6:-2}
   local code
   code="$(curl -sS -o "$output" -w '%{http_code}' \
     -X POST "$NODE0_URL/v1/layer-split/run" \
     -H 'Content-Type: application/json' \
     --data-binary "$(jq -nc --arg model "$model" --arg payload "$RAW_PROMPT" --argjson max_tokens "$MAX_TOKENS" '{model:$model,payload:$payload,max_tokens:$max_tokens}')")"
   [[ "$code" == "200" ]] || { echo "inference for $model returned HTTP $code" >&2; cat "$output" >&2; exit 1; }
-  jq -e --arg deployment "$deployment" --arg model "$model" --argjson epoch "$epoch" --argjson baseline "$baseline" --argjson max_tokens "$MAX_TOKENS" \
-    '.runtime_identity.deployment_id == $deployment and .runtime_identity.epoch == $epoch and .runtime_identity.model_id == $model and .result.sampled_tokens == $baseline and .plan.stage_count == 2 and (.result.stages | length) == (2 * $max_tokens)' "$output" >/dev/null
+  jq -e --arg deployment "$deployment" --arg model "$model" --argjson epoch "$epoch" --argjson baseline "$baseline" --argjson max_tokens "$MAX_TOKENS" --argjson stage_count "$stage_count" \
+    '.runtime_identity.deployment_id == $deployment and .runtime_identity.epoch == $epoch and .runtime_identity.model_id == $model and .result.sampled_tokens == $baseline and .plan.stage_count == $stage_count and (.result.stages | length) == ($stage_count * $max_tokens)' "$output" >/dev/null
 }
 
 run_runtime_owned_chat() {
@@ -320,7 +320,25 @@ curl -fsS "$NODE0_URL/v1/deployments/active" | jq -e \
   --arg deployment "$DEPLOYMENT_B" --arg model "$MODEL_B_ID" \
   '.phase == "active" and .active.deployment_id == $deployment and .active.epoch == 2 and .active.model.model_id == $model and .in_flight == 0' >/dev/null
 
+kill "${PIDS[1]}" 2>/dev/null || true
+wait "${PIDS[1]}" 2>/dev/null || true
+RECONCILED_STATUS="$WORK_DIR/reconciled-single.json"
+for _ in $(seq 1 240); do
+  if curl -fsS "$NODE0_URL/v1/deployments/active" >"$RECONCILED_STATUS" 2>/dev/null &&
+     jq -e --arg model "$MODEL_B_ID" \
+       '.active.epoch == 3 and .active.model.model_id == $model and (.active.stages | length) == 1 and (.phase == "active" or .phase == "draining")' \
+       "$RECONCILED_STATUS" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.25
+done
+jq -e --arg model "$MODEL_B_ID" \
+  '.active.epoch == 3 and .active.model.model_id == $model and (.active.stages | length) == 1 and (.phase == "active" or .phase == "draining")' \
+  "$RECONCILED_STATUS" >/dev/null
+RECONCILED_DEPLOYMENT="$(jq -r '.active.deployment_id' "$RECONCILED_STATUS")"
+run_model "$MODEL_B_ID" "$RECONCILED_DEPLOYMENT" 3 "$BASELINE_B" "$WORK_DIR/run-b-reconciled.json" 1
+
 echo "Coordinator model switch validation passed"
 echo "Deployment A: $DEPLOYMENT_A model=$MODEL_A_ID sha=$MODEL_A_SHA"
 echo "Deployment B: $DEPLOYMENT_B model=$MODEL_B_ID sha=$MODEL_B_SHA"
-echo "Lifecycle: deploy A -> infer A -> unload A -> deploy B -> infer B -> runtime-owned chat B"
+echo "Lifecycle: deploy A -> infer A -> prepare/activate B -> drain/unload A -> infer B -> lose worker -> auto-reconcile B to one stage"

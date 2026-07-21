@@ -92,14 +92,16 @@ runtime::deployment::ModelResidency residency() {
     };
 }
 
-runtime::protocol::StageRequest request() {
+runtime::protocol::StageRequest request(
+    runtime::deployment::DeploymentIdentity deployment = identity()
+) {
     return runtime::protocol::StageRequest{
         .session_id = "session-lifecycle",
         .request_id = "request-lifecycle",
-        .model_id = "model-a",
-        .deployment_id = "deployment-a",
-        .deployment_epoch = 1,
-        .model_sha256 = std::string(64, 'a'),
+        .model_id = deployment.model_id,
+        .deployment_id = deployment.deployment_id,
+        .deployment_epoch = deployment.epoch,
+        .model_sha256 = deployment.model_sha256,
         .phase = "prefill",
         .stage_index = 0,
         .stage_count = 1,
@@ -113,11 +115,12 @@ runtime::protocol::StageRequest request() {
     };
 }
 
-void test_idle_load_ready_activate_infer_unload_idle() {
+void test_prepare_activate_drain_handoff() {
     runtime::deployment::ModelManager manager;
     int build_calls = 0;
     int destruction_count = 0;
-    RecordingExecutor* recording = nullptr;
+    RecordingExecutor* recording_a = nullptr;
+    RecordingExecutor* recording_b = nullptr;
 
     const runtime::deployment::LoadDeploymentResult loaded =
         manager.load_resident_deployment(
@@ -127,7 +130,7 @@ void test_idle_load_ready_activate_infer_unload_idle() {
             [&]() {
                 ++build_calls;
                 auto executor = std::make_unique<RecordingExecutor>(&destruction_count);
-                recording = executor.get();
+                recording_a = executor.get();
                 return runtime::InferenceEngineParts{
                     .layer_executor = std::move(executor),
                     .model_residency = residency(),
@@ -163,31 +166,31 @@ void test_idle_load_ready_activate_infer_unload_idle() {
     const runtime::deployment::LoadDeploymentResult duplicate =
         manager.load_resident_deployment(
             "node-a",
-            identity("deployment-b", 2, "model-b", 'b'),
+            identity(),
             assignment(),
             [&]() {
                 ++rejected_builder_calls;
                 return runtime::InferenceEngineParts{};
             }
         );
-    expect(!duplicate.ok, "runtime accepted a second resident deployment");
+    expect(!duplicate.ok, "runtime accepted a duplicate deployment identity");
     expect(duplicate.error_code == "resident_deployment_exists", "duplicate load used the wrong error");
-    expect(rejected_builder_calls == 0, "duplicate load built a second engine");
+    expect(rejected_builder_calls == 0, "duplicate identity rebuilt its engine");
 
     const runtime::deployment::ActivateDeploymentResult stale =
-        manager.activate_resident_deployment(identity("deployment-b"));
+        manager.activate_resident_deployment(identity("deployment-missing", 2));
     expect(!stale.ok, "stale activation command succeeded");
-    expect(stale.error_code == "deployment_mismatch", "stale activation used the wrong error");
+    expect(stale.error_code == "deployment_not_found", "stale activation used the wrong error");
 
     const runtime::deployment::ActivateDeploymentResult stale_epoch =
         manager.activate_resident_deployment(identity("deployment-a", 2));
     expect(!stale_epoch.ok, "activation accepted a stale deployment epoch");
-    expect(stale_epoch.error_code == "deployment_mismatch", "stale epoch used the wrong error");
+    expect(stale_epoch.error_code == "deployment_not_found", "stale epoch used the wrong error");
 
     const runtime::deployment::ActivateDeploymentResult wrong_artifact =
         manager.activate_resident_deployment(identity("deployment-a", 1, "model-a", 'b'));
     expect(!wrong_artifact.ok, "activation accepted a different model artifact digest");
-    expect(wrong_artifact.error_code == "deployment_mismatch", "artifact mismatch used the wrong error");
+    expect(wrong_artifact.error_code == "deployment_not_found", "artifact mismatch used the wrong error");
 
     const runtime::deployment::ActivateDeploymentResult activated =
         manager.activate_resident_deployment(identity());
@@ -202,21 +205,71 @@ void test_idle_load_ready_activate_infer_unload_idle() {
         manager.activate_resident_deployment(identity());
     expect(repeated_activation.ok, "activation retry was not idempotent");
 
-    const runtime::pipeline_parallel::StageRunResult inference = manager.run_stage(request());
-    expect(inference.ok, "active deployment failed inference");
-    expect(recording != nullptr && recording->execute_calls == 1, "active executor was not called once");
-    expect(recording->last_model_id == "model-a", "active executor received the wrong model");
+    const runtime::pipeline_parallel::StageRunResult inference_a = manager.run_stage(request());
+    expect(inference_a.ok, "active deployment failed inference");
+    expect(recording_a != nullptr && recording_a->execute_calls == 1, "active executor was not called once");
+    expect(recording_a->last_model_id == "model-a", "active executor received the wrong model");
 
-    const runtime::deployment::UnloadDeploymentResult unloaded =
-        manager.unload_resident_deployment(identity());
-    expect(unloaded.ok, "active deployment failed to unload");
-    expect(destruction_count == 1, "unload did not release execution components exactly once");
-    expect(!manager.has_resident_deployment(), "unload did not return the runtime to idle");
-    expect(!manager.has_active_deployment(), "unload left an active deployment");
+    const auto identity_b = identity("deployment-b", 2, "model-b", 'b');
+    const runtime::deployment::LoadDeploymentResult prepared_b =
+        manager.load_resident_deployment(
+            "node-a",
+            identity_b,
+            assignment(),
+            [&]() {
+                ++build_calls;
+                auto executor = std::make_unique<RecordingExecutor>(&destruction_count);
+                recording_b = executor.get();
+                return runtime::InferenceEngineParts{
+                    .layer_executor = std::move(executor),
+                    .model_residency = residency(),
+                };
+            }
+        );
+    expect(prepared_b.ok, "replacement epoch could not be prepared beside the active epoch");
+    expect(build_calls == 2, "replacement engine was not built exactly once");
+    expect(manager.resident_deployment_count() == 2, "runtime did not retain both epochs");
     expect(
-        !manager.deployment_status().model_residency.has_value(),
-        "unload retained model residency accounting"
+        manager.deployment_status(identity()).state == runtime::deployment::ResidentDeploymentState::Active,
+        "preparing the replacement changed the old epoch"
     );
+    expect(
+        manager.deployment_status(identity_b).state == runtime::deployment::ResidentDeploymentState::Ready,
+        "replacement epoch did not stop at the ready barrier"
+    );
+
+    const runtime::deployment::ActivateDeploymentResult activated_b =
+        manager.activate_resident_deployment(identity_b);
+    expect(activated_b.ok, "replacement epoch failed to activate");
+    expect(manager.active_deployment_id() == "deployment-b", "replacement was not preferred after activation");
+
+    const runtime::deployment::DrainDeploymentResult drained_a =
+        manager.drain_resident_deployment(identity());
+    expect(drained_a.ok, "old epoch failed to enter draining state");
+    const runtime::deployment::DeploymentStatus draining_status =
+        manager.deployment_status(identity());
+    expect(
+        draining_status.state == runtime::deployment::ResidentDeploymentState::Draining &&
+            draining_status.active,
+        "draining epoch was not kept executable"
+    );
+    expect(manager.run_stage(request()).ok, "pinned old-epoch work failed during drain");
+    expect(manager.run_stage(request(identity_b)).ok, "new-epoch work failed after publication");
+    expect(recording_a->execute_calls == 2, "old epoch did not receive its pinned request");
+    expect(recording_b != nullptr && recording_b->execute_calls == 1, "new epoch did not receive its request");
+
+    const runtime::deployment::UnloadDeploymentResult unloaded_a =
+        manager.unload_resident_deployment(identity());
+    expect(unloaded_a.ok, "drained old epoch failed to unload");
+    expect(destruction_count == 1, "old epoch resources were not released exactly once");
+    expect(manager.resident_deployment_count() == 1, "old epoch unload removed the replacement");
+    expect(manager.active_deployment_id() == "deployment-b", "replacement stopped serving after old unload");
+
+    expect(manager.drain_resident_deployment(identity_b).ok, "replacement failed to drain");
+    expect(manager.unload_resident_deployment(identity_b).ok, "replacement failed to unload");
+    expect(destruction_count == 2, "final unload did not release both execution components");
+    expect(!manager.has_resident_deployment(), "final unload did not return the runtime to idle");
+    expect(!manager.has_active_deployment(), "final unload left an executable deployment");
 }
 
 void test_failed_load_is_visible_and_recoverable_by_unload() {
@@ -255,7 +308,7 @@ void test_failed_load_is_visible_and_recoverable_by_unload() {
 } // namespace
 
 int main() {
-    test_idle_load_ready_activate_infer_unload_idle();
+    test_prepare_activate_drain_handoff();
     test_failed_load_is_visible_and_recoverable_by_unload();
 
     std::cout << "runtime deployment lifecycle tests passed\n";

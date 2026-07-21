@@ -270,6 +270,9 @@ void HttpServer::handle_client(int client_fd) const {
         } else if (starts_with(request, "POST /v1/deployment/activate ")) {
             const RuntimeResponse runtime_response = runtime_.activate_deployment(body);
             response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+        } else if (starts_with(request, "POST /v1/deployment/drain ")) {
+            const RuntimeResponse runtime_response = runtime_.drain_deployment(body);
+            response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
         } else if (starts_with(request, "POST /v1/deployment/unload ")) {
             const RuntimeResponse runtime_response = runtime_.unload_deployment(body);
             response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);

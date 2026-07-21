@@ -210,8 +210,8 @@ stage transport without loading a model.
 
 ## Current limitation
 
-Stage-local tensor loading and explicit coordinator deployment switching are
-implemented for Llama and Qwen2. Automatic placement reconciliation and safe
-rebalance remain later milestones. Production-style multi-stage validation still
-requires distinct physical Jetsons; co-location proves correctness and memory
-partition contracts, not distributed CUDA performance.
+Stage-local tensor loading, automatic placement reconciliation, and safe epoch
+handoff are implemented for Llama and Qwen2. Rebalance temporarily needs memory
+for old and new partitions on reused nodes. Production-style multi-stage
+validation still requires distinct physical Jetsons; co-location proves
+correctness and memory partition contracts, not distributed CUDA performance.

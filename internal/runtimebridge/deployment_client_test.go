@@ -26,6 +26,10 @@ func TestHTTPDeploymentClientSendsCoordinatorIdentity(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if request.Method == http.MethodPost {
+			if request.URL.Path == api.PathRuntimeDeploymentDrain {
+				_, _ = w.Write([]byte(`{"drained":true,"resident":true,"active":true,"state":"draining","deployment":{"deployment_id":"deployment-a","epoch":7,"model_id":"model-a","model_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"model_memory":{"layer_start":0,"layer_end":2,"layer_count":4,"resident_weight_bytes":180,"total_weight_bytes":400,"resident_tensor_count":12,"partitioned":true,"pinned":true}}`))
+				return
+			}
 			_, _ = w.Write([]byte(`{"activated":true,"resident":true,"active":true,"state":"active","deployment":{"deployment_id":"deployment-a","epoch":7,"model_id":"model-a","model_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"model_memory":{"layer_start":0,"layer_end":2,"layer_count":4,"resident_weight_bytes":180,"total_weight_bytes":400,"resident_tensor_count":12,"partitioned":true,"pinned":true}}`))
 			return
 		}
@@ -63,5 +67,12 @@ func TestHTTPDeploymentClientSendsCoordinatorIdentity(t *testing.T) {
 	}
 	if !activated.Activated || !activated.Active || activated.Deployment == nil || *activated.Deployment != identity {
 		t.Fatalf("unexpected activation response: %+v", activated)
+	}
+	drained, err := client.Drain(context.Background(), server.URL, identity)
+	if err != nil {
+		t.Fatalf("Drain() error = %v", err)
+	}
+	if !drained.Drained || !drained.Active || drained.State != "draining" || drained.Deployment == nil || *drained.Deployment != identity {
+		t.Fatalf("unexpected drain response: %+v", drained)
 	}
 }

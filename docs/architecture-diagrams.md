@@ -56,7 +56,15 @@ The coordinator selects a prepared plan and calls stage 0 as the runtime
 pipeline leader. Token events stream back while the runtime owns prefill,
 decode, activation transport, cancellation, and session cleanup.
 
-![JetsonFabric target one-call generation sequence](diagrams/layer-split-sequence.svg)
+![JetsonFabric current one-call generation sequence](diagrams/layer-split-sequence.svg)
+
+### Safe reconciliation and epoch handoff
+
+Membership changes trigger the elected coordinator to build a replacement
+plan. New sessions switch to the replacement epoch after every stage is ready;
+sessions already admitted to the previous epoch drain before it is unloaded.
+
+![JetsonFabric safe pipeline rebalance sequence](diagrams/rebalance-sequence.svg)
 
 ## Target dynamic runtime architecture
 
@@ -69,7 +77,3 @@ These diagrams describe roadmap intent, not current behavior.
 ### Model artifact and memory lifecycle
 
 ![JetsonFabric target model artifact and memory flow](diagrams/model-artifact-flow.svg)
-
-### Safe rebalance
-
-![JetsonFabric safe pipeline rebalance sequence](diagrams/rebalance-sequence.svg)

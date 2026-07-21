@@ -233,9 +233,8 @@ void test_idle_manager() {
 
     const runtime::deployment::UnloadDeploymentResult unload =
         manager.unload_resident_deployment(managed_identity());
-    expect(!unload.ok, "idle manager accepted unload");
-    expect(unload.status == "409 Conflict", "idle unload used the wrong status");
-    expect(unload.error_code == "no_resident_deployment", "idle unload used the wrong error");
+    expect(unload.ok, "idle manager did not make unload idempotent");
+    expect(unload.status == "200 OK", "idle unload used the wrong status");
 }
 
 void test_loaded_manager() {
@@ -334,11 +333,27 @@ void test_guarded_unload() {
 
     const runtime::deployment::UnloadDeploymentResult mismatch =
         manager.unload_resident_deployment(managed_identity("deployment-b"));
-    expect(!mismatch.ok, "unload accepted a stale deployment ID");
-    expect(mismatch.status == "409 Conflict", "stale deployment ID used the wrong status");
-    expect(mismatch.error_code == "deployment_mismatch", "stale deployment ID used the wrong error");
+    expect(mismatch.ok, "stale deployment cleanup was not idempotent");
     expect(manager.has_active_deployment(), "stale deployment ID changed active deployment");
     expect(destruction_count == 0, "stale deployment ID destroyed the executor");
+
+    const runtime::deployment::UnloadDeploymentResult active_unload =
+        manager.unload_resident_deployment(managed_identity());
+    expect(!active_unload.ok, "active deployment unloaded without a drain barrier");
+    expect(active_unload.status == "409 Conflict", "active unload used the wrong status");
+    expect(
+        active_unload.error_code == "deployment_not_draining",
+        "active unload used the wrong error"
+    );
+
+    const runtime::deployment::DrainDeploymentResult drained =
+        manager.drain_resident_deployment(managed_identity());
+    expect(drained.ok, "matching deployment ID did not enter draining state");
+    expect(
+        manager.resident_deployment_state() == ResidentState::Draining,
+        "drained deployment reported the wrong state"
+    );
+    expect(manager.run_stage(valid_request()).ok, "draining deployment rejected pinned work");
 
     const runtime::deployment::UnloadDeploymentResult unloaded =
         manager.unload_resident_deployment(managed_identity());
@@ -362,8 +377,7 @@ void test_guarded_unload() {
 
     const runtime::deployment::UnloadDeploymentResult repeated =
         manager.unload_resident_deployment(managed_identity());
-    expect(!repeated.ok, "repeated unload unexpectedly succeeded");
-    expect(repeated.error_code == "no_resident_deployment", "repeated unload used the wrong error");
+    expect(repeated.ok, "repeated unload was not idempotent");
     expect(destruction_count == 1, "repeated unload destroyed resources twice");
 }
 

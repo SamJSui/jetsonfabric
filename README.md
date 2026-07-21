@@ -24,9 +24,10 @@ The end goal is a self-organizing Jetson cluster that can:
 - preserve active generation sessions while a new deployment becomes active.
 
 JetsonFabric currently proves real partial-layer execution, partitioned
-stage-local weight residency, activation handoff, and runtime-owned generation.
-Physical multi-Jetson CUDA acceptance is still required before claiming usable
-aggregate device memory or a distributed performance win.
+stage-local weight residency, runtime-owned generation, and automatic
+epoch-based rebalance with session drain. Physical multi-Jetson CUDA acceptance
+is still required before claiming usable aggregate device memory or a
+distributed performance win.
 
 ## Features
 
@@ -208,10 +209,10 @@ engine and stage-worker ownership.
 
 - [x] Allow `ModelManager` to have no active deployment.
 - [x] Define deployment identity, assignment, and lifecycle states.
-- [x] Add `load`, `activate`, `unload`, and `status` operations.
+- [x] Add `load`, `activate`, `drain`, `unload`, and `status` operations.
 - [x] Allow the runtime process to start idle without loading a model.
 - [x] Reject inference clearly when no deployment is active.
-- [x] Add an idle -> load -> activate -> infer -> unload integration test.
+- [x] Add an idle -> load -> activate -> infer -> drain -> unload integration test.
 
 **Outcome:** a long-lived runtime can change the model stage it hosts without a
 process restart.
@@ -256,11 +257,11 @@ distributed generation loop.
 
 ### Milestone 6 — Automatic reconciliation and safe rebalance
 
-- [ ] Recompute desired placement when membership or capacity changes.
-- [ ] Prepare every partition of a new deployment epoch before activation.
-- [ ] Route new sessions to the new epoch while old sessions remain pinned.
-- [ ] Drain old sessions before unloading obsolete partitions.
-- [ ] Add rollback, timeout, node-loss, and partial-prepare recovery.
+- [x] Recompute desired placement when membership or capacity changes.
+- [x] Prepare every partition of a new deployment epoch before activation.
+- [x] Route new sessions to the new epoch while old sessions remain pinned.
+- [x] Drain old sessions before unloading obsolete partitions.
+- [x] Add rollback, timeout, node-loss, and partial-prepare recovery.
 
 **Outcome:** JetsonFabric can add, remove, or lose a Jetson without interrupting
 healthy active generations or restarting the cluster.
@@ -296,8 +297,15 @@ that combines the compute and memory of multiple Jetson devices.
   buffers, and context/KV structures are not included in that number yet.
 - Placement conservatively applies `min_memory_gb` to every selected stage until
   the planner has a measured per-stage memory estimator.
-- Deployment switching is explicit and destructive; automatic reconciliation,
-  rollback, and spare-node preparation remain future milestones.
+- Safe replacement temporarily keeps old and new partitions resident on reused
+  nodes. A rebalance can fail cleanly when a device lacks that overlap capacity;
+  measured per-stage overlap estimation is not implemented yet.
+- Reconciliation intent and deployment state are leader-local until durable
+  coordinator state moves to a consensus store. Coordinator failover does not
+  reconstruct an active deployment automatically yet.
+- A session whose assigned runtime is lost cannot continue. The controller
+  preserves healthy sessions, publishes a replacement when capacity exists, and
+  retries cleanup if an unreachable runtime later returns.
 - The runtime generation path is sequential, uses one HTTP connection per remote
   stage operation, and does not overlap microbatches.
 - Client cancellation is observed between stage passes or stream writes; an

@@ -19,6 +19,7 @@ const (
 	PathRuntimeDeploymentStatus   = "/v1/runtime/deployment"
 	PathRuntimeDeploymentLoad     = "/v1/runtime/deployment/load"
 	PathRuntimeDeploymentActivate = "/v1/runtime/deployment/activate"
+	PathRuntimeDeploymentDrain    = "/v1/runtime/deployment/drain"
 	PathRuntimeDeploymentUnload   = "/v1/runtime/deployment/unload"
 	PathRuntimeGeneration         = "/v1/runtime/generate"
 )
@@ -35,6 +36,7 @@ const (
 	RouteRuntimeDeploymentStatus   = http.MethodGet + " " + PathRuntimeDeploymentStatus
 	RouteRuntimeDeploymentLoad     = http.MethodPost + " " + PathRuntimeDeploymentLoad
 	RouteRuntimeDeploymentActivate = http.MethodPost + " " + PathRuntimeDeploymentActivate
+	RouteRuntimeDeploymentDrain    = http.MethodPost + " " + PathRuntimeDeploymentDrain
 	RouteRuntimeDeploymentUnload   = http.MethodPost + " " + PathRuntimeDeploymentUnload
 	RouteRuntimeGeneration         = http.MethodPost + " " + PathRuntimeGeneration
 )

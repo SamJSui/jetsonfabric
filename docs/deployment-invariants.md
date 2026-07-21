@@ -1,8 +1,6 @@
 # Deployment invariants
 
-This page records deployment constraints. The single-resident-slot lifecycle,
-manual versioned plans, and stage-local model tensor loading are implemented.
-Automatic reconciliation and non-disruptive rebalance remain target behavior.
+This page records the implemented deployment and rebalance constraints.
 
 ## Ownership
 
@@ -10,62 +8,83 @@ Automatic reconciliation and non-disruptive rebalance remain target behavior.
 one physical Jetson
   -> one jetsonfabric-node
   -> one supervised runtime worker
-  -> at most one resident model partition
-  -> one contiguous transformer-layer range
+  -> one partition per resident deployment epoch
+  -> one contiguous transformer-layer range per epoch
 ```
 
-The cluster owns the complete model. Each runtime owns the weights and stage-local state for only its assigned partition.
+The cluster owns the complete model. Each runtime owns the weights and
+stage-local state for its assigned range. During rebalance, a runtime may hold an
+old and a replacement epoch at the same time; each remains a separate engine and
+session namespace.
 
 ## Model admission
 
-Inference is accepted only when the requested model matches the active cluster deployment. Requests for another model remain rejected until an explicit coordinator deployment operation changes the cluster assignment.
+Only the coordinator's active epoch accepts new requests. An admission copies
+that immutable plan and increments its epoch-specific in-flight count. Loading
+or activating another model never happens implicitly inside inference.
 
-An inference request must not implicitly replace the active model or hide model-loading delay inside time to first token.
+Requests admitted before publication keep the old plan. Requests admitted after
+publication get the new plan. The runtime accepts stage work for both `active`
+and `draining` identities so old KV state remains usable until release.
 
 ## Storage and memory
 
-A model artifact may be cached and verified on local storage without occupying runtime memory. A deployment plan does not imply that a second model partition is resident in unified memory.
+A verified model artifact on local storage is not resident model memory. Loading
+a replacement creates another engine and partition residency before the old one
+is released. This overlap is required for non-disruptive handoff and may exceed
+device capacity. A load failure rolls back without changing active admission.
 
-A runtime normally has one resident deployment slot: either empty or occupied by one deployment identity, model partition, engine instance, and stage-local session state.
+`model_memory` reports tensor payload bytes, not allocator, compute-buffer, or
+context/KV overhead. The planner does not yet predict temporary overlap bytes.
 
 ## Membership and epochs
 
-Discovery and membership expose candidate capacity. A node joining or leaving does not mutate the active deployment automatically.
+Discovery is bootstrap and membership input, not scheduling truth. After the
+first successful manual deployment establishes intent, the elected coordinator
+recomputes the desired plan whenever membership refreshes and on a retry timer.
 
-Each deployment epoch has an immutable model identity, artifact identity, ordered stage placement, and layer assignment. Membership changes may produce a proposed epoch, but activation requires an explicit coordinator operation.
+If `stage_count` is omitted, placement uses all fresh, compatible, memory-
+eligible nodes up to the model layer count. An explicit `stage_count` pins the
+requested width. A changed node set, API address, eligibility, or layer
+assignment produces a new immutable epoch; an equivalent plan is a no-op.
 
-## Sessions and KV cache
-
-A generation session remains pinned to the deployment epoch where it started. Every runtime owns KV state for its assigned layers.
-
-Changing the model, artifact, or layer assignment invalidates that state. The initial lifecycle drains or fails affected sessions rather than assuming cross-epoch KV migration. Token replay and engine-specific KV migration remain future architecture decisions in the knowledge base.
-
-## Model replacement
-
-Without spare nodes, replacement follows this dependency order:
+## Safe replacement order
 
 ```text
-validate target artifact and plan
-  -> stop new admission
-  -> finish existing sessions
-  -> release current partitions
-  -> load target partitions
-  -> wait for all stages to report ready
-  -> activate one epoch cluster-wide
-  -> resume admission
+build desired immutable plan
+  -> load every replacement partition to ready
+  -> activate every replacement partition
+  -> publish replacement for new admissions
+  -> mark previous runtime partitions draining
+  -> wait for previous epoch in-flight count to reach zero
+  -> unload previous partitions
 ```
 
-Spare nodes may later prepare a replacement epoch while the current epoch remains active. This is a cluster-level optimization; one runtime worker still holds at most one resident partition.
+Direct unload of an active runtime epoch is rejected. `drain` is explicit and
+idempotent cleanup makes retries safe after an ambiguous timeout.
 
-## Roadmap dependency
+## Failure behavior
 
-```text
-deployment identity
-  -> single resident-slot state machine
-  -> coordinator deployment plans
-  -> admission drain and unload
-  -> stage-local partition loading
-  -> ready barrier
-  -> atomic cluster activation
-  -> lifecycle integration coverage
-```
+- Prepare or partial-activation failure drains and unloads the attempted epoch;
+  the previous healthy epoch remains active.
+- A prepare timeout consumes its epoch and rolls back, preventing delayed work
+  from colliding with a later retry.
+- Cleanup failure does not unpublish the replacement. The old plan stays visible
+  in `draining` status and reconciliation retries it.
+- If a runtime is unreachable, reachable old partitions are still cleaned and
+  the healthy replacement remains admissible. Exact cleanup is retried when the
+  runtime returns.
+- If no valid replacement exists and the active route is no longer healthy, the
+  deployment becomes `degraded` and rejects new admission.
+
+No live KV migration occurs. A session assigned to a runtime that is lost cannot
+be recovered by re-planning; only sessions whose assigned stages remain healthy
+can finish.
+
+## Durability boundary
+
+Deployment intent, epochs, and in-flight counters are currently coordinator-
+local memory. The local deterministic election is sufficient for current one-
+and two-node experiments, but a new coordinator does not reconstruct this state.
+Durable replicated deployment state belongs with the future three-voter
+consensus milestone.

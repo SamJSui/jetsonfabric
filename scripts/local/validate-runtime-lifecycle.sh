@@ -306,6 +306,27 @@ jq -s -e --argjson baseline "$BASELINE_TOKENS" '
   $done[0].prompt_tokens > 0
 ' "$INFERENCE_FILE" >/dev/null
 
+DRAIN_FILE="$WORK_DIR/drain.json"
+DRAIN_CODE="$(curl -sS -o "$DRAIN_FILE" -w '%{http_code}' \
+  -X POST "$RUNTIME_URL/v1/deployment/drain" \
+  -H 'Content-Type: application/json' \
+  --data-binary "$(jq -nc --arg deployment "$DEPLOYMENT_ID" --argjson epoch "$DEPLOYMENT_EPOCH" --arg model "$MODEL_ID" --arg model_sha256 "$MODEL_SHA256" '{deployment_id:$deployment,epoch:$epoch,model_id:$model,model_sha256:$model_sha256}')")"
+if [[ "$DRAIN_CODE" != "200" ]]; then
+  echo "runtime drain returned HTTP $DRAIN_CODE" >&2
+  jq . "$DRAIN_FILE" >&2 2>/dev/null || cat "$DRAIN_FILE" >&2
+  exit 1
+fi
+jq -e --arg deployment "$DEPLOYMENT_ID" --argjson epoch "$DEPLOYMENT_EPOCH" --arg model_sha256 "$MODEL_SHA256" '
+  .drained == true and
+  .resident == true and
+  .active == true and
+  .state == "draining" and
+  .deployment.deployment_id == $deployment and
+  .deployment.epoch == $epoch and
+  .deployment.model_sha256 == $model_sha256 and
+  .model_memory.pinned == true
+' "$DRAIN_FILE" >/dev/null
+
 UNLOAD_FILE="$WORK_DIR/unload.json"
 UNLOAD_CODE="$(curl -sS -o "$UNLOAD_FILE" -w '%{http_code}' \
   -X POST "$RUNTIME_URL/v1/deployment/unload" \
@@ -338,6 +359,6 @@ jq -e '
 ' "$FINAL_STATUS" >/dev/null
 
 echo "Runtime deployment lifecycle validation passed"
-echo "Lifecycle: idle -> load -> ready -> activate -> infer -> unload -> idle"
+echo "Lifecycle: idle -> load -> ready -> activate -> infer -> drain -> unload -> idle"
 echo "Model: $MODEL_ID"
 echo "Layers: [0,$LAYER_COUNT)"

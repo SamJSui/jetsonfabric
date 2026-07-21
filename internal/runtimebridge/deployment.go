@@ -18,6 +18,7 @@ const (
 	runtimeDeploymentStatusPath   = "/v1/deployment"
 	runtimeDeploymentLoadPath     = "/v1/deployment/load"
 	runtimeDeploymentActivatePath = "/v1/deployment/activate"
+	runtimeDeploymentDrainPath    = "/v1/deployment/drain"
 	runtimeDeploymentUnloadPath   = "/v1/deployment/unload"
 	maxDeploymentRequestBytes     = 1 << 20
 )
@@ -136,6 +137,8 @@ func deploymentRuntimeTarget(path string) (string, string, bool) {
 		return runtimeDeploymentLoadPath, http.MethodPost, true
 	case api.PathRuntimeDeploymentActivate:
 		return runtimeDeploymentActivatePath, http.MethodPost, true
+	case api.PathRuntimeDeploymentDrain:
+		return runtimeDeploymentDrainPath, http.MethodPost, true
 	case api.PathRuntimeDeploymentUnload:
 		return runtimeDeploymentUnloadPath, http.MethodPost, true
 	default:

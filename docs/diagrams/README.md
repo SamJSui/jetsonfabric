@@ -14,11 +14,11 @@ JetsonFabric. `../architecture-diagrams.md` is the curated index.
 - `test-strategy-view.svg` — automated proof layers.
 - `generation-call-stack.svg` — current Go control-plane and C++ generation ownership.
 - `layer-split-sequence.svg` — current one-call generation and peer stage flow.
+- `rebalance-sequence.svg` — current prepare, activate, drain, and retire epoch handoff.
 
 ## Target architecture
 
 - `future-layer-split-component.svg` — dynamic `ModelManager`, versioned deployments, and direct runtime data plane.
 - `model-artifact-flow.svg` — artifact catalog, in-memory partition cache, session pins, and eviction.
-- `rebalance-sequence.svg` — prepare, activate, drain, and retire a new deployment epoch.
 
 Target diagrams are design intent, not claims about the current implementation.
