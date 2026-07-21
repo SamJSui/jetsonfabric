@@ -1,9 +1,10 @@
 # JetsonFabric Runtime
 
 `jetsonfabric-runtime-worker` is the node-local C++ inference process. The Go
-node owns discovery, membership, deployment policy, facade routing, and remote
-stage forwarding. The runtime owns model residency, llama.cpp execution,
-session state, and the latency-sensitive stage boundary.
+node owns discovery, membership, deployment policy, facade routing, and the
+public API. The runtime owns model residency, llama.cpp execution, generation
+loops, peer stage forwarding, session state, and the latency-sensitive stage
+boundary.
 
 ## Build
 
@@ -37,16 +38,21 @@ For direct lifecycle work:
 ```
 
 The coordinator then uses the runtime lifecycle endpoints to load, activate,
-inspect, and unload an exact deployment epoch.
+inspect, and unload an exact deployment epoch. Generation enters through
+`POST /v1/generate` on the stage-0 runtime as newline-delimited JSON events;
+peer activations use binary Stagewire requests through node API gateways.
+Multi-stage runtime workers require the same `JETSONFABRIC_CLUSTER_TOKEN` as
+their supervising nodes so peer Stagewire calls can authenticate.
 
 ## Layout
 
 - `worker/`: process entrypoint and validated runtime configuration;
-- `api/`: health, deployment lifecycle, chat, and binary stage HTTP endpoints;
+- `api/`: health, deployment lifecycle, generation, and binary stage endpoints;
 - `deployment/`: resident deployment state and lifecycle barriers;
 - `engine/`: runtime service and engine construction;
 - `adapters/`: llama.cpp full-model and partial-layer execution;
-- `protocol/`: stage and lifecycle serialization;
+- `protocol/`: generation, stage, and lifecycle serialization;
+- `transport/`: runtime-initiated peer Stagewire HTTP transport;
 - `patches/`: the pinned llama.cpp stage-range extension.
 
 See `docs/runtime-stage-interface.md` and `docs/llama-cpp-partial-layer.md` for

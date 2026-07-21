@@ -20,7 +20,7 @@ RUNTIME_BUILD_DIR="${RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build-switch-cpu}"
 RUNTIME_BIN="${RUNTIME_BIN:-$ROOT_DIR/dist/jetsonfabric-runtime-worker-switch-cpu}"
 NODE_BIN="${NODE_BIN:-$ROOT_DIR/dist/jetsonfabric-node}"
 LLAMA_CPP_COMMIT="${LLAMA_CPP_COMMIT:-unknown}"
-RUNTIME_REVISION="${JF_RUNTIME_REVISION:-milestone-3-ci}"
+RUNTIME_REVISION="${JF_RUNTIME_REVISION:-milestone-5-ci}"
 CLUSTER_TOKEN="${JF_CLUSTER_TOKEN:-jetsonfabric-integration-token}"
 WORK_DIR="$(mktemp -d)"
 LOG_DIR="$WORK_DIR/logs"
@@ -197,6 +197,11 @@ wait_for_url "$NODE1_URL/healthz"
 wait_for_url "$NODE0_URL/v1/runtime/deployment"
 wait_for_url "$NODE1_URL/v1/runtime/deployment"
 wait_for_members
+COORDINATOR_NODE_ID="$(curl -fsS "$NODE0_URL/healthz" | jq -r '.node_id')"
+[[ -n "$COORDINATOR_NODE_ID" && "$COORDINATOR_NODE_ID" != "null" ]] || {
+  echo "coordinator node ID is unavailable" >&2
+  exit 1
+}
 
 assert_runtime_deployment() {
   local node_url=$1 deployment=$2 epoch=$3 model=$4 model_sha256=$5
@@ -239,6 +244,49 @@ run_model() {
     '.runtime_identity.deployment_id == $deployment and .runtime_identity.epoch == $epoch and .runtime_identity.model_id == $model and .result.sampled_tokens == $baseline and .plan.stage_count == 2 and (.result.stages | length) == (2 * $max_tokens)' "$output" >/dev/null
 }
 
+run_runtime_owned_chat() {
+  local model=$1 deployment=$2 epoch=$3 output=$4 headers=$5
+  local code stage_calls remote_stage_calls
+  code="$(curl -sS -D "$headers" -o "$output" -w '%{http_code}' \
+    -X POST "$NODE1_URL/v1/chat/completions" \
+    -H 'Content-Type: application/json' \
+    --data-binary "$(jq -nc --arg model "$model" '{model:$model,messages:[{role:"user",content:"hello"}],max_tokens:2}')")"
+  [[ "$code" == "200" ]] || { echo "runtime-owned chat for $model returned HTTP $code" >&2; cat "$output" >&2; exit 1; }
+  jq -e --arg model "$model" \
+    '.object == "chat.completion" and .model == $model and (.choices | length) == 1 and .choices[0].message.role == "assistant"' \
+    "$output" >/dev/null
+  grep -qi "^X-JetsonFabric-Deployment-ID: $deployment" "$headers"
+  grep -qi "^X-JetsonFabric-Deployment-Epoch: $epoch" "$headers"
+  grep -qi '^X-JetsonFabric-Generation-Owner: runtime' "$headers"
+  stage_calls="$(awk -F': ' 'tolower($1) == "x-jetsonfabric-stage-calls" {gsub("\r", "", $2); print $2}' "$headers")"
+  remote_stage_calls="$(awk -F': ' 'tolower($1) == "x-jetsonfabric-remote-stage-calls" {gsub("\r", "", $2); print $2}' "$headers")"
+  if [[ ! "$stage_calls" =~ ^[0-9]+$ || ! "$remote_stage_calls" =~ ^[0-9]+$ ||
+        "$remote_stage_calls" -le 0 || "$stage_calls" -ne $((remote_stage_calls * 2)) ]]; then
+    echo "invalid managed generation stage calls: stage_calls=$stage_calls remote_stage_calls=$remote_stage_calls" >&2
+    exit 1
+  fi
+}
+
+assert_stale_generation_identity_rejected() {
+  local switch_output=$1 deployment=$2 stale_epoch=$3 model=$4 model_sha256=$5 output=$6
+  local payload code
+  payload="$(jq -c \
+    --arg deployment "$deployment" \
+    --argjson epoch "$stale_epoch" \
+    --arg model "$model" \
+    --arg model_sha256 "$model_sha256" \
+    '{request_id:"stale-generation",session_id:"stale-generation",model_id:$model,prompt:"hello",max_tokens:1,deployment:{deployment_id:$deployment,epoch:$epoch,model_id:$model,model_sha256:$model_sha256},stages:.active.stages}' \
+    "$switch_output")"
+  code="$(curl -sS -o "$output" -w '%{http_code}' \
+    -X POST "$NODE0_URL/v1/runtime/generate" \
+    -H 'Content-Type: application/json' \
+    -H "X-JetsonFabric-Coordinator-Node-ID: $COORDINATOR_NODE_ID" \
+    -H "X-JetsonFabric-Cluster-Token: $CLUSTER_TOKEN" \
+    --data-binary "$payload")"
+  [[ "$code" == "200" ]] || { echo "stale generation identity returned HTTP $code" >&2; cat "$output" >&2; exit 1; }
+  jq -e '.type == "error" and .code == "deployment_mismatch"' "$output" >/dev/null
+}
+
 assert_model_not_active() {
   local model=$1 output=$2
   local code
@@ -264,6 +312,8 @@ switch_model "$DEPLOYMENT_B" "$MODEL_B_ID" 2 "$SWITCH_B"
 assert_runtime_deployment "$NODE0_URL" "$DEPLOYMENT_B" 2 "$MODEL_B_ID" "$MODEL_B_SHA"
 assert_runtime_deployment "$NODE1_URL" "$DEPLOYMENT_B" 2 "$MODEL_B_ID" "$MODEL_B_SHA"
 run_model "$MODEL_B_ID" "$DEPLOYMENT_B" 2 "$BASELINE_B" "$RUN_B"
+run_runtime_owned_chat "$MODEL_B_ID" "$DEPLOYMENT_B" 2 "$WORK_DIR/chat-b.json" "$WORK_DIR/chat-b.headers"
+assert_stale_generation_identity_rejected "$SWITCH_B" "$DEPLOYMENT_B" 1 "$MODEL_B_ID" "$MODEL_B_SHA" "$WORK_DIR/stale-generation.jsonl"
 assert_model_not_active "$MODEL_A_ID" "$WORK_DIR/model-a-after.json"
 
 curl -fsS "$NODE0_URL/v1/deployments/active" | jq -e \
@@ -273,4 +323,4 @@ curl -fsS "$NODE0_URL/v1/deployments/active" | jq -e \
 echo "Coordinator model switch validation passed"
 echo "Deployment A: $DEPLOYMENT_A model=$MODEL_A_ID sha=$MODEL_A_SHA"
 echo "Deployment B: $DEPLOYMENT_B model=$MODEL_B_ID sha=$MODEL_B_SHA"
-echo "Lifecycle: deploy A -> infer A -> unload A -> deploy B -> infer B"
+echo "Lifecycle: deploy A -> infer A -> unload A -> deploy B -> infer B -> runtime-owned chat B"

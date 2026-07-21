@@ -50,10 +50,16 @@ func TestActivationFrameRoundTripPreservesBinaryPayload(t *testing.T) {
 }
 
 func TestTextFrameRoundTrip(t *testing.T) {
+	identity := DeploymentIdentity{
+		DeploymentID: "deployment-a",
+		Epoch:        3,
+		ModelSHA256:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
 	frame := Frame{
 		Metadata: Metadata{
 			SessionID: "s", RequestID: "r", ModelID: "m",
-			StageIndex: 0, StageCount: 1, NodeName: "node",
+			DeploymentIdentity: identity,
+			StageIndex:         0, StageCount: 1, NodeName: "node",
 			LayerStart: 0, LayerEnd: 1, PayloadKind: PayloadKindText,
 		},
 		Payload: []byte("hello"),
@@ -66,8 +72,30 @@ func TestTextFrameRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if string(decoded.Payload) != "hello" || decoded.Encoding != "utf-8" || decoded.Phase != inference.PhasePrefill {
+	if string(decoded.Payload) != "hello" || decoded.Encoding != "utf-8" || decoded.Phase != inference.PhasePrefill || decoded.DeploymentIdentity != identity {
 		t.Fatalf("unexpected frame: %+v", decoded)
+	}
+}
+
+func TestMarshalRejectsPartialDeploymentIdentity(t *testing.T) {
+	tests := []DeploymentIdentity{
+		{DeploymentID: "deployment-a"},
+		{DeploymentID: "deployment-a", Epoch: 1},
+		{DeploymentID: "deployment-a", Epoch: 1, ModelSHA256: "not-a-digest"},
+	}
+	for _, identity := range tests {
+		frame := Frame{
+			Metadata: Metadata{
+				SessionID: "s", RequestID: "r", ModelID: "m",
+				DeploymentIdentity: identity,
+				StageIndex:         0, StageCount: 1, NodeName: "node",
+				LayerStart: 0, LayerEnd: 1, PayloadKind: PayloadKindText,
+			},
+			Payload: []byte("hello"),
+		}
+		if _, err := Marshal(frame); err == nil {
+			t.Fatalf("expected deployment identity rejection for %+v", identity)
+		}
 	}
 }
 

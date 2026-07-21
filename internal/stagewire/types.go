@@ -32,6 +32,16 @@ const (
 	PayloadKindSampledToken = inference.PayloadKindSampledToken
 )
 
+type DeploymentIdentity struct {
+	DeploymentID string `json:"deployment_id,omitempty"`
+	Epoch        uint64 `json:"deployment_epoch,omitempty"`
+	ModelSHA256  string `json:"model_sha256,omitempty"`
+}
+
+func (d DeploymentIdentity) Present() bool {
+	return d.DeploymentID != "" || d.Epoch != 0 || d.ModelSHA256 != ""
+}
+
 // Metadata is encoded as JSON inside a stagewire frame. Payload bytes follow the
 // metadata directly and are never base64-encoded or represented as JSON arrays.
 type Metadata struct {
@@ -41,6 +51,7 @@ type Metadata struct {
 	SessionID string    `json:"session_id"`
 	RequestID string    `json:"request_id"`
 	ModelID   string    `json:"model_id"`
+	DeploymentIdentity
 
 	Phase      inference.Phase `json:"phase"`
 	DecodeStep int             `json:"decode_step"`

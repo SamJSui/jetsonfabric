@@ -8,14 +8,14 @@
     </style>
   </defs>
   <text x="40" y="42" class="title">Current codebase map</text>
-  <text x="40" y="68" class="subtitle">Read top to bottom: the Go service composes cluster policy; stageexec transports one pass; the C++ service executes assigned transformer layers.</text>
+  <text x="40" y="68" class="subtitle">Read top to bottom: Go owns cluster policy and one generation call; C++ owns token loops, peer transport, and assigned layers.</text>
 
   <rect x="35" y="95" width="1250" height="120" class="group"/>
   <text x="55" y="120" class="label">Service entry and composition</text>
   <rect x="75" y="140" width="205" height="55" class="go"/><text x="177" y="163" text-anchor="middle" class="label">cmd/jetsonfabric-node</text><text x="177" y="182" text-anchor="middle" class="small">CLI, signals, node.New, App.Run</text>
   <rect x="370" y="130" width="240" height="70" class="go"/><text x="490" y="157" text-anchor="middle" class="label">internal/node</text><text x="490" y="177" text-anchor="middle" class="small">composition root, lifecycle, identity</text><text x="490" y="193" text-anchor="middle" class="small">runtime supervisor + self membership</text>
   <rect x="700" y="140" width="205" height="55" class="go"/><text x="802" y="163" text-anchor="middle" class="label">internal/facade</text><text x="802" y="182" text-anchor="middle" class="small">any-node API + leader proxy</text>
-  <rect x="995" y="140" width="245" height="55" class="go"/><text x="1117" y="163" text-anchor="middle" class="label">internal/runtimebridge</text><text x="1117" y="182" text-anchor="middle" class="small">StageProxy to local C++ worker</text>
+  <rect x="995" y="140" width="245" height="55" class="go"/><text x="1117" y="163" text-anchor="middle" class="label">internal/runtimebridge</text><text x="1117" y="182" text-anchor="middle" class="small">generation + stage proxies</text>
 
   <rect x="35" y="250" width="1250" height="210" class="group"/>
   <text x="55" y="275" class="label">Go cluster and inference orchestration packages</text>
@@ -23,7 +23,7 @@
   <rect x="285" y="305" width="185" height="62" class="go"/><text x="377" y="330" text-anchor="middle" class="label">discovery + election</text><text x="377" y="350" text-anchor="middle" class="small">find peers; choose leader</text>
   <rect x="505" y="295" width="210" height="82" class="control"/><text x="610" y="322" text-anchor="middle" class="label">coordinator</text><text x="610" y="342" text-anchor="middle" class="small">OpenAI handler</text><text x="610" y="359" text-anchor="middle" class="small">compatibility filter + route request</text>
   <rect x="750" y="295" width="195" height="82" class="control"/><text x="847" y="322" text-anchor="middle" class="label">clusterplan</text><text x="847" y="342" text-anchor="middle" class="small">ordered nodes + layer ranges</text><text x="847" y="359" text-anchor="middle" class="small">topology and assignment validation</text>
-  <rect x="980" y="295" width="235" height="82" class="control"/><text x="1097" y="322" text-anchor="middle" class="label">stageexec</text><text x="1097" y="342" text-anchor="middle" class="small">Generate: token lifecycle</text><text x="1097" y="359" text-anchor="middle" class="small">RunPipelinePass: one traversal</text>
+  <rect x="980" y="295" width="235" height="82" class="control"/><text x="1097" y="322" text-anchor="middle" class="label">runtimebridge / stageexec</text><text x="1097" y="342" text-anchor="middle" class="small">chat: one Generate stream</text><text x="1097" y="359" text-anchor="middle" class="small">diagnostic: Go stage traversal</text>
   <rect x="405" y="395" width="185" height="48" class="wire"/><text x="497" y="424" text-anchor="middle" class="label">internal/inference</text>
   <rect x="680" y="395" width="185" height="48" class="wire"/><text x="772" y="424" text-anchor="middle" class="label">internal/stagewire</text>
   <rect x="955" y="395" width="185" height="48" class="go"/><text x="1047" y="424" text-anchor="middle" class="label">modelregistry / benchmarks</text>
@@ -31,11 +31,11 @@
   <rect x="35" y="495" width="1250" height="270" class="group"/>
   <text x="55" y="520" class="label">C++ runtime service and engine boundary</text>
   <rect x="65" y="555" width="205" height="72" class="cpp"/><text x="167" y="582" text-anchor="middle" class="label">api::HttpServer</text><text x="167" y="603" text-anchor="middle" class="small">health + stage HTTP endpoints</text>
-  <rect x="315" y="555" width="205" height="72" class="cpp"/><text x="417" y="582" text-anchor="middle" class="label">RuntimeService</text><text x="417" y="603" text-anchor="middle" class="small">decode protocol; dispatch operation</text>
+  <rect x="315" y="555" width="205" height="72" class="cpp"/><text x="417" y="582" text-anchor="middle" class="label">RuntimeService</text><text x="417" y="603" text-anchor="middle" class="small">Generate + lifecycle dispatch</text>
   <rect x="565" y="545" width="205" height="92" class="cpp"/><text x="667" y="573" text-anchor="middle" class="label">StageWorker</text><text x="667" y="594" text-anchor="middle" class="small">validate model + assignment</text><text x="667" y="612" text-anchor="middle" class="small">wire objects ↔ inference objects</text>
   <rect x="815" y="555" width="205" height="72" class="cpp"/><text x="917" y="582" text-anchor="middle" class="label">LayerExecutor</text><text x="917" y="603" text-anchor="middle" class="small">engine-neutral execute interface</text>
   <rect x="1065" y="545" width="185" height="92" class="cpp"/><text x="1157" y="573" text-anchor="middle" class="label">LlamaCppStageAdapter</text><text x="1157" y="594" text-anchor="middle" class="small">persistent sessions</text><text x="1157" y="612" text-anchor="middle" class="small">partial layers + sampling</text>
-  <rect x="300" y="675" width="260" height="56" class="wire"/><text x="430" y="698" text-anchor="middle" class="label">runtime/protocol</text><text x="430" y="717" text-anchor="middle" class="small">Stagewire encode/decode</text>
+  <rect x="300" y="675" width="260" height="56" class="wire"/><text x="430" y="698" text-anchor="middle" class="label">GenerationRunner + protocol</text><text x="430" y="717" text-anchor="middle" class="small">token loop, peer HTTP, Stagewire</text>
   <rect x="690" y="675" width="260" height="56" class="wire"/><text x="820" y="698" text-anchor="middle" class="label">runtime/inference</text><text x="820" y="717" text-anchor="middle" class="small">StageInput, StageOutput, Payload</text>
 
   <path d="M280 167 H370" class="line"/><path d="M610 165 H700" class="line"/><path d="M905 167 H995" class="line"/>

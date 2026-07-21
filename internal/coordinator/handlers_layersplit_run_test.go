@@ -34,6 +34,7 @@ func TestLayerSplitRunReportsActivationHandoff(t *testing.T) {
 		payload := make([]byte, 4)
 		binary.LittleEndian.PutUint32(payload, crc32.ChecksumIEEE(req.Payload))
 		metadata := responseMetadataForCoordinator(req, stagewire.PayloadKindSampledToken)
+		metadata.CompletionTokens = 1
 		return stagewire.StageResponse{Metadata: metadata, Payload: payload}
 	})
 	defer stage1.Close()

@@ -21,6 +21,7 @@ A Jetson Orin development configuration can use:
 ```dotenv
 MODEL=qwen2.5-coder-1.5b-q4
 MODEL_PATH=models/qwen.gguf
+JETSONFABRIC_CLUSTER_TOKEN=replace-with-a-random-local-token
 RUNTIME_CUDA_ARCH=87
 RUNTIME_COMPUTE_BACKEND=cuda
 RUNTIME_MODE=pipeline_parallel
@@ -31,6 +32,10 @@ JF_NODE0_PORT=19180
 JF_RUNTIME_PORT=19190
 JF_DEV_WORK_DIR=.cache/jetsonfabric/dev
 ```
+
+Every node and supervised runtime in one cluster must receive the same token.
+The Makefile supplies a known local-only default when `.env.local` omits it;
+persistent or network-accessible clusters must override that value.
 
 `RUNTIME_BUILD_JOBS=1` or `2` is the safest starting point on an 8 GB Jetson.
 Use `4` only when compilation is stable and the system is not swapping.

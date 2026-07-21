@@ -30,11 +30,14 @@ The highest-value Go tests cover:
 - `internal/clusterplan`: deterministic placement, physical-host separation,
   compatibility, contiguous layer ranges, and immutable deployment epochs;
 - `internal/coordinator`: admission barriers, incoming-runtime preflight,
-  partial failures, cleanup, model switching, and session pinning;
-- `internal/facade`: public API routing and node-local runtime forwarding;
+  partial failures, model switching, session pinning, one-call generation,
+  runtime event accounting, and incremental SSE flushing;
+- `internal/facade`: public API routing, fail-closed peer authentication, and
+  node-local runtime forwarding;
 - `internal/stagewire`: frame bounds, metadata validation, payload length, and
-  checksum handling;
-- `internal/runtimebridge`: runtime lifecycle request and response contracts.
+  checksum handling, including managed deployment identity;
+- `internal/runtimebridge`: runtime lifecycle and streaming generation gateway
+  contracts, including credential stripping at the local runtime boundary.
 
 Use `httptest.Server` for HTTP boundaries. Use fakes only to inject states that
 are difficult to reproduce deterministically with a native runtime, and pair
@@ -50,6 +53,10 @@ Native tests own engine-sensitive behavior:
 - real middle-stage activation forwarding;
 - greedy token equivalence through repeated decode steps;
 - session retention, ordering, expiry, and cleanup;
+- runtime-owned prefill/decode loops, cancellation cleanup, and stage-call
+  accounting;
+- EOS exclusion, natural-stop pass accounting, cleanup-response identity, and
+  strict Stagewire media-type parsing;
 - supported architecture checks for llama and qwen2.
 
 The full-model baseline and partitioned stages currently share the pinned
@@ -71,6 +78,17 @@ Integration scripts must validate response semantics, the complete deployment
 identity (deployment ID, epoch, model ID, and artifact SHA-256), stage count,
 activation byte and CRC continuity, and exact greedy tokens. A successful HTTP
 status alone is not sufficient.
+
+The single-stage harness proves the one-call local path. The colocated pipeline
+harness calls `/v1/runtime/generate` directly, requires its token IDs to equal
+the full-model baseline, proves authenticated remote stage calls, and requires
+buffered and SSE chat text and finish reasons to match. Stage-call counts must
+also account for the hidden EOS pass when the public response stops naturally.
+The model-switch harness proves managed deployment identity and rejects stale
+generation epochs. CI invokes the colocated harness with the pinned Qwen2
+fixture as an additional natural-stop case across the direct runtime, buffered
+chat, and SSE chat paths so EOS is excluded while its final stage pass remains
+accounted for.
 
 ## Hardware Acceptance
 

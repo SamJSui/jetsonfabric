@@ -56,18 +56,27 @@ func TestLayerSplitStageRoutesToLocalStageRunner(t *testing.T) {
 	stageCalled := false
 	coordinatorCalled := false
 	router := NewRouter(Config{
-		SelfID:      "self",
-		Store:       store,
-		StaleAfter:  30 * time.Second,
-		Coordinator: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { coordinatorCalled = true }),
+		SelfID:       "self",
+		ClusterToken: "cluster-secret",
+		Store:        store,
+		StaleAfter:   30 * time.Second,
+		Coordinator:  http.HandlerFunc(func(http.ResponseWriter, *http.Request) { coordinatorCalled = true }),
 		StageRunner: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			stageCalled = true
 			writeJSON(w, http.StatusAccepted, map[string]string{"status": "stage"})
 		}),
 	})
 
+	denied := httptest.NewRecorder()
+	router.ServeHTTP(denied, httptest.NewRequest(http.MethodPost, api.PathLayerSplitStage, nil))
+	if denied.Code != http.StatusForbidden || stageCalled {
+		t.Fatalf("unauthenticated stage status=%d called=%v", denied.Code, stageCalled)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, api.PathLayerSplitStage, nil)
+	request.Header.Set(api.HeaderClusterToken, "cluster-secret")
 	response := httptest.NewRecorder()
-	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, api.PathLayerSplitStage, nil))
+	router.ServeHTTP(response, request)
 
 	if !stageCalled || coordinatorCalled {
 		t.Fatalf("stageCalled=%v coordinatorCalled=%v", stageCalled, coordinatorCalled)
@@ -75,6 +84,25 @@ func TestLayerSplitStageRoutesToLocalStageRunner(t *testing.T) {
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("expected stage response, got %d", response.Code)
 	}
+}
+
+func TestLayerSplitStageFailsClosedWithoutClusterToken(t *testing.T) {
+	store := membership.NewStore()
+	store.Upsert(testFacadeMember("self", "dopey", membership.NodeRoleJetson, time.Now().UTC()))
+	router := NewRouter(Config{
+		SelfID:      "self",
+		Store:       store,
+		StaleAfter:  30 * time.Second,
+		StageRunner: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("stage request was forwarded") }),
+	})
+	request := httptest.NewRequest(http.MethodPost, api.PathLayerSplitStage, nil)
+	request.Header.Set(api.HeaderClusterToken, "any-token")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unconfigured stage auth status=%d body=%s", response.Code, response.Body.String())
+	}
+	assertJSONField(t, response.Body.String(), "error", "cluster_auth_unconfigured")
 }
 
 func TestRuntimeLifecycleWritesRequireElectedCoordinatorIdentity(t *testing.T) {
@@ -143,6 +171,37 @@ func TestRuntimeLifecycleWritesFailClosedWithoutClusterToken(t *testing.T) {
 		t.Fatalf("unconfigured lifecycle write status=%d body=%s", response.Code, response.Body.String())
 	}
 	assertJSONField(t, response.Body.String(), "error", "coordinator_auth_unconfigured")
+}
+
+func TestRuntimeGenerationRequiresElectedCoordinatorAndClusterToken(t *testing.T) {
+	store := membership.NewStore()
+	store.Upsert(testFacadeMember("leader", "leader", membership.NodeRoleCoordinator, time.Now().UTC()))
+	forwarded := 0
+	router := NewRouter(Config{
+		SelfID:       "leader",
+		ClusterToken: "cluster-secret",
+		Store:        store,
+		StaleAfter:   30 * time.Second,
+		RuntimeGeneration: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			forwarded++
+			w.WriteHeader(http.StatusOK)
+		}),
+	})
+
+	denied := httptest.NewRecorder()
+	router.ServeHTTP(denied, httptest.NewRequest(http.MethodPost, api.PathRuntimeGeneration, strings.NewReader(`{}`)))
+	if denied.Code != http.StatusForbidden || forwarded != 0 {
+		t.Fatalf("unauthenticated generation status=%d forwarded=%d", denied.Code, forwarded)
+	}
+
+	allowedRequest := httptest.NewRequest(http.MethodPost, api.PathRuntimeGeneration, strings.NewReader(`{}`))
+	allowedRequest.Header.Set(api.HeaderCoordinatorNodeID, "leader")
+	allowedRequest.Header.Set(api.HeaderClusterToken, "cluster-secret")
+	allowed := httptest.NewRecorder()
+	router.ServeHTTP(allowed, allowedRequest)
+	if allowed.Code != http.StatusOK || forwarded != 1 {
+		t.Fatalf("authenticated generation status=%d forwarded=%d", allowed.Code, forwarded)
+	}
 }
 
 func TestFollowerProxiesCoordinatorRequestsToLeader(t *testing.T) {

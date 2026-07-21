@@ -3,6 +3,7 @@ package stagewire
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -147,6 +148,9 @@ func Validate(frame Frame) error {
 	if strings.TrimSpace(m.ModelID) == "" {
 		return errors.New("model_id is required")
 	}
+	if err := validateDeploymentIdentity(m.DeploymentIdentity); err != nil {
+		return err
+	}
 	if !m.Phase.Valid() {
 		return fmt.Errorf("invalid phase %q", m.Phase)
 	}
@@ -172,6 +176,22 @@ func Validate(frame Frame) error {
 		return fmt.Errorf("transport must be %q", Transport)
 	}
 	return validatePayloadMetadata(m, frame.Payload)
+}
+
+func validateDeploymentIdentity(identity DeploymentIdentity) error {
+	if !identity.Present() {
+		return nil
+	}
+	if strings.TrimSpace(identity.DeploymentID) == "" || identity.Epoch == 0 {
+		return errors.New("managed stagewire identity requires deployment_id and positive deployment_epoch")
+	}
+	if len(identity.ModelSHA256) != 64 {
+		return errors.New("managed stagewire identity requires a 64-character model_sha256")
+	}
+	if _, err := hex.DecodeString(identity.ModelSHA256); err != nil {
+		return errors.New("managed stagewire identity requires a hexadecimal model_sha256")
+	}
+	return nil
 }
 
 func normalizeFrame(frame Frame) Frame {

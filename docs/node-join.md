@@ -28,8 +28,8 @@ labels rather than security identities.
 
 Configure the same `JETSONFABRIC_CLUSTER_TOKEN` value on every node. It is read
 from the environment rather than a command-line flag so the secret does not
-appear in process arguments. Nodes can still serve static deployments without
-it, but runtime load, activate, and unload requests fail closed until it is set.
+appear in process arguments. Coordinator lifecycle writes, runtime generation
+gateway calls, and peer Stagewire requests fail closed until it is set.
 
 ## Static Bootstrap
 
@@ -59,7 +59,8 @@ not become scheduling truth.
 ## Security Boundary
 
 P0 assumes a trusted LAN. The shared cluster token authenticates coordinator
-lifecycle writes, but HTTP does not encrypt the token or other traffic.
+lifecycle and generation calls plus peer Stagewire requests, but HTTP does not
+encrypt the token or other traffic.
 Hostnames, node names, and persisted node IDs are not authentication. Before
 exposing a cluster across untrusted networks, add authenticated node enrollment
 and mutually authenticated transport; do not expose the current node APIs

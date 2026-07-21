@@ -207,6 +207,32 @@ jobs:
             JF_REPORT_PATH=.ci-logs/real-runtime/report.json \
             2>&1 | tee .ci-logs/real-runtime/step.log
 
+      - name: Run two-node natural-stop CPU E2E
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p .ci-logs/natural-stop
+          MODEL_PATH="$CI_QWEN_MODEL_PATH" \
+          MODEL_ID=ci-qwen2.5-0.5b-instruct \
+          RUNTIME_BUILD_DIR="$CI_RUNTIME_BUILD_DIR" \
+          RUNTIME_BIN=dist/jetsonfabric-runtime-worker-ci-cpu \
+          NODE_BIN=dist/jetsonfabric-node \
+          JF_SKIP_BUILD=true \
+          JF_NODE0_PORT=18480 \
+          JF_NODE1_PORT=18481 \
+          JF_RUNTIME0_PORT=18490 \
+          JF_RUNTIME1_PORT=18491 \
+          JF_RAW_PROMPT=$'<|im_start|>user\nReply with OK only.<|im_end|>\n<|im_start|>assistant\n' \
+          JF_CHAT_PROMPT='Reply with OK only.' \
+          JF_MAX_TOKENS=16 \
+          JF_EXPECTED_TOKENS='[3925]' \
+          JF_EXPECTED_FINISH_REASON=stop \
+          JF_EXPECTED_CHAT_FINISH_REASON=stop \
+          JF_EXPECTED_CHAT_COMPLETION_TOKENS=1 \
+          JF_REPORT_PATH=.ci-logs/natural-stop/report.json \
+          bash scripts/local/validate-colocated-pipeline.sh \
+            2>&1 | tee .ci-logs/natural-stop/step.log
+
       - name: Run native runtime unit tests
         run: ctest --test-dir "$CI_RUNTIME_BUILD_DIR" --output-on-failure
 

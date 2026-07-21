@@ -98,6 +98,9 @@ void validate_runtime_config(const Config& cfg) {
     if (cfg.node_name.empty()) {
         throw std::invalid_argument("--node-name must not be empty");
     }
+    if (cfg.cluster_token.find_first_of("\r\n") != std::string::npos) {
+        throw std::invalid_argument("JETSONFABRIC_CLUSTER_TOKEN must not contain newlines");
+    }
     validate_engine_config(cfg);
     if (!cfg.start_idle) {
         validate_deployment_config(cfg);
@@ -127,6 +130,9 @@ void print_help() {
 
 Config parse_args(int argc, char** argv) {
     Config cfg;
+    if (const char* token = std::getenv("JETSONFABRIC_CLUSTER_TOKEN"); token != nullptr) {
+        cfg.cluster_token = token;
+    }
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--listen") {

@@ -12,6 +12,11 @@ import (
 )
 
 func TestGenerateDrivesDecodeLoopAndClosesSessions(t *testing.T) {
+	deployment := stagewire.DeploymentIdentity{
+		DeploymentID: "deployment-a",
+		Epoch:        7,
+		ModelSHA256:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
 	activation := make([]byte, 4*16*4)
 	for index := range activation {
 		activation[index] = byte((index * 23) % 251)
@@ -29,6 +34,9 @@ func TestGenerateDrivesDecodeLoopAndClosesSessions(t *testing.T) {
 		}
 		if req.SessionID == "" || req.SessionID != sessionID {
 			t.Fatalf("session changed: got=%q want=%q", req.SessionID, sessionID)
+		}
+		if req.DeploymentIdentity != deployment {
+			t.Fatalf("deployment identity changed: got=%+v want=%+v", req.DeploymentIdentity, deployment)
 		}
 	}
 
@@ -83,12 +91,13 @@ func TestGenerateDrivesDecodeLoopAndClosesSessions(t *testing.T) {
 	})
 	defer stage1.Close()
 
-	result, err := New(Config{}).Generate(context.Background(), Request{
-		RequestID: "chatcmpl-1",
-		Model:     "model",
-		Payload:   "prompt",
-		MaxTokens: 4,
-		Plan:      testPlan(stage0.URL, stage1.URL),
+	result, err := New(Config{ClusterToken: testClusterToken}).Generate(context.Background(), Request{
+		RequestID:  "chatcmpl-1",
+		Model:      "model",
+		Deployment: deployment,
+		Payload:    "prompt",
+		MaxTokens:  4,
+		Plan:       testPlan(stage0.URL, stage1.URL),
 	})
 	if err != nil {
 		t.Fatalf("generate: %v", err)
@@ -96,10 +105,10 @@ func TestGenerateDrivesDecodeLoopAndClosesSessions(t *testing.T) {
 	if result.RequestID != "chatcmpl-1" || result.SessionID == "" || result.SessionID != sessionID {
 		t.Fatalf("unexpected result IDs: %+v", result)
 	}
-	if result.GeneratedText != "AB" || result.FinishReason != "stop" || !result.EndOfGeneration {
+	if result.GeneratedText != "A" || result.FinishReason != "stop" || !result.EndOfGeneration {
 		t.Fatalf("unexpected generation result: %+v", result)
 	}
-	if len(result.SampledTokens) != 2 || result.SampledTokens[0] != 101 || result.SampledTokens[1] != 102 {
+	if len(result.SampledTokens) != 1 || result.SampledTokens[0] != 101 {
 		t.Fatalf("sampled tokens: %v", result.SampledTokens)
 	}
 	if len(result.Stages) != 4 || result.Stages[2].Phase != inference.PhaseDecode || result.Stages[2].DecodeStep != 1 {
@@ -115,4 +124,28 @@ func TestGenerateDrivesDecodeLoopAndClosesSessions(t *testing.T) {
 func closeSessionResponse(req StageRequest) StageResponse {
 	metadata := responseMetadata(req, stagewire.PayloadKindText)
 	return StageResponse{Metadata: metadata}
+}
+
+func TestCloseSessionRejectsMismatchedSuccessIdentity(t *testing.T) {
+	server := newFrameServer(t, func(req StageRequest) StageResponse {
+		response := closeSessionResponse(req)
+		response.RequestID = "stale-cleanup-request"
+		return response
+	})
+	defer server.Close()
+
+	err := New(Config{ClusterToken: testClusterToken}).CloseSession(
+		context.Background(),
+		"session-a",
+		"model",
+		stagewire.DeploymentIdentity{
+			DeploymentID: "deployment-a",
+			Epoch:        7,
+			ModelSHA256:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+		testPlan(server.URL, server.URL),
+	)
+	if err == nil || !strings.Contains(err.Error(), "response identity") {
+		t.Fatalf("unexpected cleanup result: %v", err)
+	}
 }

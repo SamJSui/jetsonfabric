@@ -71,6 +71,9 @@ protocol::StageResponse base_response(const protocol::StageRequest& request) {
     response.session_id = request.session_id;
     response.request_id = request.request_id;
     response.model_id = request.model_id;
+    response.deployment_id = request.deployment_id;
+    response.deployment_epoch = request.deployment_epoch;
+    response.model_sha256 = request.model_sha256;
     response.phase = request.phase;
     response.decode_step = request.decode_step;
     response.stage_index = request.stage_index;

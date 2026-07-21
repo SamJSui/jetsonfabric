@@ -20,6 +20,7 @@ const (
 	PathRuntimeDeploymentLoad     = "/v1/runtime/deployment/load"
 	PathRuntimeDeploymentActivate = "/v1/runtime/deployment/activate"
 	PathRuntimeDeploymentUnload   = "/v1/runtime/deployment/unload"
+	PathRuntimeGeneration         = "/v1/runtime/generate"
 )
 
 const (
@@ -35,4 +36,5 @@ const (
 	RouteRuntimeDeploymentLoad     = http.MethodPost + " " + PathRuntimeDeploymentLoad
 	RouteRuntimeDeploymentActivate = http.MethodPost + " " + PathRuntimeDeploymentActivate
 	RouteRuntimeDeploymentUnload   = http.MethodPost + " " + PathRuntimeDeploymentUnload
+	RouteRuntimeGeneration         = http.MethodPost + " " + PathRuntimeGeneration
 )

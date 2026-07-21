@@ -98,6 +98,7 @@ set(JF_RUNTIME_SOURCES
   inference/stage.cpp
 
   protocol/execution_mode.cpp
+  protocol/generation.cpp
   protocol/stage.cpp
   protocol/stage_control.cpp
 
@@ -106,6 +107,7 @@ set(JF_RUNTIME_SOURCES
   adapters/llama_cpp_stage_adapter.cpp
 
   pipeline_parallel/stage_assignment.cpp
+  pipeline_parallel/generation_runner.cpp
   pipeline_parallel/stage_worker.cpp
   pipeline_parallel/llama_cpp_full_model_executor.cpp
   pipeline_parallel/llama_cpp_stage_executor.cpp
@@ -113,6 +115,9 @@ set(JF_RUNTIME_SOURCES
 
   engine/runtime_service.cpp
   engine/inference_engine_factory.cpp
+
+  transport/media_type.cpp
+  transport/http_stage_client.cpp
 )
 
 add_executable(jetsonfabric-runtime-worker
@@ -193,6 +198,47 @@ if(BUILD_TESTING)
   add_test(
     NAME deployment-lifecycle
     COMMAND jetsonfabric-deployment-lifecycle-test
+  )
+
+  add_executable(jetsonfabric-generation-runner-test
+    inference/stage.cpp
+    protocol/generation.cpp
+    protocol/stage.cpp
+    protocol/stage_control.cpp
+    pipeline_parallel/generation_runner.cpp
+    pipeline_parallel/generation_runner_test.cpp
+  )
+  target_include_directories(jetsonfabric-generation-runner-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-generation-runner-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  target_link_libraries(jetsonfabric-generation-runner-test PRIVATE
+    nlohmann_json::nlohmann_json
+  )
+  add_test(
+    NAME generation-runner
+    COMMAND jetsonfabric-generation-runner-test
+  )
+
+  add_executable(jetsonfabric-http-media-type-test
+    transport/media_type.cpp
+    transport/media_type_test.cpp
+  )
+  target_include_directories(jetsonfabric-http-media-type-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-http-media-type-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME http-media-type
+    COMMAND jetsonfabric-http-media-type-test
   )
 
   add_executable(jetsonfabric-llama-stage-test

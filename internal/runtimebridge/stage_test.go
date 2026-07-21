@@ -33,6 +33,9 @@ func TestStageProxyStreamsBinaryFrameWithoutChangingContentType(t *testing.T) {
 		if r.URL.Path != api.PathLayerSplitStage {
 			t.Fatalf("unexpected runtime path: %s", r.URL.Path)
 		}
+		if r.Header.Get(api.HeaderClusterToken) != "" || r.Header.Get(api.HeaderCoordinatorNodeID) != "" {
+			t.Fatalf("fabric credentials reached runtime: token=%q coordinator=%q", r.Header.Get(api.HeaderClusterToken), r.Header.Get(api.HeaderCoordinatorNodeID))
+		}
 		if r.Header.Get("Content-Type") != stagewire.ContentType {
 			t.Fatalf("content-type=%q", r.Header.Get("Content-Type"))
 		}
@@ -55,6 +58,8 @@ func TestStageProxyStreamsBinaryFrameWithoutChangingContentType(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodPost, api.PathLayerSplitStage, bytes.NewReader(encoded))
 	request.Header.Set("Content-Type", stagewire.ContentType)
+	request.Header.Set(api.HeaderClusterToken, "cluster-secret")
+	request.Header.Set(api.HeaderCoordinatorNodeID, "coordinator-a")
 	response := httptest.NewRecorder()
 	proxy.ServeHTTP(response, request)
 	if response.Code != http.StatusAccepted || response.Header().Get("Content-Type") != stagewire.ContentType {

@@ -2,6 +2,7 @@
 
 #include "protocol/execution_mode.hpp"
 
+#include <functional>
 #include <string>
 
 namespace jetsonfabric::runtime {
@@ -11,6 +12,8 @@ struct RuntimeResponse {
     std::string content_type;
     std::string body;
 };
+
+using GenerationEventSink = std::function<bool(const std::string&)>;
 
 class RuntimeAPI {
 public:
@@ -26,6 +29,10 @@ public:
     virtual RuntimeResponse activate_deployment(const std::string& request_body) = 0;
     virtual RuntimeResponse unload_deployment(const std::string& request_body) = 0;
     virtual RuntimeResponse chat_completion(const std::string& request_body) const = 0;
+    virtual RuntimeResponse generate(
+        const std::string& request_body,
+        const GenerationEventSink& sink
+    ) const = 0;
     virtual RuntimeResponse run_stage(const std::string& request_body) const = 0;
 };
 

@@ -12,11 +12,11 @@ JetsonFabric. `../architecture-diagrams.md` is the curated index.
 - `startup-sequence.svg` — current node/runtime startup lifecycle.
 - `deployment-view.svg` — logical nodes versus physical hosts.
 - `test-strategy-view.svg` — automated proof layers.
+- `generation-call-stack.svg` — current Go control-plane and C++ generation ownership.
+- `layer-split-sequence.svg` — current one-call generation and peer stage flow.
 
 ## Target architecture
 
-- `generation-call-stack.svg` — current Go-owned loops versus the target runtime-owned generation loop.
-- `layer-split-sequence.svg` — one external runtime `Generate` call with internal prefill/decode passes.
 - `future-layer-split-component.svg` — dynamic `ModelManager`, versioned deployments, and direct runtime data plane.
 - `model-artifact-flow.svg` — artifact catalog, in-memory partition cache, session pins, and eviction.
 - `rebalance-sequence.svg` — prepare, activate, drain, and retire a new deployment epoch.

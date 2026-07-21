@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/binary"
 	"hash/crc32"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/SamJSui/jetsonfabric/internal/api"
@@ -14,13 +16,23 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/stagewire"
 )
 
+const testClusterToken = "stageexec-test-cluster-token"
+
 func TestRunPipelinePassPassesBinaryPayloadBetweenStages(t *testing.T) {
+	deployment := stagewire.DeploymentIdentity{
+		DeploymentID: "deployment-a",
+		Epoch:        7,
+		ModelSHA256:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
 	activation := make([]byte, 4*16*4)
 	for i := range activation {
 		activation[i] = byte((i * 19) % 251)
 	}
 
 	stage0 := newFrameServer(t, func(req StageRequest) StageResponse {
+		if req.DeploymentIdentity != deployment {
+			t.Fatalf("stage 0 deployment identity=%+v", req.DeploymentIdentity)
+		}
 		if req.StageIndex != 0 || req.StageCount != 2 || string(req.Payload) != "prompt" {
 			t.Fatalf("unexpected first request: %+v payload=%q", req.Metadata, req.Payload)
 		}
@@ -32,6 +44,9 @@ func TestRunPipelinePassPassesBinaryPayloadBetweenStages(t *testing.T) {
 	defer stage0.Close()
 
 	stage1 := newFrameServer(t, func(req StageRequest) StageResponse {
+		if req.DeploymentIdentity != deployment {
+			t.Fatalf("stage 1 deployment identity=%+v", req.DeploymentIdentity)
+		}
 		if req.StageIndex != 1 || req.PayloadKind != stagewire.PayloadKindActivation {
 			t.Fatalf("unexpected second request: %+v", req.Metadata)
 		}
@@ -47,9 +62,9 @@ func TestRunPipelinePassPassesBinaryPayloadBetweenStages(t *testing.T) {
 	})
 	defer stage1.Close()
 
-	result, err := New(Config{}).RunPipelinePass(context.Background(), Request{
+	result, err := New(Config{ClusterToken: testClusterToken}).RunPipelinePass(context.Background(), Request{
 		RequestID: "request-1", SessionID: "session-1", Model: "model", Payload: "prompt",
-		Plan: testPlan(stage0.URL, stage1.URL),
+		Deployment: deployment, Plan: testPlan(stage0.URL, stage1.URL),
 	})
 	if err != nil {
 		t.Fatalf("run pipeline pass: %v", err)
@@ -82,7 +97,7 @@ func TestRunPipelinePassRejectsInvalidTransition(t *testing.T) {
 	})
 	defer stage1.Close()
 
-	_, err := New(Config{}).RunPipelinePass(context.Background(), Request{
+	_, err := New(Config{ClusterToken: testClusterToken}).RunPipelinePass(context.Background(), Request{
 		RequestID: "request-1", SessionID: "session-1", Model: "model", Payload: "prompt",
 		Plan: testPlan(stage0.URL, stage1.URL),
 	})
@@ -102,7 +117,7 @@ func TestRunPipelinePassStopsAfterJSONFailure(t *testing.T) {
 	stage1 := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { stage1Called = true }))
 	defer stage1.Close()
 
-	result, err := New(Config{}).RunPipelinePass(context.Background(), Request{
+	result, err := New(Config{ClusterToken: testClusterToken}).RunPipelinePass(context.Background(), Request{
 		RequestID: "request-1", SessionID: "session-1", Model: "model", Payload: "prompt", Plan: testPlan(stage0.URL, stage1.URL),
 	})
 	if err == nil || stage1Called {
@@ -119,6 +134,9 @@ func newFrameServer(t *testing.T, run func(StageRequest) StageResponse) *httptes
 		if r.Header.Get("Content-Type") != stagewire.ContentType {
 			t.Fatalf("content-type=%q", r.Header.Get("Content-Type"))
 		}
+		if r.Header.Get(api.HeaderClusterToken) != testClusterToken {
+			t.Fatalf("cluster token=%q", r.Header.Get(api.HeaderClusterToken))
+		}
 		req, err := stagewire.Decode(r.Body)
 		if err != nil {
 			t.Fatalf("decode request: %v", err)
@@ -132,6 +150,17 @@ func newFrameServer(t *testing.T, run func(StageRequest) StageResponse) *httptes
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(encoded)
 	}))
+}
+
+func TestDecodeStageResponseRejectsContentTypePrefixSpoof(t *testing.T) {
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{stagewire.ContentType + "-garbage"}},
+		Body:       io.NopCloser(strings.NewReader("not-json")),
+	}
+	if _, err := decodeStageResponse(response); err == nil || !strings.Contains(err.Error(), "content-type") {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
 
 func responseMetadata(req StageRequest, kind stagewire.PayloadKind) stagewire.Metadata {

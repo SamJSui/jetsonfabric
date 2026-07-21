@@ -12,6 +12,7 @@ NODE_PORT="${JF_NODE0_PORT:-19180}"
 RUNTIME_BUILD_DIR="${RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build-single-cpu}"
 RUNTIME_BIN="${RUNTIME_BIN:-$ROOT_DIR/dist/jetsonfabric-runtime-worker-single-cpu}"
 NODE_BIN="${NODE_BIN:-$ROOT_DIR/dist/jetsonfabric-node}"
+CLUSTER_TOKEN="${JF_CLUSTER_TOKEN:-jetsonfabric-integration-token}"
 WORK_DIR="$(mktemp -d)"
 LOG_DIR="$WORK_DIR/logs"
 mkdir -p "$LOG_DIR"
@@ -112,7 +113,7 @@ cat >"$MODEL_REGISTRY" <<JSON
 JSON
 
 NODE_URL="http://127.0.0.1:$NODE_PORT"
-"$NODE_BIN" \
+JETSONFABRIC_CLUSTER_TOKEN="$CLUSTER_TOKEN" "$NODE_BIN" \
   --cluster-id single-node-integration \
   --node-name single-stage \
   --listen "127.0.0.1:$NODE_PORT" \
@@ -189,7 +190,8 @@ jq -e --argjson baseline "$BASELINE_TOKENS" --argjson max_tokens "$MAX_TOKENS" '
 ' "$DIAGNOSTIC_FILE" >/dev/null
 
 CHAT_FILE="$WORK_DIR/chat.json"
-CHAT_CODE="$(curl -sS -o "$CHAT_FILE" -w '%{http_code}' \
+CHAT_HEADERS="$WORK_DIR/chat.headers"
+CHAT_CODE="$(curl -sS -D "$CHAT_HEADERS" -o "$CHAT_FILE" -w '%{http_code}' \
   -X POST "$NODE_URL/v1/chat/completions" \
   -H 'Content-Type: application/json' \
   --data-binary "$(jq -nc \
@@ -208,6 +210,9 @@ jq -e --arg model "$MODEL_ID" '
   .choices[0].message.role == "assistant" and
   .usage.prompt_tokens > 0
 ' "$CHAT_FILE" >/dev/null
+grep -qi '^X-JetsonFabric-Generation-Owner: runtime' "$CHAT_HEADERS"
+grep -qi '^X-JetsonFabric-Stage-Calls: 1' "$CHAT_HEADERS"
+grep -qi '^X-JetsonFabric-Remote-Stage-Calls: 0' "$CHAT_HEADERS"
 
 echo "Single-node pipeline validation passed"
 echo "Model: $MODEL_ID"

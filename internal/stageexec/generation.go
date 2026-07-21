@@ -30,7 +30,7 @@ func (e *Executor) Generate(ctx context.Context, req Request) (result Result, er
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), sessionCleanupTimeout)
 		defer cancel()
-		cleanupErr := e.CloseSession(cleanupCtx, sessionID, req.Model, req.Plan)
+		cleanupErr := e.CloseSession(cleanupCtx, sessionID, req.Model, req.Deployment, req.Plan)
 		if cleanupErr != nil {
 			if err == nil {
 				err = cleanupErr
@@ -66,6 +66,7 @@ func (e *Executor) Generate(ctx context.Context, req Request) (result Result, er
 			RequestID:  generationPassRequestID(rootRequestID, inference.PhaseDecode, decodeStep),
 			SessionID:  sessionID,
 			Model:      req.Model,
+			Deployment: req.Deployment,
 			Data:       payload,
 			Kind:       stagewire.PayloadKindSampledToken,
 			Phase:      inference.PhaseDecode,
@@ -102,25 +103,28 @@ func mergeGenerationPass(result *Result, pass Result) error {
 	if pass.PayloadKind != stagewire.PayloadKindSampledToken || pass.SampledToken == nil {
 		return fmt.Errorf("generation pass returned %q instead of sampled_token", pass.PayloadKind)
 	}
-	result.PayloadKind = pass.PayloadKind
-	result.PayloadBytes = pass.PayloadBytes
-	result.SampledToken = pass.SampledToken
-	result.TokenText = pass.TokenText
 	result.EndOfGeneration = pass.EndOfGeneration
-	result.Data = append(result.Data[:0], pass.Data...)
-	result.GeneratedText += pass.TokenText
-	result.SampledTokens = append(result.SampledTokens, *pass.SampledToken)
 	result.PromptTokens += pass.PromptTokens
 	result.CompletionTokens += pass.CompletionTokens
 	result.BytesIn += pass.BytesIn
 	result.BytesOut += pass.BytesOut
 	result.Stages = append(result.Stages, pass.Stages...)
+	if pass.EndOfGeneration {
+		return nil
+	}
+	result.PayloadKind = pass.PayloadKind
+	result.PayloadBytes = pass.PayloadBytes
+	result.SampledToken = pass.SampledToken
+	result.TokenText = pass.TokenText
+	result.Data = append(result.Data[:0], pass.Data...)
+	result.GeneratedText += pass.TokenText
+	result.SampledTokens = append(result.SampledTokens, *pass.SampledToken)
 	return nil
 }
 
 // CloseSession releases stage-local state on every runtime in the plan. It
 // attempts all stages even when one stage returns an error.
-func (e *Executor) CloseSession(ctx context.Context, sessionID string, model string, plan clusterplan.RoutePreview) error {
+func (e *Executor) CloseSession(ctx context.Context, sessionID string, model string, deployment stagewire.DeploymentIdentity, plan clusterplan.RoutePreview) error {
 	if e == nil {
 		e = New(Config{})
 	}
@@ -129,7 +133,8 @@ func (e *Executor) CloseSession(ctx context.Context, sessionID string, model str
 	}
 	var closeErrors []error
 	for _, stage := range plan.Stages {
-		response, status, _, callErr := e.callStage(ctx, stage, buildCloseSessionRequest(sessionID, model, stage))
+		request := buildCloseSessionRequest(sessionID, model, deployment, stage)
+		response, status, _, callErr := e.callStage(ctx, stage, request)
 		if callErr != nil {
 			closeErrors = append(closeErrors, fmt.Errorf("close stage %d session: %w", stage.StageIndex, callErr))
 			continue
@@ -141,6 +146,10 @@ func (e *Executor) CloseSession(ctx context.Context, sessionID string, model str
 				Code:       response.Error,
 				Message:    response.Message,
 			})
+			continue
+		}
+		if identityErr := validateStageResponseIdentity(request, response); identityErr != nil {
+			closeErrors = append(closeErrors, fmt.Errorf("close stage %d response identity: %w", stage.StageIndex, identityErr))
 		}
 	}
 	return errors.Join(closeErrors...)

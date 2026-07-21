@@ -1,22 +1,53 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 760" role="img" aria-labelledby="title desc">
-  <title id="title">Current and Target Generation Call Ownership</title>
-  <desc id="desc">Current Go stageexec owns the token and stage loops. Target architecture calls a runtime pipeline leader once and moves those loops into the runtime data plane.</desc>
-  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker><style>.title{font:700 26px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.subtitle{font:14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#475569}.current{fill:#ecfeff;stroke:#0891b2;stroke-width:2.5;rx:16}.target{fill:#f5f3ff;stroke:#7c3aed;stroke-width:2.5;rx:16}.box{fill:#ffffff;stroke:#334155;stroke-width:1.7;rx:11}.runtime{fill:#fef3c7;stroke:#d97706;stroke-width:2;rx:11}.label{font:700 14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.small{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#334155}.code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#334155}.note{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#64748b}.line{stroke:#334155;stroke-width:2;marker-end:url(#arrow);fill:none}.loop{stroke:#ea580c;stroke-width:2;stroke-dasharray:6 5;fill:none}</style></defs>
-  <text x="40" y="42" class="title">Generation call ownership: current versus target</text><text x="40" y="68" class="subtitle">“Call once” refers to the API boundary. Internally, autoregressive decoding still requires one forward pass per token.</text>
+  <title id="title">Current Generation Call Ownership</title>
+  <desc id="desc">Go owns admission and one generation call. The stage-zero C++ runtime owns prefill, decode, peer stage transport, cancellation, and cleanup.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker>
+    <style>.title{font:700 26px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.subtitle{font:14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#475569}.control{fill:#ecfeff;stroke:#0891b2;stroke-width:2.5;rx:16}.data{fill:#fef3c7;stroke:#d97706;stroke-width:2.5;rx:16}.box{fill:#fff;stroke:#334155;stroke-width:1.7;rx:10}.runtime{fill:#fff7ed;stroke:#ea580c;stroke-width:1.8;rx:10}.label{font:700 14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.small{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#334155}.code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#334155}.line{stroke:#334155;stroke-width:2;marker-end:url(#arrow);fill:none}.stream{stroke:#0891b2;stroke-width:2.2;stroke-dasharray:6 5;marker-end:url(#arrow);fill:none}.loop{fill:none;stroke:#ea580c;stroke-width:2;stroke-dasharray:6 5}</style>
+  </defs>
+  <text x="40" y="42" class="title">Current generation call ownership</text>
+  <text x="40" y="68" class="subtitle">One control-plane call starts a completion; autoregressive passes and peer activation traffic stay in the runtime data plane.</text>
 
-  <rect x="40" y="105" width="580" height="590" class="current"/><text x="330" y="138" text-anchor="middle" class="label">Current implementation — Go owns both loops</text>
-  <rect x="80" y="175" width="500" height="58" class="box"/><text x="330" y="199" text-anchor="middle" class="code">coordinator.handleChatCompletions()</text><text x="330" y="219" text-anchor="middle" class="small">calls stageexec.Generate once</text>
-  <rect x="110" y="275" width="440" height="145" class="box"/><text x="330" y="302" text-anchor="middle" class="code">stageexec.Generate()</text><text x="135" y="330" class="small">1. RunPipelinePass(prefill)</text><text x="135" y="351" class="small">2. while more tokens:</text><text x="160" y="372" class="small">RunPipelinePass(decode_step)</text><text x="135" y="393" class="small">3. CloseSession(all stages)</text>
-  <rect x="145" y="465" width="370" height="145" class="box"/><text x="330" y="492" text-anchor="middle" class="code">stageexec.RunPipelinePass()</text><text x="170" y="520" class="small">for each planned stage:</text><text x="195" y="542" class="small">callStage(stage, payload)</text><text x="195" y="563" class="small">validate transition</text><text x="195" y="584" class="small">payload = response payload</text>
-  <rect x="185" y="635" width="290" height="42" class="runtime"/><text x="330" y="661" text-anchor="middle" class="small">C++ runtime executes one stage pass</text>
-  <path d="M330 233 V275" class="line"/><path d="M330 420 V465" class="line"/><path d="M330 610 V635" class="line"/><rect x="92" y="260" width="476" height="375" class="loop"/><text x="105" y="450" class="note">Go repeats token and stage RPC loops</text>
+  <rect x="40" y="105" width="560" height="590" class="control"/>
+  <text x="320" y="138" text-anchor="middle" class="label">Go control plane</text>
+  <rect x="90" y="175" width="460" height="72" class="box"/>
+  <text x="320" y="201" text-anchor="middle" class="code">coordinator.handleChatCompletions()</text>
+  <text x="320" y="224" text-anchor="middle" class="small">validate request, hold deployment admission</text>
+  <rect x="90" y="295" width="460" height="100" class="box"/>
+  <text x="320" y="322" text-anchor="middle" class="code">clusterplan.RoutePreview</text>
+  <text x="115" y="348" class="small">select immutable ordered stages and deployment epoch</text>
+  <text x="115" y="371" class="small">stage 0 is the deterministic generation leader</text>
+  <rect x="90" y="445" width="460" height="112" class="box"/>
+  <text x="320" y="472" text-anchor="middle" class="code">runtimebridge.GenerationClient</text>
+  <text x="115" y="498" class="small">one authenticated POST /v1/runtime/generate</text>
+  <text x="115" y="521" class="small">node facade proxies to local C++ /v1/generate</text>
+  <text x="115" y="544" class="small">NDJSON body remains streaming end to end</text>
+  <rect x="90" y="610" width="460" height="58" class="box"/>
+  <text x="320" y="635" text-anchor="middle" class="code">consumeGenerationEvents()</text>
+  <text x="320" y="655" text-anchor="middle" class="small">validate accounting; buffer JSON or flush SSE</text>
+  <path d="M320 247 V295" class="line"/><path d="M320 395 V445" class="line"/>
 
-  <rect x="700" y="105" width="580" height="590" class="target"/><text x="990" y="138" text-anchor="middle" class="label">Target architecture — runtime owns generation data plane</text>
-  <rect x="740" y="175" width="500" height="58" class="box"/><text x="990" y="199" text-anchor="middle" class="code">coordinator.handleChatCompletions()</text><text x="990" y="219" text-anchor="middle" class="small">select plan epoch; call runtime Generate once</text>
-  <rect x="780" y="275" width="420" height="88" class="runtime"/><text x="990" y="302" text-anchor="middle" class="code">PipelineSessionLeader.Generate()</text><text x="805" y="330" class="small">owns session, prefill, decode loop, cancellation</text><text x="805" y="349" class="small">returns one completed/streamed result</text>
-  <rect x="790" y="410" width="400" height="180" class="runtime"/><text x="990" y="437" text-anchor="middle" class="code">internal runtime loop</text><text x="815" y="465" class="small">RunPipelinePass(prefill)</text><text x="815" y="489" class="small">while more tokens:</text><text x="840" y="513" class="small">RunPipelinePass(decode_step)</text><text x="815" y="537" class="small">Each pass calls each stage once</text><text x="815" y="561" class="small">Stages exchange activations directly</text>
-  <rect x="835" y="635" width="310" height="42" class="runtime"/><text x="990" y="661" text-anchor="middle" class="small">StageExecutor: one assigned-range forward pass</text>
-  <path d="M990 233 V275" class="line"/><path d="M990 363 V410" class="line"/><path d="M990 590 V635" class="line"/><rect x="765" y="390" width="450" height="235" class="loop"/><text x="780" y="615" class="note">Runtime repeats the unavoidable internal passes</text>
+  <rect x="720" y="105" width="560" height="590" class="data"/>
+  <text x="1000" y="138" text-anchor="middle" class="label">C++ runtime data plane on stage 0</text>
+  <rect x="770" y="175" width="460" height="72" class="runtime"/>
+  <text x="1000" y="201" text-anchor="middle" class="code">RuntimeService::generate()</text>
+  <text x="1000" y="224" text-anchor="middle" class="small">verify active deployment and stage-0 leadership</text>
+  <rect x="770" y="295" width="460" height="120" class="runtime"/>
+  <text x="1000" y="322" text-anchor="middle" class="code">GenerationRunner::run()</text>
+  <text x="795" y="348" class="small">prefill once, then decode once per token</text>
+  <text x="795" y="371" class="small">emit token events synchronously</text>
+  <text x="795" y="394" class="small">close all sessions on success, error, or cancellation</text>
+  <rect x="770" y="465" width="460" height="102" class="runtime"/>
+  <text x="1000" y="492" text-anchor="middle" class="code">ModelManager + HTTPStageClient</text>
+  <text x="795" y="518" class="small">stage 0 executes locally</text>
+  <text x="795" y="541" class="small">later stages receive binary Stagewire through peer nodes</text>
+  <rect x="770" y="620" width="460" height="48" class="runtime"/>
+  <text x="1000" y="649" text-anchor="middle" class="small">sampled token events + final usage and call counts</text>
+  <path d="M1000 247 V295" class="line"/><path d="M1000 415 V465" class="line"/><path d="M1000 567 V620" class="line"/>
+  <rect x="750" y="278" width="500" height="310" class="loop"/>
 
-  <rect x="345" y="718" width="630" height="34" class="box"/><text x="660" y="740" text-anchor="middle" class="small">Generate = full completion; RunPipelinePass = one prefill/decode traversal; ExecuteStage = one stage forward pass.</text>
+  <path d="M550 501 C650 501,650 211,770 211" class="line"/>
+  <path d="M770 644 C675 644,650 639,550 639" class="stream"/>
+  <text x="660" y="486" text-anchor="middle" class="small">one Generate call</text>
+  <text x="660" y="628" text-anchor="middle" class="small">streamed events</text>
 </svg>

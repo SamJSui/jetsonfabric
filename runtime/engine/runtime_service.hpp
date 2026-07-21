@@ -22,6 +22,10 @@ public:
     RuntimeResponse activate_deployment(const std::string& request_body) override;
     RuntimeResponse unload_deployment(const std::string& request_body) override;
     RuntimeResponse chat_completion(const std::string& request_body) const override;
+    RuntimeResponse generate(
+        const std::string& request_body,
+        const GenerationEventSink& sink
+    ) const override;
     RuntimeResponse run_stage(const std::string& request_body) const override;
 
 private:

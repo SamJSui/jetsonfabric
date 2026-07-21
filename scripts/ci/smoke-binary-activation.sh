@@ -12,6 +12,7 @@ RUNTIME_BUILD_DIR="${CI_RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build-ci-cpu}"
 RUNTIME_BIN="$RUNTIME_BUILD_DIR/jetsonfabric-runtime-worker"
 NODE0_PORT="${CI_ACTIVATION_NODE0_PORT:-18280}"
 NODE1_PORT="${CI_ACTIVATION_NODE1_PORT:-18281}"
+CLUSTER_TOKEN="${JF_CLUSTER_TOKEN:-jetsonfabric-ci-activation-token}"
 
 PIDS=()
 cleanup() {
@@ -78,7 +79,7 @@ JSON
 
 start_node() {
   local name=$1 port=$2 peer_port=$3 stage_index=$4 layer_start=$5 layer_end=$6 role=$7
-  "$BIN_DIR/jetsonfabric-node" \
+  JETSONFABRIC_CLUSTER_TOKEN="$CLUSTER_TOKEN" "$BIN_DIR/jetsonfabric-node" \
     --cluster-id ci-binary-activation \
     --node-name "$name" \
     --listen "127.0.0.1:$port" \

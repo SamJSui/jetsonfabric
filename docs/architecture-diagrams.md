@@ -42,15 +42,19 @@ Logical node count and physical host count are separate. Runtime URLs remain loc
 
 ## Generation ownership
 
-### Current versus target call stack
+### Runtime-owned call stack
 
-Today Go `stageexec` owns both the token loop and stage loop. The target moves generation behind one runtime `Generate` call while preserving internal prefill and decode passes.
+Go selects and admits an immutable plan, then makes one generation call. The
+stage-0 C++ runtime owns prefill, decode, peer stage transport, cancellation,
+and cleanup.
 
 ![JetsonFabric generation call ownership](diagrams/generation-call-stack.svg)
 
-### Target one-call generation sequence
+### Current one-call generation sequence
 
-The coordinator selects a prepared plan and calls one runtime pipeline leader. The runtime leader owns prefill, decode, activation transport, cancellation, and session cleanup.
+The coordinator selects a prepared plan and calls stage 0 as the runtime
+pipeline leader. Token events stream back while the runtime owns prefill,
+decode, activation transport, cancellation, and session cleanup.
 
 ![JetsonFabric target one-call generation sequence](diagrams/layer-split-sequence.svg)
 
