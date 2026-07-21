@@ -30,6 +30,8 @@ Stage metadata includes:
 
 - protocol version;
 - session, request, model, and node identity;
+- optional managed deployment ID, positive epoch, and 64-character model
+  SHA-256, which must be present as a complete set;
 - inference phase and decode step;
 - stage index/count and assigned layer range;
 - payload kind;
@@ -39,6 +41,15 @@ Stage metadata includes:
 - request limits, token counts, byte counts, latency, and optional error details.
 
 Stage position remains count-based. There is no first, intermediate, or final role string on the wire.
+
+## Transport authentication
+
+Node facades require `X-JetsonFabric-Cluster-Token` on Stagewire requests. Go
+diagnostic clients and the C++ runtime peer client both attach the configured
+`JETSONFABRIC_CLUSTER_TOKEN`; the node-local runtime proxy removes the header
+before forwarding the frame over loopback. This is shared-secret authentication,
+not transport security: Stagewire remains plaintext HTTP until TLS and per-node
+identity are implemented.
 
 ## Payloads
 
@@ -70,13 +81,16 @@ internal/stagewire
   encodes, decodes, versions, validates, and checksums Go frames
 
 internal/stageexec
-  sends one stage output as the next stage input
+  sends stage outputs for the diagnostic layer-split API
 
 internal/runtimebridge
   streams frames between a node API and its local runtime
 
 runtime/protocol
   implements the matching C++ frame contract
+
+runtime/pipeline_parallel + runtime/transport
+  validate and forward generation stage outputs from the stage-0 runtime
 ```
 
 ## Current validation
@@ -84,6 +98,9 @@ runtime/protocol
 Two complementary tests exercise the same wire contract:
 
 1. The synthetic integration creates a deterministic `f32[4,16]` activation, sends it through two logical nodes and runtimes, and returns the activation CRC32 as a sampled token.
-2. The real-model integration sends llama.cpp hidden activations between assigned layer ranges during prefill and decode, verifies byte and CRC continuity, and requires distributed greedy tokens to match a one-runtime baseline.
+2. The real-model integration sends llama.cpp hidden activations between assigned layer ranges during prefill and decode, verifies byte and CRC continuity, requires authenticated peer calls, and requires the runtime-owned greedy token stream to match a one-runtime baseline.
 
-These tests prove binary activation transport and real partial-layer execution. They do not yet prove physical CUDA transport, direct runtime-to-runtime networking, or reduced per-node model-weight memory.
+These tests prove binary activation transport, real partial-layer execution,
+partitioned stage-local weight residency, and runtime-initiated peer transport
+that bypasses the coordinator. They do not yet prove physical multi-Jetson CUDA
+transport or a distributed performance improvement.

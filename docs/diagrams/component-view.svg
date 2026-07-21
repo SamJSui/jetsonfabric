@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 760" role="img" aria-labelledby="title desc">
   <title id="title">Current JetsonFabric Service Component View</title>
-  <desc id="desc">A client may call any Go node. The elected leader coordinates a pipeline through target node facades and their supervised C++ partial-layer runtimes.</desc>
+  <desc id="desc">A client may call any Go node. The elected coordinator selects a plan and calls the stage-zero runtime once; that runtime drives peer stages through their node facades.</desc>
   <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker><style>.title{font:700 26px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.subtitle{font:14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#475569}.client{fill:#f8fafc;stroke:#334155;stroke-width:2;rx:14}.node{fill:#ecfeff;stroke:#0891b2;stroke-width:3;rx:18}.box{fill:#ffffff;stroke:#334155;stroke-width:1.8;rx:11}.runtime{fill:#fef3c7;stroke:#d97706;stroke-width:2;rx:12}.shared{fill:#f5f3ff;stroke:#7c3aed;stroke-width:2;rx:12}.label{font:700 14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#0f172a}.small{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#334155}.note{font:12px system-ui,-apple-system,Segoe UI,sans-serif;fill:#64748b}.line{stroke:#334155;stroke-width:2;marker-end:url(#arrow);fill:none}.return{stroke:#64748b;stroke-width:2;stroke-dasharray:6 5;marker-end:url(#arrow);fill:none}.activation{stroke:#ea580c;stroke-width:2.4;marker-end:url(#arrow);fill:none}</style></defs>
   <text x="40" y="42" class="title">Current service component view</text><text x="40" y="68" class="subtitle">Go owns cluster policy and HTTP routing. Each C++ runtime owns one configured model partition and persistent inference sessions.</text>
 
@@ -10,9 +10,9 @@
   <rect x="280" y="165" width="170" height="70" class="box"/><text x="365" y="193" text-anchor="middle" class="label">Facade Router</text><text x="365" y="214" text-anchor="middle" class="small">public API + stage endpoint</text>
   <rect x="495" y="165" width="170" height="70" class="box"/><text x="580" y="193" text-anchor="middle" class="label">Coordinator</text><text x="580" y="214" text-anchor="middle" class="small">compatibility + planning</text>
   <rect x="280" y="285" width="170" height="82" class="shared"/><text x="365" y="313" text-anchor="middle" class="label">Membership / Election</text><text x="365" y="334" text-anchor="middle" class="small">fresh local peer view</text><text x="365" y="351" text-anchor="middle" class="small">deterministic leader</text>
-  <rect x="495" y="275" width="170" height="102" class="shared"/><text x="580" y="303" text-anchor="middle" class="label">clusterplan + stageexec</text><text x="580" y="324" text-anchor="middle" class="small">ordered stage route</text><text x="580" y="341" text-anchor="middle" class="small">prefill/decode loop</text><text x="580" y="358" text-anchor="middle" class="small">stage traces + cleanup</text>
+  <rect x="495" y="275" width="170" height="102" class="shared"/><text x="580" y="303" text-anchor="middle" class="label">clusterplan + generation</text><text x="580" y="324" text-anchor="middle" class="small">ordered stage route</text><text x="580" y="341" text-anchor="middle" class="small">one Generate call</text><text x="580" y="358" text-anchor="middle" class="small">NDJSON / SSE translation</text>
   <rect x="280" y="430" width="170" height="72" class="box"/><text x="365" y="458" text-anchor="middle" class="label">StageProxy</text><text x="365" y="479" text-anchor="middle" class="small">local binary HTTP bridge</text>
-  <rect x="495" y="420" width="170" height="92" class="runtime"/><text x="580" y="448" text-anchor="middle" class="label">C++ runtime A</text><text x="580" y="469" text-anchor="middle" class="small">model hash H</text><text x="580" y="486" text-anchor="middle" class="small">configured layers [0,14)</text><text x="580" y="503" text-anchor="middle" class="small">activation output</text>
+  <rect x="495" y="420" width="170" height="92" class="runtime"/><text x="580" y="448" text-anchor="middle" class="label">C++ runtime A</text><text x="580" y="469" text-anchor="middle" class="small">generation leader</text><text x="580" y="486" text-anchor="middle" class="small">configured layers [0,14)</text><text x="580" y="503" text-anchor="middle" class="small">token + stage loops</text>
   <rect x="410" y="555" width="170" height="48" class="box"/><text x="495" y="584" text-anchor="middle" class="label">RuntimeSupervisor</text>
 
   <rect x="800" y="100" width="455" height="540" class="node"/><text x="1027" y="130" text-anchor="middle" class="label">Go node B — follower / stage host</text>
@@ -24,8 +24,8 @@
 
   <path d="M195 351 H280" class="line"/><text x="205" y="338" class="note">request to any node</text>
   <path d="M450 200 H495" class="line"/><path d="M580 235 V275" class="line"/><path d="M365 367 V430" class="return"/><path d="M450 466 H495" class="line"/><path d="M495 555 C455 535,400 515,365 502" class="return"/>
-  <path d="M665 326 C745 290,770 225,835 200" class="line"/><text x="706" y="250" class="note">peer stage HTTP via node APIURL</text>
+  <path d="M665 326 C745 290,770 225,835 200" class="line"/><text x="706" y="250" class="note">deployment lifecycle only</text>
   <path d="M920 235 V430" class="line"/><path d="M1005 466 H1050" class="line"/><path d="M1050 555 C1010 535,955 515,920 502" class="return"/>
-  <path d="M580 512 C700 660,1010 660,1135 512" class="activation"/><text x="857" y="683" text-anchor="middle" class="note">Current activation handoff is orchestrated by Go stageexec through node APIs</text>
+  <path d="M580 512 C700 660,1010 660,1135 512" class="activation"/><text x="857" y="683" text-anchor="middle" class="note">Runtime A sends Stagewire through node B's facade; the coordinator is not in the payload path</text>
   <path d="M835 180 C760 115,690 115,665 180" class="return"/><text x="750" y="105" class="note">follower public requests proxy to leader</text>
 </svg>

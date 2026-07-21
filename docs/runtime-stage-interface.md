@@ -19,6 +19,11 @@ Stagewire frame
 
 `runtime/protocol` owns serialized metadata. `runtime/inference` owns typed execution semantics. `StageWorker` adapts between them. `ModelManager` owns the active model execution components used by `RuntimeService`.
 
+For a complete chat request, `RuntimeService::generate` creates a
+`GenerationRunner`. It invokes stage 0 through the local `ModelManager` and
+later stages through `HTTPStageClient`, using this same stage boundary for every
+prefill, decode, and cleanup operation.
+
 ## Identity and lifecycle
 
 One generation has three identity levels:
@@ -29,7 +34,15 @@ session ID       persistent generation state shared by all stages
 stage request ID one operation on one stage
 ```
 
-The coordinator creates the session ID. Prefill, decode, and cleanup retain that session ID while each stage operation receives its own request ID. A session remains bound to one model and stage plan until cleanup.
+The coordinator creates the session ID and sends it once to the stage-0 runtime.
+The runtime generation leader retains that ID through prefill, decode, and
+cleanup while each stage operation receives its own request ID. A session
+remains bound to one model and immutable stage plan until cleanup.
+
+For coordinator-managed deployments, every operation also carries the exact
+deployment ID, epoch, model ID, and model SHA-256. `ModelManager` validates that
+identity before execution or cleanup, and the generation leader rejects a
+response that does not echo it unchanged.
 
 Each llama.cpp stage stores a context keyed by session ID. Explicit cleanup releases it; an idle timeout protects runtime memory when cleanup cannot complete.
 
@@ -63,10 +76,14 @@ The llama.cpp stage executor:
 
 ## Current limitations
 
-- The runtime starts with one configured active model; idle deployment lifecycle is not implemented.
-- Chat completions are non-streaming and greedy-only.
+- The runtime supports idle startup and explicit load, activate, status, and
+  unload operations, but automatic reconciliation is not implemented.
+- Chat completions support buffered and SSE output but are greedy-only.
+- Cancellation is observed between stage passes or failed stream writes; an
+  already-blocking peer request runs until its transport timeout.
+- Peer stage requests require the shared cluster token but do not use TLS.
 - Partial-layer support is limited to Llama and Qwen2-family graphs.
 - Inter-stage activations are F32.
 - Llama and Qwen2 runtimes load only the model tensors assigned to their stage;
   context/KV and allocator overhead are accounted separately.
-- Runtime revision attestation and physical CUDA proof remain incomplete.
+- Physical multi-Jetson CUDA proof remains incomplete.

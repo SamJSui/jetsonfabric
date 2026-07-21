@@ -40,6 +40,7 @@ NODE_ENGINE ?= llama.cpp
 NODE_SEEDS ?=
 NODE_MDNS_SERVICE ?=
 NODE_MDNS_DOMAIN ?=
+JETSONFABRIC_CLUSTER_TOKEN ?= jetsonfabric-local-dev-token
 
 # Runtime defaults used by supervised run-node and run-runtime.
 RUNTIME_LISTEN ?= 127.0.0.1:0
@@ -203,7 +204,7 @@ runtime-cuda: setup
 
 .PHONY: run-node
 run-node:
-	$(GO) run ./cmd/jetsonfabric-node \
+	JETSONFABRIC_CLUSTER_TOKEN="$(JETSONFABRIC_CLUSTER_TOKEN)" $(GO) run ./cmd/jetsonfabric-node \
 		--cluster-id "$(NODE_CLUSTER_ID)" \
 		--node-name "$(NODE_NAME)" \
 		--listen "$(NODE_LISTEN)" \
@@ -248,7 +249,7 @@ run-runtime:
 		printf 'Find one with: find . -type f -name "*.gguf"\n' >&2; \
 		exit 2; \
 	fi
-	$(RUNTIME_BIN) \
+	JETSONFABRIC_CLUSTER_TOKEN="$(JETSONFABRIC_CLUSTER_TOKEN)" $(RUNTIME_BIN) \
 		--listen "$(RUNTIME_LISTEN)" \
 		--node-name "$(NODE_NAME)" \
 		--engine "$(RUNTIME_ENGINE)" \
@@ -281,6 +282,7 @@ dev-up:
 	RUNTIME_THREADS="$(RUNTIME_THREADS)" \
 	NODE_CLUSTER_ID="$(NODE_CLUSTER_ID)" \
 	NODE_ENGINE="$(NODE_ENGINE)" \
+	JF_CLUSTER_TOKEN="$(JETSONFABRIC_CLUSTER_TOKEN)" \
 	JF_NODE0_PORT="$(JF_NODE0_PORT)" \
 	JF_RUNTIME_PORT="$(JF_RUNTIME_PORT)" \
 	JF_DEV_WORK_DIR="$(abspath $(JF_DEV_WORK_DIR))" \

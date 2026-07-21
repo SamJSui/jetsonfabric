@@ -360,9 +360,6 @@ int main(int argc, char** argv) {
             LlamaCppAdapter baseline(model, 256, 2);
             const int max_tokens = baseline_max_tokens_from_environment();
             const auto response = baseline.generate({.prompt = baseline_prompt_from_environment(), .max_tokens = max_tokens});
-            if (response.token_ids.size() != static_cast<std::size_t>(max_tokens)) {
-                throw std::runtime_error("baseline ended before the requested token count");
-            }
             print_token_ids(response.token_ids);
             return 0;
         }

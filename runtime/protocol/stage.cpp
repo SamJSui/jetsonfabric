@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -111,6 +112,15 @@ std::uint32_t extract_u32(const nlohmann::json& body, const char* field, std::ui
     return static_cast<std::uint32_t>(parsed);
 }
 
+std::uint64_t extract_u64(const nlohmann::json& body, const char* field, std::uint64_t fallback = 0) {
+    const nlohmann::json* value = optional_field(body, field);
+    if (value == nullptr) return fallback;
+    if (value->is_number_unsigned()) return value->get<std::uint64_t>();
+    const std::int64_t parsed = json_int64_value(*value, field);
+    if (parsed < 0) throw std::invalid_argument(std::string(field) + " is outside uint64 range");
+    return static_cast<std::uint64_t>(parsed);
+}
+
 std::string extract_string(const nlohmann::json& body, const char* field, const std::string& fallback = "") {
     const nlohmann::json* value = optional_field(body, field);
     if (value == nullptr) {
@@ -120,6 +130,29 @@ std::string extract_string(const nlohmann::json& body, const char* field, const 
         throw std::invalid_argument(std::string(field) + " must be a string");
     }
     return value->get<std::string>();
+}
+
+void validate_deployment_identity(
+    const std::string& deployment_id,
+    std::uint64_t deployment_epoch,
+    const std::string& model_sha256
+) {
+    const bool present = !deployment_id.empty() || deployment_epoch != 0 || !model_sha256.empty();
+    if (!present) return;
+    if (deployment_id.empty() || deployment_epoch == 0) {
+        throw std::invalid_argument(
+            "managed stagewire identity requires deployment_id and positive deployment_epoch"
+        );
+    }
+    if (model_sha256.size() != 64 || !std::all_of(
+            model_sha256.begin(),
+            model_sha256.end(),
+            [](unsigned char character) { return std::isxdigit(character) != 0; }
+        )) {
+        throw std::invalid_argument(
+            "managed stagewire identity requires a 64-character hexadecimal model_sha256"
+        );
+    }
 }
 
 std::vector<std::int64_t> extract_shape(const nlohmann::json& body) {
@@ -300,6 +333,14 @@ StageRequest decode_stage_request(const std::string& frame) {
     request.session_id = extract_string(body, "session_id");
     request.request_id = extract_string(body, "request_id");
     request.model_id = extract_string(body, "model_id");
+    request.deployment_id = extract_string(body, "deployment_id");
+    request.deployment_epoch = extract_u64(body, "deployment_epoch");
+    request.model_sha256 = extract_string(body, "model_sha256");
+    validate_deployment_identity(
+        request.deployment_id,
+        request.deployment_epoch,
+        request.model_sha256
+    );
     request.phase = extract_string(body, "phase", extract_int(body, "decode_step") == 0 ? "prefill" : "decode");
     request.decode_step = extract_int(body, "decode_step");
     request.stage_index = extract_int(body, "stage_index");
@@ -323,6 +364,97 @@ StageRequest decode_stage_request(const std::string& frame) {
     return request;
 }
 
+std::string encode_stage_request(StageRequest request, const std::string& operation) {
+    request.protocol_version = kStageWireVersion;
+    request.payload_bytes = request.payload.size();
+    request.payload_crc32 = payload_crc32(request.payload);
+    request.transport = kStageWireTransport;
+    validate_tensor_metadata(request.payload_kind, request.encoding, request.dtype, request.shape,
+                             request.byte_order, request.layout, request.payload.size());
+    validate_deployment_identity(
+        request.deployment_id,
+        request.deployment_epoch,
+        request.model_sha256
+    );
+
+    nlohmann::ordered_json body;
+    body["protocol_version"] = request.protocol_version;
+    body["operation"] = operation;
+    body["session_id"] = request.session_id;
+    body["request_id"] = request.request_id;
+    body["model_id"] = request.model_id;
+    if (!request.deployment_id.empty()) {
+        body["deployment_id"] = request.deployment_id;
+        body["deployment_epoch"] = request.deployment_epoch;
+        body["model_sha256"] = request.model_sha256;
+    }
+    body["phase"] = request.phase;
+    body["decode_step"] = request.decode_step;
+    body["stage_index"] = request.stage_index;
+    body["stage_count"] = request.stage_count;
+    body["node_name"] = request.node_name;
+    body["layer_start"] = request.layer_start;
+    body["layer_end"] = request.layer_end;
+    body["payload_kind"] = request.payload_kind;
+    if (!request.encoding.empty()) body["encoding"] = request.encoding;
+    if (!request.dtype.empty()) body["dtype"] = request.dtype;
+    if (!request.shape.empty()) body["shape"] = request.shape;
+    if (!request.byte_order.empty()) body["byte_order"] = request.byte_order;
+    if (!request.layout.empty()) body["layout"] = request.layout;
+    body["payload_bytes"] = request.payload_bytes;
+    body["payload_crc32"] = request.payload_crc32;
+    body["transport"] = request.transport;
+    body["max_tokens"] = request.max_tokens;
+    return encode_frame(std::move(body), request.payload);
+}
+
+StageResponse decode_stage_response(const std::string& frame) {
+    DecodedFrame decoded = decode_frame(frame);
+    const nlohmann::json& body = decoded.metadata;
+    StageResponse response;
+    response.protocol_version = static_cast<std::uint16_t>(extract_int(body, "protocol_version"));
+    response.session_id = extract_string(body, "session_id");
+    response.request_id = extract_string(body, "request_id");
+    response.model_id = extract_string(body, "model_id");
+    response.deployment_id = extract_string(body, "deployment_id");
+    response.deployment_epoch = extract_u64(body, "deployment_epoch");
+    response.model_sha256 = extract_string(body, "model_sha256");
+    validate_deployment_identity(
+        response.deployment_id,
+        response.deployment_epoch,
+        response.model_sha256
+    );
+    response.phase = extract_string(body, "phase", extract_int(body, "decode_step") == 0 ? "prefill" : "decode");
+    response.decode_step = extract_int(body, "decode_step");
+    response.stage_index = extract_int(body, "stage_index");
+    response.stage_count = extract_int(body, "stage_count", 1);
+    response.node_name = extract_string(body, "node_name");
+    response.layer_start = extract_int(body, "layer_start");
+    response.layer_end = extract_int(body, "layer_end");
+    response.payload_kind = extract_string(body, "payload_kind");
+    response.encoding = extract_string(body, "encoding");
+    response.dtype = extract_string(body, "dtype");
+    response.shape = extract_shape(body);
+    response.byte_order = extract_string(body, "byte_order");
+    response.layout = extract_string(body, "layout");
+    response.payload = std::move(decoded.payload);
+    response.payload_bytes = response.payload.size();
+    response.payload_crc32 = payload_crc32(response.payload);
+    response.transport = extract_string(body, "transport");
+    response.bytes_in = extract_int64(body, "bytes_in");
+    response.bytes_out = extract_int64(body, "bytes_out");
+    response.prompt_tokens = extract_int(body, "prompt_tokens");
+    response.completion_tokens = extract_int(body, "completion_tokens");
+    response.latency_ms = extract_int(body, "latency_ms");
+    response.error = extract_string(body, "error");
+    response.message = extract_string(body, "message");
+    if (response.error.empty()) {
+        validate_tensor_metadata(response.payload_kind, response.encoding, response.dtype, response.shape,
+                                 response.byte_order, response.layout, response.payload.size());
+    }
+    return response;
+}
+
 std::string encode_stage_response(StageResponse response) {
     response.protocol_version = kStageWireVersion;
     response.payload_bytes = response.payload.size();
@@ -332,12 +464,22 @@ std::string encode_stage_response(StageResponse response) {
         validate_tensor_metadata(response.payload_kind, response.encoding, response.dtype, response.shape,
                                  response.byte_order, response.layout, response.payload.size());
     }
+    validate_deployment_identity(
+        response.deployment_id,
+        response.deployment_epoch,
+        response.model_sha256
+    );
 
     nlohmann::ordered_json body;
     body["protocol_version"] = response.protocol_version;
     body["session_id"] = response.session_id;
     body["request_id"] = response.request_id;
     body["model_id"] = response.model_id;
+    if (!response.deployment_id.empty()) {
+        body["deployment_id"] = response.deployment_id;
+        body["deployment_epoch"] = response.deployment_epoch;
+        body["model_sha256"] = response.model_sha256;
+    }
     body["phase"] = response.phase;
     body["decode_step"] = response.decode_step;
     body["stage_index"] = response.stage_index;

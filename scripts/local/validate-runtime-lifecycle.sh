@@ -15,6 +15,7 @@ RUNTIME_PORT="${JF_RUNTIME0_PORT:-19290}"
 RUNTIME_BUILD_DIR="${RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build-lifecycle-cpu}"
 RUNTIME_BIN="${RUNTIME_BIN:-$ROOT_DIR/dist/jetsonfabric-runtime-worker-lifecycle-cpu}"
 NODE_BIN="${NODE_BIN:-$ROOT_DIR/dist/jetsonfabric-node}"
+CLUSTER_TOKEN="${JF_CLUSTER_TOKEN:-jetsonfabric-lifecycle-integration-token}"
 WORK_DIR="$(mktemp -d)"
 LOG_DIR="$WORK_DIR/logs"
 mkdir -p "$LOG_DIR"
@@ -235,7 +236,7 @@ jq -e --arg deployment "$DEPLOYMENT_ID" --argjson epoch "$DEPLOYMENT_EPOCH" --ar
   .model_memory.pinned == true
 ' "$ACTIVATE_FILE" >/dev/null
 
-"$NODE_BIN" \
+JETSONFABRIC_CLUSTER_TOKEN="$CLUSTER_TOKEN" "$NODE_BIN" \
   --cluster-id lifecycle-integration \
   --node-name "$NODE_NAME" \
   --listen "127.0.0.1:$NODE_PORT" \
@@ -264,30 +265,45 @@ jq -e --arg deployment "$DEPLOYMENT_ID" --argjson epoch "$DEPLOYMENT_EPOCH" --ar
 NODE_PID=$!
 
 wait_for_url "$NODE_URL/healthz" "$NODE_PID"
-
-INFERENCE_FILE="$WORK_DIR/inference.json"
-INFERENCE_CODE="$(curl -sS -o "$INFERENCE_FILE" -w '%{http_code}' \
-  -X POST "$NODE_URL/v1/layer-split/run" \
-  -H 'Content-Type: application/json' \
-  --data-binary "$(jq -nc \
-    --arg model "$MODEL_ID" \
-    --arg payload "$RAW_PROMPT" \
-    --argjson max_tokens "$MAX_TOKENS" \
-    '{request_id:"runtime-lifecycle-integration",model:$model,payload:$payload,max_tokens:$max_tokens,stage_count:1}')")"
-if [[ "$INFERENCE_CODE" != "200" ]]; then
-  echo "lifecycle inference returned HTTP $INFERENCE_CODE" >&2
-  jq . "$INFERENCE_FILE" >&2 2>/dev/null || cat "$INFERENCE_FILE" >&2
+COORDINATOR_NODE_ID="$(curl -fsS "$NODE_URL/healthz" | jq -r '.node_id')"
+if [[ -z "$COORDINATOR_NODE_ID" || "$COORDINATOR_NODE_ID" == "null" ]]; then
+  echo "coordinator node ID is unavailable" >&2
   exit 1
 fi
-jq -e --argjson baseline "$BASELINE_TOKENS" --argjson max_tokens "$MAX_TOKENS" '
-  .plan.valid == true and
-  .plan.stage_count == 1 and
-  .result.payload_kind == "sampled_token" and
-  .result.sampled_tokens == $baseline and
-  .result.prompt_tokens > 0 and
-  (.result.stages | length) == $max_tokens and
-  .result.stages[0].phase == "prefill" and
-  all(.result.stages[1:][]; .phase == "decode")
+
+INFERENCE_FILE="$WORK_DIR/inference.jsonl"
+INFERENCE_CODE="$(curl -sS -o "$INFERENCE_FILE" -w '%{http_code}' \
+  -X POST "$NODE_URL/v1/runtime/generate" \
+  -H 'Content-Type: application/json' \
+  -H "X-JetsonFabric-Coordinator-Node-ID: $COORDINATOR_NODE_ID" \
+  -H "X-JetsonFabric-Cluster-Token: $CLUSTER_TOKEN" \
+  --data-binary "$(jq -nc \
+    --arg deployment "$DEPLOYMENT_ID" \
+    --argjson epoch "$DEPLOYMENT_EPOCH" \
+    --arg model "$MODEL_ID" \
+    --arg model_sha256 "$MODEL_SHA256" \
+    --arg payload "$RAW_PROMPT" \
+    --arg node_id "$COORDINATOR_NODE_ID" \
+    --arg node_name "$NODE_NAME" \
+    --arg node_url "$NODE_URL" \
+    --argjson layer_end "$LAYER_COUNT" \
+    --argjson max_tokens "$MAX_TOKENS" \
+    '{request_id:"runtime-lifecycle-integration",session_id:"runtime-lifecycle-integration",model_id:$model,prompt:$payload,max_tokens:$max_tokens,deployment:{deployment_id:$deployment,epoch:$epoch,model_id:$model,model_sha256:$model_sha256},stages:[{stage_index:0,stage_count:1,node_id:$node_id,node_name:$node_name,api_url:$node_url,layer_start:0,layer_end:$layer_end}]}')")"
+if [[ "$INFERENCE_CODE" != "200" ]]; then
+  echo "lifecycle inference returned HTTP $INFERENCE_CODE" >&2
+  jq -s . "$INFERENCE_FILE" >&2 2>/dev/null || cat "$INFERENCE_FILE" >&2
+  exit 1
+fi
+jq -s -e --argjson baseline "$BASELINE_TOKENS" '
+  ([.[] | select(.type == "done")]) as $done |
+  length == (($baseline | length) + 1) and
+  all(.[]; .type == "token" or .type == "done") and
+  ([.[] | select(.type == "token") | .token] == $baseline) and
+  ($done | length) == 1 and
+  $done[0].sampled_tokens == $baseline and
+  $done[0].stage_calls == ($baseline | length) and
+  $done[0].remote_stage_calls == 0 and
+  $done[0].prompt_tokens > 0
 ' "$INFERENCE_FILE" >/dev/null
 
 UNLOAD_FILE="$WORK_DIR/unload.json"

@@ -9,6 +9,9 @@ RAW_PROMPT="${JF_RAW_PROMPT:-Once upon a time}"
 CHAT_PROMPT="${JF_CHAT_PROMPT:-Explain JetsonFabric in one sentence.}"
 MAX_TOKENS="${JF_MAX_TOKENS:-4}"
 EXPECTED_TOKENS="${JF_EXPECTED_TOKENS:-}"
+EXPECTED_FINISH_REASON="${JF_EXPECTED_FINISH_REASON:-}"
+EXPECTED_CHAT_FINISH_REASON="${JF_EXPECTED_CHAT_FINISH_REASON:-}"
+EXPECTED_CHAT_COMPLETION_TOKENS="${JF_EXPECTED_CHAT_COMPLETION_TOKENS:-}"
 NODE0_PORT="${JF_NODE0_PORT:-19180}"
 NODE1_PORT="${JF_NODE1_PORT:-19181}"
 RUNTIME0_PORT="${JF_RUNTIME0_PORT:-${JF_RUNTIME_PORT:-19190}}"
@@ -20,6 +23,7 @@ RUNTIME_BUILD_DIR="${RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build}"
 RUNTIME_BIN="${RUNTIME_BIN:-$ROOT_DIR/dist/jetsonfabric-runtime-worker}"
 NODE_BIN="${NODE_BIN:-$ROOT_DIR/dist/jetsonfabric-node}"
 REPORT_PATH="${JF_REPORT_PATH:-$ROOT_DIR/reports/phase1-colocated.json}"
+CLUSTER_TOKEN="${JF_CLUSTER_TOKEN:-jetsonfabric-integration-token}"
 
 case "$RUNTIME_CUDA_ACTIVE" in
   true|false) ;;
@@ -28,6 +32,24 @@ case "$RUNTIME_CUDA_ACTIVE" in
     exit 2
     ;;
 esac
+case "$EXPECTED_FINISH_REASON" in
+  ""|length|stop) ;;
+  *)
+    echo "JF_EXPECTED_FINISH_REASON must be length or stop" >&2
+    exit 2
+    ;;
+esac
+case "$EXPECTED_CHAT_FINISH_REASON" in
+  ""|length|stop) ;;
+  *)
+    echo "JF_EXPECTED_CHAT_FINISH_REASON must be length or stop" >&2
+    exit 2
+    ;;
+esac
+if [[ -n "$EXPECTED_CHAT_COMPLETION_TOKENS" && ! "$EXPECTED_CHAT_COMPLETION_TOKENS" =~ ^[0-9]+$ ]]; then
+  echo "JF_EXPECTED_CHAT_COMPLETION_TOKENS must be a non-negative integer" >&2
+  exit 2
+fi
 
 RUNTIME_CUDA_ACTIVE_ARGS=()
 if [[ "$RUNTIME_CUDA_ACTIVE" == "true" ]]; then
@@ -129,12 +151,23 @@ if [[ ! "$LAYER_COUNT" =~ ^[0-9]+$ || "$LAYER_COUNT" -lt 2 ]]; then
   echo "invalid layer count: $LAYER_COUNT" >&2
   exit 1
 fi
-if ! jq -e --argjson count "$MAX_TOKENS" 'type == "array" and length == $count and all(.[]; type == "number")' <<<"$BASELINE_TOKENS" >/dev/null; then
+if ! jq -e --argjson count "$MAX_TOKENS" 'type == "array" and length <= $count and all(.[]; type == "number")' <<<"$BASELINE_TOKENS" >/dev/null; then
   echo "invalid baseline tokens: $BASELINE_TOKENS" >&2
   exit 1
 fi
 if [[ -n "$EXPECTED_TOKENS" ]] && ! jq -e --argjson actual "$BASELINE_TOKENS" --argjson expected "$EXPECTED_TOKENS" '$actual == $expected' <<<null >/dev/null; then
   echo "baseline tokens do not match JF_EXPECTED_TOKENS: expected=$EXPECTED_TOKENS actual=$BASELINE_TOKENS" >&2
+  exit 1
+fi
+BASELINE_TOKEN_COUNT="$(jq 'length' <<<"$BASELINE_TOKENS")"
+BASELINE_FINISH_REASON=length
+GENERATION_PASSES="$BASELINE_TOKEN_COUNT"
+if [[ "$BASELINE_TOKEN_COUNT" -lt "$MAX_TOKENS" ]]; then
+  BASELINE_FINISH_REASON=stop
+  GENERATION_PASSES=$((BASELINE_TOKEN_COUNT + 1))
+fi
+if [[ -n "$EXPECTED_FINISH_REASON" && "$BASELINE_FINISH_REASON" != "$EXPECTED_FINISH_REASON" ]]; then
+  echo "baseline finish reason does not match JF_EXPECTED_FINISH_REASON: expected=$EXPECTED_FINISH_REASON actual=$BASELINE_FINISH_REASON" >&2
   exit 1
 fi
 SPLIT_LAYER=$((LAYER_COUNT / 2))
@@ -156,7 +189,7 @@ JSON
 
 start_node() {
   local name=$1 node_port=$2 runtime_port=$3 peer_port=$4 stage_index=$5 layer_start=$6 layer_end=$7 role=$8
-  "$NODE_BIN" \
+  JETSONFABRIC_CLUSTER_TOKEN="$CLUSTER_TOKEN" "$NODE_BIN" \
     --cluster-id phase1-colocated \
     --node-name "$name" \
     --listen "127.0.0.1:$node_port" \
@@ -221,13 +254,28 @@ wait_for_url "http://127.0.0.1:$RUNTIME0_PORT/healthz"
 wait_for_url "http://127.0.0.1:$RUNTIME1_PORT/healthz"
 wait_for_two_members "http://127.0.0.1:$NODE0_PORT/v1/cluster/members"
 
+UNAUTHENTICATED_STAGE_FILE="$WORK_DIR/unauthenticated-stage.json"
+UNAUTHENTICATED_STAGE_STATUS="$(curl -sS -o "$UNAUTHENTICATED_STAGE_FILE" -w '%{http_code}' \
+  -X POST "http://127.0.0.1:$NODE1_PORT/v1/layer-split/stage" \
+  -H 'Content-Type: application/vnd.jetsonfabric.stage.v1+octet-stream' \
+  --data-binary '')"
+if [[ "$UNAUTHENTICATED_STAGE_STATUS" != "403" ]] ||
+   ! jq -e '.error == "cluster_authentication_required"' "$UNAUTHENTICATED_STAGE_FILE" >/dev/null; then
+  echo "unauthenticated Stagewire request was not rejected: HTTP $UNAUTHENTICATED_STAGE_STATUS" >&2
+  cat "$UNAUTHENTICATED_STAGE_FILE" >&2
+  exit 1
+fi
+
 MEMBERS_FILE="$WORK_DIR/members.json"
 RUNTIME0_STATUS_FILE="$WORK_DIR/runtime0-status.json"
 RUNTIME1_STATUS_FILE="$WORK_DIR/runtime1-status.json"
 PREVIEW_FILE="$WORK_DIR/preview.json"
 DIAGNOSTIC_FILE="$WORK_DIR/diagnostic.json"
+RUNTIME_GENERATION_FILE="$WORK_DIR/runtime-generation.jsonl"
 CHAT_FILE="$WORK_DIR/chat.json"
 CHAT_HEADERS="$WORK_DIR/chat.headers"
+STREAM_FILE="$WORK_DIR/chat-stream.sse"
+STREAM_EVENTS_FILE="$WORK_DIR/chat-stream-events.jsonl"
 curl -fsS "http://127.0.0.1:$NODE0_PORT/v1/cluster/members" >"$MEMBERS_FILE"
 curl -fsS "http://127.0.0.1:$RUNTIME0_PORT/v1/deployment" >"$RUNTIME0_STATUS_FILE"
 curl -fsS "http://127.0.0.1:$RUNTIME1_PORT/v1/deployment" >"$RUNTIME1_STATUS_FILE"
@@ -284,6 +332,42 @@ jq -e '
   .logical_node_count == 2 and .physical_host_count == 1
 ' "$PREVIEW_FILE" >/dev/null
 
+COORDINATOR_NODE_ID="$(curl -fsS "http://127.0.0.1:$NODE0_PORT/healthz" | jq -r '.node_id')"
+if [[ -z "$COORDINATOR_NODE_ID" || "$COORDINATOR_NODE_ID" == "null" ]]; then
+  echo "coordinator node ID is unavailable" >&2
+  exit 1
+fi
+
+curl -fsS -X POST "http://127.0.0.1:$NODE0_PORT/v1/runtime/generate" \
+  -H 'Content-Type: application/json' \
+  -H "X-JetsonFabric-Coordinator-Node-ID: $COORDINATOR_NODE_ID" \
+  -H "X-JetsonFabric-Cluster-Token: $CLUSTER_TOKEN" \
+  --data-binary "$(jq -nc \
+    --arg model "$MODEL_ID" \
+    --arg prompt "$RAW_PROMPT" \
+    --argjson max_tokens "$MAX_TOKENS" \
+    --slurpfile preview "$PREVIEW_FILE" \
+    '{request_id:"phase1-runtime-generation",session_id:"phase1-runtime-session",model_id:$model,prompt:$prompt,max_tokens:$max_tokens,stages:$preview[0].stages}')" \
+  >"$RUNTIME_GENERATION_FILE"
+
+jq -s -e \
+  --argjson baseline "$BASELINE_TOKENS" \
+  --arg finish_reason "$BASELINE_FINISH_REASON" \
+  --argjson passes "$GENERATION_PASSES" \
+  --argjson stage_count 2 '
+  ([.[] | select(.type == "done")]) as $done |
+  length == (($baseline | length) + 1) and
+  all(.[]; .type == "token" or .type == "done") and
+  ([.[] | select(.type == "token") | .token] == $baseline) and
+  ([.[] | select(.type == "token") | .index] == [range(0; ($baseline | length))]) and
+  ($done | length) == 1 and
+  $done[0].finish_reason == $finish_reason and
+  $done[0].completion_tokens == ($baseline | length) and
+  $done[0].sampled_tokens == $baseline and
+  $done[0].stage_calls == ($passes * $stage_count) and
+  $done[0].remote_stage_calls == ($passes * ($stage_count - 1))
+' "$RUNTIME_GENERATION_FILE" >/dev/null
+
 curl -fsS -X POST "http://127.0.0.1:$NODE0_PORT/v1/layer-split/run" \
   -H 'Content-Type: application/json' \
   --data-binary "$(jq -nc \
@@ -293,11 +377,17 @@ curl -fsS -X POST "http://127.0.0.1:$NODE0_PORT/v1/layer-split/run" \
     '{request_id:"phase1-diagnostic",model:$model,payload:$payload,max_tokens:$max_tokens,stage_count:2,allow_colocated_stages:true}')" \
   >"$DIAGNOSTIC_FILE"
 
-jq -e --arg sha "$MODEL_SHA256" --argjson baseline "$BASELINE_TOKENS" --argjson max_tokens "$MAX_TOKENS" '
+jq -e \
+  --arg sha "$MODEL_SHA256" \
+  --argjson baseline "$BASELINE_TOKENS" \
+  --arg finish_reason "$BASELINE_FINISH_REASON" \
+  --argjson passes "$GENERATION_PASSES" '
   .runtime_identity.model_sha256 == $sha and
   .inter_stage_payload_kind == "activation" and
   .result.sampled_tokens == $baseline and
-  (.result.stages | length) == (2 * $max_tokens) and
+  .result.finish_reason == $finish_reason and
+  .result.completion_tokens == ($baseline | length) and
+  (.result.stages | length) == (2 * $passes) and
   .result.stages as $traces |
   all($traces[];
     if .payload_kind_out == "activation" then
@@ -312,7 +402,7 @@ jq -e --arg sha "$MODEL_SHA256" --argjson baseline "$BASELINE_TOKENS" --argjson 
     else true end)
 ' "$DIAGNOSTIC_FILE" >/dev/null
 
-CHAT_SECONDS="$(curl -fsS -D "$CHAT_HEADERS" -o "$CHAT_FILE" -w '%{time_total}' \
+CHAT_METRICS="$(curl -sS -D "$CHAT_HEADERS" -o "$CHAT_FILE" -w '%{http_code} %{time_total}' \
   -X POST "http://127.0.0.1:$NODE1_PORT/v1/chat/completions" \
   -H 'Content-Type: application/json' \
   --data-binary "$(jq -nc \
@@ -320,7 +410,25 @@ CHAT_SECONDS="$(curl -fsS -D "$CHAT_HEADERS" -o "$CHAT_FILE" -w '%{time_total}' 
     --arg prompt "$CHAT_PROMPT" \
     --argjson max_tokens "$MAX_TOKENS" \
     '{model:$model,messages:[{role:"user",content:$prompt}],max_tokens:$max_tokens,jetsonfabric:{stage_count:2,allow_colocated_stages:true}}')")"
+read -r CHAT_STATUS CHAT_SECONDS <<<"$CHAT_METRICS"
+if [[ "$CHAT_STATUS" != "200" ]]; then
+  echo "chat completion returned HTTP $CHAT_STATUS: $(cat "$CHAT_FILE")" >&2
+  exit 1
+fi
 CHAT_DURATION_MS="$(awk -v seconds="$CHAT_SECONDS" 'BEGIN { printf "%.3f", seconds * 1000 }')"
+
+STREAM_STATUS="$(curl -sS -N -o "$STREAM_FILE" -w '%{http_code}' -X POST "http://127.0.0.1:$NODE1_PORT/v1/chat/completions" \
+  -H 'Content-Type: application/json' \
+  --data-binary "$(jq -nc \
+    --arg model "$MODEL_ID" \
+    --arg prompt "$CHAT_PROMPT" \
+    --argjson max_tokens "$MAX_TOKENS" \
+    '{model:$model,messages:[{role:"user",content:$prompt}],max_tokens:$max_tokens,stream:true,jetsonfabric:{stage_count:2,allow_colocated_stages:true}}')")"
+if [[ "$STREAM_STATUS" != "200" ]]; then
+  echo "streaming chat returned HTTP $STREAM_STATUS: $(cat "$STREAM_FILE")" >&2
+  exit 1
+fi
+sed -n 's/^data: //p' "$STREAM_FILE" | grep -v '^\[DONE\]$' >"$STREAM_EVENTS_FILE"
 
 RUNTIME0_MEMORY="$(runtime_memory_for_port "$RUNTIME0_PORT" "$MODEL_PATH")"
 RUNTIME1_MEMORY="$(runtime_memory_for_port "$RUNTIME1_PORT" "$MODEL_PATH")"
@@ -330,10 +438,57 @@ jq -e '.rss_bytes > 0 and .pss_bytes > 0 and .model_mapping_rss_bytes >= 0' <<<"
 jq -e --arg model "$MODEL_ID" '
   .object == "chat.completion" and .model == $model and
   (.choices | length) == 1 and .choices[0].message.role == "assistant" and
-  (.choices[0].finish_reason == "stop" or .choices[0].finish_reason == "length")
+  (.choices[0].finish_reason == "stop" or .choices[0].finish_reason == "length") and
+  (.usage.completion_tokens | type) == "number" and
+  .usage.completion_tokens >= 0 and
+  (.usage.completion_tokens | floor) == .usage.completion_tokens
 ' "$CHAT_FILE" >/dev/null
+CHAT_FINISH_REASON="$(jq -r '.choices[0].finish_reason' "$CHAT_FILE")"
+CHAT_COMPLETION_TOKENS="$(jq -r '.usage.completion_tokens' "$CHAT_FILE")"
+if [[ -n "$EXPECTED_CHAT_FINISH_REASON" && "$CHAT_FINISH_REASON" != "$EXPECTED_CHAT_FINISH_REASON" ]]; then
+  echo "chat finish reason does not match JF_EXPECTED_CHAT_FINISH_REASON: expected=$EXPECTED_CHAT_FINISH_REASON actual=$CHAT_FINISH_REASON" >&2
+  exit 1
+fi
+if [[ -n "$EXPECTED_CHAT_COMPLETION_TOKENS" && "$CHAT_COMPLETION_TOKENS" != "$EXPECTED_CHAT_COMPLETION_TOKENS" ]]; then
+  echo "chat completion tokens do not match JF_EXPECTED_CHAT_COMPLETION_TOKENS: expected=$EXPECTED_CHAT_COMPLETION_TOKENS actual=$CHAT_COMPLETION_TOKENS" >&2
+  exit 1
+fi
 grep -qi "^X-JetsonFabric-Model-SHA256: $MODEL_SHA256" "$CHAT_HEADERS"
 grep -qi '^X-JetsonFabric-Topology: colocated' "$CHAT_HEADERS"
+grep -qi '^X-JetsonFabric-Generation-Owner: runtime' "$CHAT_HEADERS"
+grep -qi '^X-JetsonFabric-Pipeline-Leader: ' "$CHAT_HEADERS"
+STAGE_CALLS="$(awk -F': ' 'tolower($1) == "x-jetsonfabric-stage-calls" {gsub("\r", "", $2); print $2}' "$CHAT_HEADERS")"
+REMOTE_STAGE_CALLS="$(awk -F': ' 'tolower($1) == "x-jetsonfabric-remote-stage-calls" {gsub("\r", "", $2); print $2}' "$CHAT_HEADERS")"
+CHAT_GENERATION_PASSES="$CHAT_COMPLETION_TOKENS"
+if [[ "$CHAT_FINISH_REASON" == "stop" ]]; then
+  CHAT_GENERATION_PASSES=$((CHAT_GENERATION_PASSES + 1))
+fi
+if [[ ! "$STAGE_CALLS" =~ ^[0-9]+$ || ! "$REMOTE_STAGE_CALLS" =~ ^[0-9]+$ ||
+      "$STAGE_CALLS" -ne $((CHAT_GENERATION_PASSES * 2)) ||
+      "$REMOTE_STAGE_CALLS" -ne "$CHAT_GENERATION_PASSES" ]]; then
+  echo "invalid runtime-owned stage call evidence: stage_calls=$STAGE_CALLS remote_stage_calls=$REMOTE_STAGE_CALLS" >&2
+  exit 1
+fi
+jq -s -e '
+  length >= 3 and
+  .[0].object == "chat.completion.chunk" and
+  .[0].choices[0].delta.role == "assistant" and
+  any(.[]; (.choices[0].delta.content // "") != "") and
+  ([.[] | select(.choices[0].finish_reason != null)] | length) == 1 and
+  any(.[]; .choices[0].finish_reason == "length" or .choices[0].finish_reason == "stop")
+' "$STREAM_EVENTS_FILE" >/dev/null
+grep -q '^data: \[DONE\]$' "$STREAM_FILE"
+STREAM_FINISH_REASON="$(jq -rs '[.[] | .choices[0].finish_reason // empty] | last' "$STREAM_EVENTS_FILE")"
+if [[ "$STREAM_FINISH_REASON" != "$CHAT_FINISH_REASON" ]]; then
+  echo "buffered and streaming finish reasons differ: buffered=$CHAT_FINISH_REASON streaming=$STREAM_FINISH_REASON" >&2
+  exit 1
+fi
+CHAT_TEXT="$(jq -r '.choices[0].message.content' "$CHAT_FILE")"
+STREAM_TEXT="$(jq -rs 'map(.choices[0].delta.content // "") | join("")' "$STREAM_EVENTS_FILE")"
+if [[ "$CHAT_TEXT" != "$STREAM_TEXT" ]]; then
+  echo "buffered and streaming chat text differ: buffered=$(printf '%q' "$CHAT_TEXT") streaming=$(printf '%q' "$STREAM_TEXT")" >&2
+  exit 1
+fi
 
 TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 jq -n \
@@ -342,6 +497,7 @@ jq -n \
   --arg model_path "$MODEL_PATH" \
   --arg model_sha256 "$MODEL_SHA256" \
   --arg raw_prompt "$RAW_PROMPT" \
+  --arg baseline_finish_reason "$BASELINE_FINISH_REASON" \
   --arg chat_prompt "$CHAT_PROMPT" \
   --arg chat_duration_ms "$CHAT_DURATION_MS" \
   --argjson runtime0_memory "$RUNTIME0_MEMORY" \
@@ -354,7 +510,11 @@ jq -n \
   --slurpfile runtime1 "$RUNTIME1_STATUS_FILE" \
   --slurpfile preview "$PREVIEW_FILE" \
   --slurpfile diagnostic "$DIAGNOSTIC_FILE" \
+  --slurpfile runtime_generation "$RUNTIME_GENERATION_FILE" \
   --slurpfile chat "$CHAT_FILE" \
+  --rawfile chat_stream "$STREAM_FILE" \
+  --argjson stage_calls "$STAGE_CALLS" \
+  --argjson remote_stage_calls "$REMOTE_STAGE_CALLS" \
   '{
     schema: "jetsonfabric.phase1.colocated.v1",
     timestamp: $timestamp,
@@ -372,14 +532,20 @@ jq -n \
     correctness: {
       raw_prompt: $raw_prompt,
       baseline_tokens: $baseline_tokens,
+      baseline_finish_reason: $baseline_finish_reason,
       sampled_tokens: $diagnostic[0].result.sampled_tokens,
+      runtime_generation_events: $runtime_generation,
+      runtime_generation_sampled_tokens: [$runtime_generation[] | select(.type == "token") | .token],
       activation_crc_continuity: true,
       chat_prompt: $chat_prompt,
-      chat_response: $chat[0]
+      chat_response: $chat[0],
+      streaming_response: $chat_stream
     },
     performance: {
       chat_duration_ms: ($chat_duration_ms | tonumber),
-      stage_trace: $diagnostic[0].result.stages
+      stage_trace: $diagnostic[0].result.stages,
+      runtime_owned_stage_calls: $stage_calls,
+      runtime_owned_remote_stage_calls: $remote_stage_calls
     }
   }' >"$REPORT_PATH"
 
@@ -389,4 +555,5 @@ echo "Model SHA-256: $MODEL_SHA256"
 echo "Layers: [0,$SPLIT_LAYER) -> [$SPLIT_LAYER,$LAYER_COUNT)"
 echo "Ports: stage0 node/runtime $NODE0_PORT/$RUNTIME0_PORT; stage1 node/runtime $NODE1_PORT/$RUNTIME1_PORT"
 echo "Baseline tokens: $BASELINE_TOKENS"
+echo "Baseline finish reason: $BASELINE_FINISH_REASON"
 echo "Report: $REPORT_PATH"

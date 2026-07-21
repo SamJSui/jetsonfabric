@@ -22,6 +22,7 @@ NODE_BIN="${NODE_BIN:-dist/jetsonfabric-node}"
 NODE_PORT="${JF_NODE0_PORT:-19180}"
 RUNTIME_PORT="${JF_RUNTIME_PORT:-19190}"
 DEV_CLUSTER_ID="${JF_DEV_CLUSTER_ID:-${NODE_CLUSTER_ID:-home-lab}-dev}"
+CLUSTER_TOKEN="${JF_CLUSTER_TOKEN:-${JETSONFABRIC_CLUSTER_TOKEN:-jetsonfabric-local-dev-token}}"
 WORK_DIR="${JF_DEV_WORK_DIR:-$ROOT_DIR/.cache/jetsonfabric/dev}"
 LOG_DIR="$WORK_DIR/logs"
 LOCK_FILE="$WORK_DIR/dev.lock"
@@ -212,7 +213,7 @@ JSON
 
 NODE_URL="http://127.0.0.1:$NODE_PORT"
 RUNTIME_URL="http://127.0.0.1:$RUNTIME_PORT"
-setsid "$NODE_BIN" \
+JETSONFABRIC_CLUSTER_TOKEN="$CLUSTER_TOKEN" setsid "$NODE_BIN" \
   --cluster-id "$DEV_CLUSTER_ID" \
   --node-name jf-dev \
   --listen "127.0.0.1:$NODE_PORT" \

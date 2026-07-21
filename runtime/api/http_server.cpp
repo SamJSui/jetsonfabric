@@ -125,17 +125,36 @@ std::string request_body(const std::string& request) {
     return marker == std::string::npos ? std::string{} : request.substr(marker + 4);
 }
 
-void send_all(int fd, const std::string& data) {
+bool send_all(int fd, const std::string& data) {
     std::size_t offset = 0;
     while (offset < data.size()) {
-        const ssize_t sent = send(fd, data.data() + offset, data.size() - offset, 0);
+        const ssize_t sent = send(fd, data.data() + offset, data.size() - offset, MSG_NOSIGNAL);
         if (sent < 0) {
             if (errno == EINTR) continue;
-            return;
+            return false;
         }
-        if (sent == 0) return;
+        if (sent == 0) return false;
         offset += static_cast<std::size_t>(sent);
     }
+    return true;
+}
+
+bool send_chunk(int fd, const std::string& data) {
+    std::ostringstream chunk;
+    chunk << std::hex << data.size() << "\r\n";
+    chunk << data << "\r\n";
+    return send_all(fd, chunk.str());
+}
+
+bool send_generation_headers(int fd) {
+    return send_all(
+        fd,
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/x-ndjson\r\n"
+        "Transfer-Encoding: chunked\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Connection: close\r\n\r\n"
+    );
 }
 
 } // namespace
@@ -221,6 +240,24 @@ void HttpServer::handle_client(int client_fd) const {
     try {
         const std::string request = read_http_request(client_fd);
         const std::string body = request_body(request);
+        if (starts_with(request, "POST /v1/generate ")) {
+            if (!send_generation_headers(client_fd)) {
+                close(client_fd);
+                return;
+            }
+            const RuntimeResponse final_event = runtime_.generate(
+                body,
+                [client_fd](const std::string& event) {
+                    return send_chunk(client_fd, event + "\n");
+                }
+            );
+            if (!final_event.body.empty()) {
+                (void) send_chunk(client_fd, final_event.body + "\n");
+            }
+            (void) send_all(client_fd, "0\r\n\r\n");
+            close(client_fd);
+            return;
+        }
         response = not_found_response();
         if (starts_with(request, "GET /healthz ")) {
             response = json_response("200 OK", health_body(runtime_));

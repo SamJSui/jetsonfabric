@@ -1,8 +1,11 @@
 #include "engine/runtime_service.hpp"
 
+#include "pipeline_parallel/generation_runner.hpp"
 #include "protocol/execution_mode.hpp"
+#include "protocol/generation.hpp"
 #include "protocol/stage.hpp"
 #include "protocol/stage_control.hpp"
+#include "transport/http_stage_client.hpp"
 
 #include <cstdint>
 #include <cctype>
@@ -265,6 +268,9 @@ protocol::StageResponse stage_error_response(
     response.session_id = request.session_id;
     response.request_id = request.request_id;
     response.model_id = request.model_id;
+    response.deployment_id = request.deployment_id;
+    response.deployment_epoch = request.deployment_epoch;
+    response.model_sha256 = request.model_sha256;
     response.phase = request.phase;
     response.decode_step = request.decode_step;
     response.stage_index = request.stage_index;
@@ -399,6 +405,133 @@ RuntimeResponse RuntimeService::chat_completion(const std::string& /*request_bod
         "chat_backend_not_implemented",
         "chat completions require an engine adapter; stage execution is implemented first"
     );
+}
+
+RuntimeResponse RuntimeService::generate(
+    const std::string& request_body,
+    const GenerationEventSink& sink
+) const {
+    protocol::GenerationRequest request;
+    try {
+        request = protocol::decode_generation_request(request_body);
+    } catch (const std::exception& error) {
+        return RuntimeResponse{
+            "200 OK",
+            protocol::kGenerationContentType,
+            protocol::encode_generation_error_event("invalid_generation_request", error.what()),
+        };
+    }
+    if (config_.mode != ExecutionMode::PipelineParallel) {
+        return RuntimeResponse{
+            "200 OK",
+            protocol::kGenerationContentType,
+            protocol::encode_generation_error_event(
+                "invalid_execution_mode",
+                "runtime-owned generation requires pipeline_parallel mode"
+            ),
+        };
+    }
+
+    const deployment::DeploymentIdentity* active = model_manager_.active_deployment_identity();
+    if (active == nullptr) {
+        return RuntimeResponse{
+            "200 OK",
+            protocol::kGenerationContentType,
+            protocol::encode_generation_error_event(
+                "no_active_deployment",
+                "runtime has no active deployment"
+            ),
+        };
+    }
+    if (active->model_id != request.model_id) {
+        return RuntimeResponse{
+            "200 OK",
+            protocol::kGenerationContentType,
+            protocol::encode_generation_error_event(
+                "deployment_mismatch",
+                "generation model does not match the active deployment"
+            ),
+        };
+    }
+    if (active->epoch > 0 && !request.deployment.has_value()) {
+        return RuntimeResponse{
+            "200 OK",
+            protocol::kGenerationContentType,
+            protocol::encode_generation_error_event(
+                "deployment_identity_required",
+                "managed runtime generation requires deployment identity"
+            ),
+        };
+    }
+    if (request.deployment.has_value() && *request.deployment != *active) {
+        return RuntimeResponse{
+            "200 OK",
+            protocol::kGenerationContentType,
+            protocol::encode_generation_error_event(
+                "deployment_mismatch",
+                "generation deployment identity does not match the active runtime"
+            ),
+        };
+    }
+    if (request.stages.front().stage_index != 0 ||
+        request.stages.front().node_name != config_.node_name) {
+        return RuntimeResponse{
+            "200 OK",
+            protocol::kGenerationContentType,
+            protocol::encode_generation_error_event(
+                "invalid_pipeline_leader",
+                "generation must be sent to the runtime assigned stage zero"
+            ),
+        };
+    }
+
+    transport::HTTPStageClient peer_client(config_.cluster_token);
+    pipeline_parallel::GenerationRunner runner([
+        this,
+        &peer_client
+    ](
+        const protocol::GenerationStage& stage,
+        const protocol::StageRequest& stage_request,
+        pipeline_parallel::StageOperation operation
+    ) {
+        if (stage.stage_index == 0) {
+            return operation == pipeline_parallel::StageOperation::CloseSession
+                ? model_manager_.close_session(stage_request)
+                : model_manager_.run_stage(stage_request);
+        }
+        return peer_client.invoke(stage, stage_request, operation);
+    });
+    const pipeline_parallel::GenerationResult result = runner.run(
+        request,
+        [&sink](const pipeline_parallel::GenerationToken& token) {
+            return sink && sink(protocol::encode_generation_token_event(
+                token.token,
+                token.text,
+                token.index
+            ));
+        }
+    );
+    if (!result.ok) {
+        return RuntimeResponse{
+            "200 OK",
+            protocol::kGenerationContentType,
+            protocol::encode_generation_error_event(result.error_code, result.error_message),
+        };
+    }
+    return RuntimeResponse{
+        "200 OK",
+        protocol::kGenerationContentType,
+        protocol::encode_generation_done_event(
+            result.finish_reason,
+            result.prompt_tokens,
+            result.completion_tokens,
+            result.sampled_tokens,
+            result.stage_calls,
+            result.remote_stage_calls,
+            result.bytes_in,
+            result.bytes_out
+        ),
+    };
 }
 
 RuntimeResponse RuntimeService::run_stage(const std::string& request_body) const {

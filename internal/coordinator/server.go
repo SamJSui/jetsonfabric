@@ -27,6 +27,7 @@ type Server struct {
 	now               func() time.Time
 	deployments       *deploymentState
 	deploymentClient  runtimebridge.DeploymentClient
+	generationClient  runtimebridge.GenerationClient
 }
 
 type Option func(*Server)
@@ -59,6 +60,12 @@ func WithClock(now func() time.Time) Option {
 func WithDeploymentClient(client runtimebridge.DeploymentClient) Option {
 	return func(s *Server) {
 		s.deploymentClient = client
+	}
+}
+
+func WithGenerationClient(client runtimebridge.GenerationClient) Option {
+	return func(s *Server) {
+		s.generationClient = client
 	}
 }
 
@@ -101,6 +108,12 @@ func (s *Server) applyDefaults() {
 	if s.deploymentClient == nil {
 		s.deploymentClient = runtimebridge.NewHTTPDeploymentClient(runtimebridge.HTTPDeploymentClientConfig{
 			Timeout:           10 * time.Minute,
+			CoordinatorNodeID: s.nodeID,
+			ClusterToken:      s.clusterToken,
+		})
+	}
+	if s.generationClient == nil {
+		s.generationClient = runtimebridge.NewHTTPGenerationClient(runtimebridge.HTTPGenerationClientConfig{
 			CoordinatorNodeID: s.nodeID,
 			ClusterToken:      s.clusterToken,
 		})

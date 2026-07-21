@@ -110,6 +110,9 @@ runtime::protocol::StageRequest valid_request() {
         .session_id = "session-1",
         .request_id = "request-1",
         .model_id = "model-a",
+        .deployment_id = "deployment-a",
+        .deployment_epoch = 1,
+        .model_sha256 = std::string(64, 'a'),
         .phase = "prefill",
         .decode_step = 0,
         .stage_index = 0,
@@ -288,8 +291,18 @@ void test_loaded_manager() {
     wrong_model.model_id = "model-b";
     const runtime::pipeline_parallel::StageRunResult rejected = manager.run_stage(wrong_model);
     expect(!rejected.ok, "request for an inactive model was accepted");
-    expect(rejected.error_code == "invalid_stage_request", "inactive model rejection used the wrong error");
+    expect(rejected.error_code == "deployment_mismatch", "inactive model rejection used the wrong error");
     expect(recording->execute_calls == 1, "rejected request reached the active executor");
+
+    runtime::protocol::StageRequest stale_epoch = valid_request();
+    stale_epoch.deployment_epoch = 2;
+    const runtime::pipeline_parallel::StageRunResult stale = manager.run_stage(stale_epoch);
+    expect(!stale.ok && stale.error_code == "deployment_mismatch", "stale stage epoch was accepted");
+    expect(recording->execute_calls == 1, "stale stage epoch reached the active executor");
+
+    const runtime::pipeline_parallel::StageRunResult stale_close = manager.close_session(stale_epoch);
+    expect(!stale_close.ok && stale_close.error_code == "deployment_mismatch", "stale cleanup epoch was accepted");
+    expect(recording->close_calls == 0, "stale cleanup epoch reached the active executor");
 
     const runtime::pipeline_parallel::StageRunResult closed = manager.close_session(valid_request());
     expect(closed.ok, "session close did not reach the active deployment");

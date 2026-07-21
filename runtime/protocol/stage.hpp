@@ -16,6 +16,9 @@ struct StageRequest {
     std::string session_id;
     std::string request_id;
     std::string model_id;
+    std::string deployment_id;
+    std::uint64_t deployment_epoch = 0;
+    std::string model_sha256;
 
     std::string phase = "prefill";
     int decode_step = 0;
@@ -51,6 +54,9 @@ struct StageResponse {
     std::string session_id;
     std::string request_id;
     std::string model_id;
+    std::string deployment_id;
+    std::uint64_t deployment_epoch = 0;
+    std::string model_sha256;
 
     std::string phase = "prefill";
     int decode_step = 0;
@@ -85,6 +91,8 @@ struct StageResponse {
 };
 
 StageRequest decode_stage_request(const std::string& frame);
+std::string encode_stage_request(StageRequest request, const std::string& operation);
+StageResponse decode_stage_response(const std::string& frame);
 std::string encode_stage_response(StageResponse response);
 std::uint32_t payload_crc32(const std::vector<std::uint8_t>& payload);
 std::string json_escape(const std::string& value);

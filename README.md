@@ -23,8 +23,10 @@ The end goal is a self-organizing Jetson cluster that can:
 - rebalance safely when devices join, leave, or fail;
 - preserve active generation sessions while a new deployment becomes active.
 
-JetsonFabric currently proves real partial-layer execution and activation
-handoff. It does **not** yet pool model-weight memory across devices.
+JetsonFabric currently proves real partial-layer execution, partitioned
+stage-local weight residency, activation handoff, and runtime-owned generation.
+Physical multi-Jetson CUDA acceptance is still required before claiming usable
+aggregate device memory or a distributed performance win.
 
 ## Features
 
@@ -38,8 +40,11 @@ handoff. It does **not** yet pool model-weight memory across devices.
 - real `llama.cpp` partial-layer execution for `llama` and `qwen2` graphs;
 - binary F32 activation transport through the versioned Stagewire protocol;
 - persistent stage-local prefill and decode state;
-- coordinator-owned autoregressive token generation and session cleanup;
-- OpenAI-compatible non-streaming `/v1/chat/completions` routing through any node;
+- runtime-owned autoregressive token generation, cancellation at stream
+  boundaries, and cleanup;
+- one coordinator-to-runtime generation call per completion;
+- runtime-initiated peer Stagewire transport that bypasses the coordinator;
+- OpenAI-compatible buffered and streaming `/v1/chat/completions` through any node;
 - model artifact hashing and runtime capability advertisement;
 - `ModelManager` ownership of the runtime's active model execution components;
 - real-model single-stage and colocated pipeline integration tests;
@@ -52,11 +57,13 @@ OpenAI-compatible client
   -> any jetsonfabric-node
   -> elected coordinator
   -> ordered stage plan
-  -> stage node facade
-  -> node-local runtime worker
-  -> assigned transformer layers
-  -> activation forwarded to the next stage
+  -> one authenticated Generate call to the stage-0 node
+  -> stage-0 runtime GenerationRunner
+  -> assigned transformer layers on stage 0
+  -> peer node facade and node-local runtime for each later stage
+  -> Stagewire activation forwarded by the runtime data plane
   -> final-stage logits and sampled token
+  -> NDJSON token events translated to a buffered response or SSE
 ```
 
 For a two-stage generation:
@@ -236,13 +243,13 @@ acceptance milestone before claiming aggregate usable device memory.
 
 ### Milestone 5 — Runtime-owned generation data plane
 
-- [ ] Replace coordinator-driven per-stage calls with one runtime `Generate` call.
-- [ ] Elect or select a runtime pipeline-session leader.
-- [ ] Move prefill, repeated decode passes, cancellation, and cleanup into the
+- [x] Replace coordinator-driven per-stage calls with one runtime `Generate` call.
+- [x] Select deterministic stage 0 as the runtime pipeline-session leader.
+- [x] Move prefill, repeated decode passes, stream-boundary cancellation, and cleanup into the
   runtime data plane.
-- [ ] Send activations directly between runtime workers instead of relaying every
+- [x] Send activations between runtime workers without relaying every
   stage payload through the Go coordinator.
-- [ ] Add streaming output and backpressure after the one-call path is stable.
+- [x] Add streaming output with bounded synchronous backpressure.
 
 **Outcome:** Go owns control-plane policy while runtimes own the latency-sensitive
 distributed generation loop.
@@ -272,7 +279,8 @@ healthy active generations or restarting the cluster.
 ### Milestone 8 — Operational readiness
 
 - [ ] Package repeatable installation and service management for Jetson devices.
-- [ ] Add authentication and secure cluster admission.
+- [ ] Replace shared-token bootstrap with per-node identity, TLS, and secure
+  cluster admission.
 - [ ] Add structured metrics, traces, logs, and deployment inspection tools.
 - [ ] Add model-management commands and operator documentation.
 - [ ] Expand OpenAI API compatibility after the core distributed runtime is stable.
@@ -288,11 +296,15 @@ that combines the compute and memory of multiple Jetson devices.
   buffers, and context/KV structures are not included in that number yet.
 - Placement conservatively applies `min_memory_gb` to every selected stage until
   the planner has a measured per-stage memory estimator.
-- The Go coordinator currently owns both the token loop and stage loop.
 - Deployment switching is explicit and destructive; automatic reconciliation,
   rollback, and spare-node preparation remain future milestones.
-- The generation path is sequential and does not overlap microbatches.
-- Chat completions are non-streaming and use greedy sampling.
+- The runtime generation path is sequential, uses one HTTP connection per remote
+  stage operation, and does not overlap microbatches.
+- Client cancellation is observed between stage passes or stream writes; an
+  in-flight peer request remains bounded by its transport timeout.
+- Chat completions support buffered responses and SSE but use greedy sampling.
+- Stage data-plane requests require the shared cluster token, but traffic is
+  plaintext HTTP without TLS or per-node identity. Use only a trusted network.
 - Physical multi-Jetson CUDA execution has not yet completed the acceptance gate.
 
 ## Documentation

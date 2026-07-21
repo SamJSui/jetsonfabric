@@ -312,6 +312,12 @@ public:
         if (deployment == nullptr) {
             return no_active_deployment();
         }
+        if (pipeline_parallel::StageRunResult mismatch = validate_stage_deployment(
+                deployment->identity,
+                request
+            ); !mismatch.ok) {
+            return mismatch;
+        }
         return deployment->execution->stage_worker.run(request);
     }
 
@@ -319,6 +325,12 @@ public:
         const ResidentDeployment* deployment = active_deployment();
         if (deployment == nullptr) {
             return no_active_deployment();
+        }
+        if (pipeline_parallel::StageRunResult mismatch = validate_stage_deployment(
+                deployment->identity,
+                request
+            ); !mismatch.ok) {
+            return mismatch;
         }
         return deployment->execution->stage_worker.close_session(request);
     }
@@ -389,6 +401,34 @@ private:
         result.status = "503 Service Unavailable";
         result.error_code = "no_active_deployment";
         result.error_message = "runtime has no active deployment";
+        return result;
+    }
+
+    static pipeline_parallel::StageRunResult validate_stage_deployment(
+        const DeploymentIdentity& active,
+        const protocol::StageRequest& request
+    ) {
+        const bool request_has_identity = !request.deployment_id.empty() ||
+            request.deployment_epoch != 0 ||
+            !request.model_sha256.empty();
+        if (active.epoch == 0 && !request_has_identity) {
+            pipeline_parallel::StageRunResult result;
+            result.ok = true;
+            return result;
+        }
+        if (request.deployment_id == active.deployment_id &&
+            request.deployment_epoch == active.epoch &&
+            request.model_id == active.model_id &&
+            request.model_sha256 == active.model_sha256) {
+            pipeline_parallel::StageRunResult result;
+            result.ok = true;
+            return result;
+        }
+        pipeline_parallel::StageRunResult result;
+        result.ok = false;
+        result.status = "409 Conflict";
+        result.error_code = "deployment_mismatch";
+        result.error_message = "stage request deployment identity does not match the active runtime";
         return result;
     }
 

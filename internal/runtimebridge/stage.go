@@ -79,6 +79,8 @@ func (p *StageProxy) newRuntimeRequest(req *http.Request) (*http.Request, error)
 	}
 	copyHeaders(outbound.Header, req.Header)
 	removeHopByHopHeaders(outbound.Header)
+	outbound.Header.Del(api.HeaderCoordinatorNodeID)
+	outbound.Header.Del(api.HeaderClusterToken)
 	outbound.ContentLength = req.ContentLength
 	outbound.TransferEncoding = append([]string(nil), req.TransferEncoding...)
 	return outbound, nil

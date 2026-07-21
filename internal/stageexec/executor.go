@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -22,11 +23,13 @@ import (
 const defaultHTTPTimeout = 2 * time.Minute
 
 type Config struct {
-	Client *http.Client
+	Client       *http.Client
+	ClusterToken string
 }
 
 type Executor struct {
-	client *http.Client
+	client       *http.Client
+	clusterToken string
 }
 
 type Request struct {
@@ -39,6 +42,7 @@ type Request struct {
 	Phase      inference.Phase
 	DecodeStep int
 	MaxTokens  int
+	Deployment stagewire.DeploymentIdentity
 	Plan       clusterplan.RoutePreview
 }
 
@@ -113,7 +117,7 @@ func New(cfg Config) *Executor {
 	if client == nil {
 		client = &http.Client{Timeout: defaultHTTPTimeout}
 	}
-	return &Executor{client: client}
+	return &Executor{client: client, clusterToken: strings.TrimSpace(cfg.ClusterToken)}
 }
 
 // Execute runs exactly one ordered prefill or decode pass. Payload transition
@@ -168,7 +172,7 @@ func (e *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 
 	for _, stage := range req.Plan.Stages {
 		stageRequestID := stageOperationRequestID(requestID, stage.StageIndex)
-		stageReq := buildStageRequest(sessionID, stageRequestID, req.Model, phase, req.DecodeStep, payloadMetadata, payload, req.MaxTokens, stage)
+		stageReq := buildStageRequest(sessionID, stageRequestID, req.Model, req.Deployment, phase, req.DecodeStep, payloadMetadata, payload, req.MaxTokens, stage)
 		stageResp, status, trace, err := e.callStage(ctx, stage, stageReq)
 		trace.StageIndex = stage.StageIndex
 		trace.StageCount = stage.StageCount
@@ -181,6 +185,9 @@ func (e *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		}
 		if status < 200 || status >= 300 {
 			return result, StageError{StageIndex: stage.StageIndex, StatusCode: status, Code: stageResp.Error, Message: stageResp.Message}
+		}
+		if err := validateStageResponseIdentity(stageReq, stageResp); err != nil {
+			return result, fmt.Errorf("stage %d response identity: %w", stage.StageIndex, err)
 		}
 		if err := inference.ValidatePayloadTransition(phase, stageReq.Position(), stageReq.PayloadKind, stageResp.PayloadKind); err != nil {
 			return result, fmt.Errorf("stage %d payload contract: %w", stage.StageIndex, err)
@@ -217,46 +224,65 @@ func (e *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 	return result, nil
 }
 
-func buildStageRequest(sessionID string, requestID string, model string, phase inference.Phase, decodeStep int, payloadMetadata stagewire.Metadata, payload []byte, maxTokens int, stage clusterplan.Stage) StageRequest {
+func buildStageRequest(sessionID string, requestID string, model string, deployment stagewire.DeploymentIdentity, phase inference.Phase, decodeStep int, payloadMetadata stagewire.Metadata, payload []byte, maxTokens int, stage clusterplan.Stage) StageRequest {
 	metadata := stagewire.Metadata{
-		Operation:   stagewire.OperationExecute,
-		SessionID:   sessionID,
-		RequestID:   requestID,
-		ModelID:     model,
-		Phase:       phase,
-		DecodeStep:  decodeStep,
-		StageIndex:  stage.StageIndex,
-		StageCount:  stage.StageCount,
-		NodeName:    stage.NodeName,
-		LayerStart:  stage.LayerStart,
-		LayerEnd:    stage.LayerEnd,
-		PayloadKind: payloadMetadata.PayloadKind,
-		Encoding:    payloadMetadata.Encoding,
-		DType:       payloadMetadata.DType,
-		Shape:       append([]int64(nil), payloadMetadata.Shape...),
-		ByteOrder:   payloadMetadata.ByteOrder,
-		Layout:      payloadMetadata.Layout,
-		MaxTokens:   maxTokens,
+		Operation:          stagewire.OperationExecute,
+		SessionID:          sessionID,
+		RequestID:          requestID,
+		ModelID:            model,
+		DeploymentIdentity: deployment,
+		Phase:              phase,
+		DecodeStep:         decodeStep,
+		StageIndex:         stage.StageIndex,
+		StageCount:         stage.StageCount,
+		NodeName:           stage.NodeName,
+		LayerStart:         stage.LayerStart,
+		LayerEnd:           stage.LayerEnd,
+		PayloadKind:        payloadMetadata.PayloadKind,
+		Encoding:           payloadMetadata.Encoding,
+		DType:              payloadMetadata.DType,
+		Shape:              append([]int64(nil), payloadMetadata.Shape...),
+		ByteOrder:          payloadMetadata.ByteOrder,
+		Layout:             payloadMetadata.Layout,
+		MaxTokens:          maxTokens,
 	}
 	return StageRequest{Metadata: metadata, Payload: append([]byte(nil), payload...)}
 }
 
-func buildCloseSessionRequest(sessionID string, model string, stage clusterplan.Stage) StageRequest {
+func buildCloseSessionRequest(sessionID string, model string, deployment stagewire.DeploymentIdentity, stage clusterplan.Stage) StageRequest {
 	return StageRequest{Metadata: stagewire.Metadata{
-		Operation:   stagewire.OperationCloseSession,
-		SessionID:   sessionID,
-		RequestID:   stageOperationRequestID(sessionID+"-close", stage.StageIndex),
-		ModelID:     model,
-		Phase:       inference.PhasePrefill,
-		StageIndex:  stage.StageIndex,
-		StageCount:  stage.StageCount,
-		NodeName:    stage.NodeName,
-		LayerStart:  stage.LayerStart,
-		LayerEnd:    stage.LayerEnd,
-		PayloadKind: stagewire.PayloadKindText,
-		Encoding:    "utf-8",
-		MaxTokens:   1,
+		Operation:          stagewire.OperationCloseSession,
+		SessionID:          sessionID,
+		RequestID:          stageOperationRequestID(sessionID+"-close", stage.StageIndex),
+		ModelID:            model,
+		DeploymentIdentity: deployment,
+		Phase:              inference.PhasePrefill,
+		StageIndex:         stage.StageIndex,
+		StageCount:         stage.StageCount,
+		NodeName:           stage.NodeName,
+		LayerStart:         stage.LayerStart,
+		LayerEnd:           stage.LayerEnd,
+		PayloadKind:        stagewire.PayloadKindText,
+		Encoding:           "utf-8",
+		MaxTokens:          1,
 	}}
+}
+
+func validateStageResponseIdentity(request StageRequest, response StageResponse) error {
+	if response.SessionID != request.SessionID ||
+		response.RequestID != request.RequestID ||
+		response.ModelID != request.ModelID ||
+		response.DeploymentIdentity != request.DeploymentIdentity ||
+		response.Phase != request.Phase ||
+		response.DecodeStep != request.DecodeStep ||
+		response.StageIndex != request.StageIndex ||
+		response.StageCount != request.StageCount ||
+		response.NodeName != request.NodeName ||
+		response.LayerStart != request.LayerStart ||
+		response.LayerEnd != request.LayerEnd {
+		return fmt.Errorf("does not match request")
+	}
+	return nil
 }
 
 func (e *Executor) callStage(ctx context.Context, stage clusterplan.Stage, stageReq StageRequest) (StageResponse, int, StageTrace, error) {
@@ -274,6 +300,7 @@ func (e *Executor) callStage(ctx context.Context, stage clusterplan.Stage, stage
 	}
 	outbound.Header.Set("Content-Type", stagewire.ContentType)
 	outbound.Header.Set("Accept", stagewire.ContentType)
+	outbound.Header.Set(api.HeaderClusterToken, e.clusterToken)
 	outbound.ContentLength = int64(len(body))
 
 	baseTrace := StageTrace{
@@ -310,7 +337,7 @@ func (e *Executor) callStage(ctx context.Context, stage clusterplan.Stage, stage
 }
 
 func decodeStageResponse(resp *http.Response) (StageResponse, error) {
-	if strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), strings.ToLower(stagewire.ContentType)) {
+	if matchesStagewireMediaType(resp.Header.Get("Content-Type")) {
 		return stagewire.Decode(resp.Body)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -325,6 +352,11 @@ func decodeStageResponse(resp *http.Response) (StageResponse, error) {
 		return StageResponse{}, fmt.Errorf("decode stage response with content-type %q: %w: %s", resp.Header.Get("Content-Type"), err, string(body))
 	}
 	return StageResponse{Metadata: stagewire.Metadata{Error: failure.Error, Message: failure.Message}}, nil
+}
+
+func matchesStagewireMediaType(value string) bool {
+	mediaType, _, err := mime.ParseMediaType(value)
+	return err == nil && strings.EqualFold(mediaType, stagewire.ContentType)
 }
 
 func stageEndpoint(apiURL string) (string, error) {

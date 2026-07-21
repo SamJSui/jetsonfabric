@@ -13,6 +13,7 @@ struct Config {
 
     std::string node_name = "runtime";
     std::string model = "runtime-model";
+    std::string cluster_token;
 
     std::string engine = "llama.cpp";
     std::string compute_backend = "cuda";

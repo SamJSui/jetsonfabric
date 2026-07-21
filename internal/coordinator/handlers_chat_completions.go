@@ -8,7 +8,7 @@ import (
 
 	"github.com/SamJSui/jetsonfabric/internal/cluster"
 	"github.com/SamJSui/jetsonfabric/internal/clusterplan"
-	"github.com/SamJSui/jetsonfabric/internal/stageexec"
+	"github.com/SamJSui/jetsonfabric/internal/runtimebridge"
 )
 
 type chatCompletionRequest struct {
@@ -68,11 +68,6 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	var request chatCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid_json", nil, err.Error())
-		return
-	}
-	if request.Stream {
-		param := "stream"
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "stream_not_supported", &param, "streaming is not implemented yet")
 		return
 	}
 	if request.JetsonFabric != nil && request.JetsonFabric.StageCount < 0 {
@@ -153,25 +148,42 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requestID := fmt.Sprintf("chatcmpl-%d", s.now().UnixNano())
-	result, err := stageexec.New(stageexec.Config{}).Generate(r.Context(), stageexec.Request{
+	sessionID := fmt.Sprintf("session-%d", s.now().UnixNano())
+	generationRequest := runtimebridge.GenerationRequest{
 		RequestID: requestID,
-		Model:     model.ID,
-		Payload:   prompt,
+		SessionID: sessionID,
+		ModelID:   model.ID,
+		Prompt:    prompt,
 		MaxTokens: chatMaxTokens(request),
-		Plan:      plan,
-	})
+		Stages:    plan.Stages,
+	}
+	if identity.DeploymentID != "" {
+		generationRequest.Deployment = &runtimebridge.DeploymentIdentity{
+			DeploymentID: identity.DeploymentID,
+			Epoch:        identity.Epoch,
+			ModelID:      identity.ModelID,
+			ModelSHA256:  identity.ModelSHA256,
+		}
+	}
+	stream, err := s.generationClient.Start(r.Context(), plan.Stages[0].APIURL, generationRequest)
 	if err != nil {
-		writeOpenAIError(w, http.StatusBadGateway, "server_error", "pipeline_stage_failed", nil, err.Error())
+		writeOpenAIError(w, http.StatusBadGateway, "server_error", "runtime_generation_failed", nil, err.Error())
 		return
 	}
+	defer stream.Body.Close()
 
-	w.Header().Set("X-JetsonFabric-Session-ID", result.SessionID)
-	w.Header().Set("X-JetsonFabric-Topology", string(plan.Topology))
-	w.Header().Set("X-JetsonFabric-Model-SHA256", identity.ModelSHA256)
-	if identity.DeploymentID != "" {
-		w.Header().Set("X-JetsonFabric-Deployment-ID", identity.DeploymentID)
-		w.Header().Set("X-JetsonFabric-Deployment-Epoch", fmt.Sprintf("%d", identity.Epoch))
+	setGenerationHeaders(w, sessionID, plan, identity)
+	if request.Stream {
+		s.streamChatCompletion(w, r, requestID, model.ID, len(plan.Stages), stream.Body)
+		return
 	}
+	result, err := consumeGenerationEvents(stream.Body, len(plan.Stages), nil)
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadGateway, "server_error", "runtime_generation_failed", nil, err.Error())
+		return
+	}
+	w.Header().Set("X-JetsonFabric-Stage-Calls", fmt.Sprintf("%d", result.StageCalls))
+	w.Header().Set("X-JetsonFabric-Remote-Stage-Calls", fmt.Sprintf("%d", result.RemoteStageCalls))
 	writeJSON(w, http.StatusOK, chatCompletionResponse{
 		ID:      requestID,
 		Object:  "chat.completion",
