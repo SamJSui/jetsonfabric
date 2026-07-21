@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MODEL_PATH="${MODEL_PATH:?MODEL_PATH must point to the GGUF to validate}"
 MODEL_ID="${MODEL_ID:-qwen2.5-coder-1.5b-q4}"
 DEPLOYMENT_ID="${JF_DEPLOYMENT_ID:-lifecycle-deployment-1}"
+NODE_NAME="${JF_NODE_NAME:-lifecycle-node}"
 RAW_PROMPT="${JF_RAW_PROMPT:-Once upon a time}"
 MAX_TOKENS="${JF_MAX_TOKENS:-2}"
 NODE_PORT="${JF_NODE0_PORT:-19280}"
@@ -112,7 +113,7 @@ NODE_URL="http://127.0.0.1:$NODE_PORT"
 
 "$RUNTIME_BIN" \
   --listen "127.0.0.1:$RUNTIME_PORT" \
-  --node-name lifecycle-runtime \
+  --node-name "$NODE_NAME" \
   --idle \
   --engine llama.cpp \
   --compute-backend cpu \
@@ -205,7 +206,7 @@ jq -e --arg deployment "$DEPLOYMENT_ID" '
 
 "$NODE_BIN" \
   --cluster-id lifecycle-integration \
-  --node-name lifecycle-node \
+  --node-name "$NODE_NAME" \
   --listen "127.0.0.1:$NODE_PORT" \
   --advertise-url "$NODE_URL" \
   --data-dir "$WORK_DIR/node" \
