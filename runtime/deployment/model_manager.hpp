@@ -81,6 +81,60 @@ public:
         };
     }
 
+    UnloadDeploymentResult unload_resident_deployment(
+        const std::string& expected_deployment_id
+    ) {
+        if (expected_deployment_id.empty()) {
+            return unload_error(
+                "400 Bad Request",
+                "invalid_deployment_id",
+                "deployment_id is required"
+            );
+        }
+        if (!resident_.has_value()) {
+            return unload_error(
+                "409 Conflict",
+                "no_resident_deployment",
+                "runtime has no resident deployment"
+            );
+        }
+        if (resident_->identity.deployment_id != expected_deployment_id) {
+            return unload_error(
+                "409 Conflict",
+                "deployment_mismatch",
+                "resident deployment does not match deployment_id"
+            );
+        }
+        if (resident_->state == ResidentDeploymentState::Loading ||
+            resident_->state == ResidentDeploymentState::Unloading) {
+            return unload_error(
+                "503 Service Unavailable",
+                "deployment_transitioning",
+                "resident deployment is already transitioning"
+            );
+        }
+
+        if (resident_->state == ResidentDeploymentState::Active) {
+            transition_resident_to(ResidentDeploymentState::Draining);
+        }
+        transition_resident_to(ResidentDeploymentState::Unloading);
+
+        DeploymentIdentity unloaded_identity = resident_->identity;
+        if (!is_valid_resident_deployment_transition(
+                ResidentDeploymentState::Unloading,
+                std::nullopt
+            )) {
+            throw std::logic_error("unloading deployment cannot transition to idle");
+        }
+        resident_.reset();
+
+        return UnloadDeploymentResult{
+            .ok = true,
+            .status = "200 OK",
+            .identity = std::move(unloaded_identity),
+        };
+    }
+
     const DeploymentIdentity* active_deployment_identity() const noexcept {
         const ResidentDeployment* deployment = active_deployment();
         return deployment != nullptr ? &deployment->identity : nullptr;
@@ -122,6 +176,19 @@ private:
         result.error_code = "no_active_deployment";
         result.error_message = "runtime has no active deployment";
         return result;
+    }
+
+    static UnloadDeploymentResult unload_error(
+        std::string status,
+        std::string code,
+        std::string message
+    ) {
+        return UnloadDeploymentResult{
+            .ok = false,
+            .status = std::move(status),
+            .error_code = std::move(code),
+            .error_message = std::move(message),
+        };
     }
 
     static DeploymentIdentity require_identity(DeploymentIdentity identity) {
@@ -170,6 +237,14 @@ private:
         InferenceEngineParts engine_parts;
         pipeline_parallel::StageWorker stage_worker;
     };
+
+    void transition_resident_to(ResidentDeploymentState next) {
+        if (!resident_.has_value() ||
+            !is_valid_resident_deployment_transition(resident_->state, next)) {
+            throw std::logic_error("invalid resident deployment transition");
+        }
+        resident_->state = next;
+    }
 
     const ResidentDeployment* active_deployment() const noexcept {
         if (!resident_.has_value() || resident_->state != ResidentDeploymentState::Active) {

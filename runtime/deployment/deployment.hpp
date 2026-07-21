@@ -82,4 +82,12 @@ struct DeploymentStatus {
     std::optional<DeploymentIdentity> identity;
 };
 
+struct UnloadDeploymentResult {
+    bool ok = false;
+    std::string status;
+    std::string error_code;
+    std::string error_message;
+    std::optional<DeploymentIdentity> identity;
+};
+
 } // namespace jetsonfabric::runtime::deployment

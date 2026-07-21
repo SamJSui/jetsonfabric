@@ -140,7 +140,7 @@ void send_all(int fd, const std::string& data) {
 
 } // namespace
 
-HttpServer::HttpServer(Config config, const RuntimeAPI& runtime, std::atomic_bool& running)
+HttpServer::HttpServer(Config config, RuntimeAPI& runtime, std::atomic_bool& running)
     : config_(std::move(config)), runtime_(runtime), running_(running) {}
 
 int HttpServer::run() const {
@@ -226,6 +226,9 @@ void HttpServer::handle_client(int client_fd) const {
             response = json_response("200 OK", health_body(runtime_));
         } else if (starts_with(request, "GET /v1/deployment ")) {
             const RuntimeResponse runtime_response = runtime_.deployment_status();
+            response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+        } else if (starts_with(request, "POST /v1/deployment/unload ")) {
+            const RuntimeResponse runtime_response = runtime_.unload_deployment(body);
             response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
         } else if (starts_with(request, "POST /v1/chat/completions ")) {
             const RuntimeResponse runtime_response = runtime_.chat_completion(body);

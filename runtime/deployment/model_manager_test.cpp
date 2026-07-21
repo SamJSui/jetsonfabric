@@ -39,6 +39,15 @@ void expect_transition(
 
 class RecordingExecutor final : public runtime::pipeline_parallel::LayerExecutor {
 public:
+    explicit RecordingExecutor(int* destruction_count = nullptr)
+        : destruction_count_(destruction_count) {}
+
+    ~RecordingExecutor() override {
+        if (destruction_count_ != nullptr) {
+            ++*destruction_count_;
+        }
+    }
+
     runtime::inference::ExecutionResult execute(const runtime::inference::StageInput& input) const override {
         ++execute_calls;
         last_model_id = input.model_id;
@@ -68,6 +77,9 @@ public:
     mutable int close_calls = 0;
     mutable std::string last_model_id;
     mutable std::string last_closed_session;
+
+private:
+    int* destruction_count_;
 };
 
 runtime::pipeline_parallel::StageAssignment assignment() {
@@ -201,6 +213,12 @@ void test_idle_manager() {
     expect(!close_result.ok, "empty manager accepted session close");
     expect(close_result.status == "503 Service Unavailable", "idle close rejection used the wrong status");
     expect(close_result.error_code == "no_active_deployment", "idle close rejection used the wrong error");
+
+    const runtime::deployment::UnloadDeploymentResult unload =
+        manager.unload_resident_deployment("deployment-a");
+    expect(!unload.ok, "idle manager accepted unload");
+    expect(unload.status == "409 Conflict", "idle unload used the wrong status");
+    expect(unload.error_code == "no_resident_deployment", "idle unload used the wrong error");
 }
 
 void test_loaded_manager() {
@@ -265,6 +283,63 @@ void test_loaded_manager() {
     expect(recording->last_closed_session == "session-1", "wrong session was closed");
 }
 
+void test_guarded_unload() {
+    int destruction_count = 0;
+    auto executor = std::make_unique<RecordingExecutor>(&destruction_count);
+
+    runtime::deployment::ModelManager manager(
+        "node-a",
+        runtime::deployment::DeploymentIdentity{
+            .deployment_id = "deployment-a",
+            .model_id = "model-a",
+        },
+        assignment(),
+        runtime::InferenceEngineParts{.layer_executor = std::move(executor)}
+    );
+
+    const runtime::deployment::UnloadDeploymentResult missing_id =
+        manager.unload_resident_deployment("");
+    expect(!missing_id.ok, "unload accepted an empty deployment ID");
+    expect(missing_id.status == "400 Bad Request", "empty deployment ID used the wrong status");
+    expect(missing_id.error_code == "invalid_deployment_id", "empty deployment ID used the wrong error");
+    expect(manager.has_active_deployment(), "empty deployment ID changed active deployment");
+    expect(destruction_count == 0, "empty deployment ID destroyed the executor");
+
+    const runtime::deployment::UnloadDeploymentResult mismatch =
+        manager.unload_resident_deployment("deployment-b");
+    expect(!mismatch.ok, "unload accepted a stale deployment ID");
+    expect(mismatch.status == "409 Conflict", "stale deployment ID used the wrong status");
+    expect(mismatch.error_code == "deployment_mismatch", "stale deployment ID used the wrong error");
+    expect(manager.has_active_deployment(), "stale deployment ID changed active deployment");
+    expect(destruction_count == 0, "stale deployment ID destroyed the executor");
+
+    const runtime::deployment::UnloadDeploymentResult unloaded =
+        manager.unload_resident_deployment("deployment-a");
+    expect(unloaded.ok, "matching deployment ID did not unload");
+    expect(unloaded.status == "200 OK", "successful unload used the wrong status");
+    expect(unloaded.identity.has_value(), "successful unload omitted deployment identity");
+    expect(unloaded.identity->deployment_id == "deployment-a", "unload returned the wrong deployment ID");
+    expect(unloaded.identity->model_id == "model-a", "unload returned the wrong model ID");
+    expect(destruction_count == 1, "successful unload did not release the executor");
+    expect(!manager.has_resident_deployment(), "successful unload left a resident deployment");
+    expect(!manager.has_active_deployment(), "successful unload left an active deployment");
+
+    const runtime::deployment::DeploymentStatus status = manager.deployment_status();
+    expect(!status.resident && !status.active, "successful unload did not return idle status");
+    expect(!status.state.has_value(), "successful unload retained resident state");
+    expect(!status.identity.has_value(), "successful unload retained resident identity");
+
+    const runtime::pipeline_parallel::StageRunResult run_result = manager.run_stage(valid_request());
+    expect(!run_result.ok, "unloaded manager accepted stage execution");
+    expect(run_result.error_code == "no_active_deployment", "unloaded execution used the wrong error");
+
+    const runtime::deployment::UnloadDeploymentResult repeated =
+        manager.unload_resident_deployment("deployment-a");
+    expect(!repeated.ok, "repeated unload unexpectedly succeeded");
+    expect(repeated.error_code == "no_resident_deployment", "repeated unload used the wrong error");
+    expect(destruction_count == 1, "repeated unload destroyed resources twice");
+}
+
 void test_invalid_identity_rejected() {
     const auto rejected = [](runtime::deployment::DeploymentIdentity identity) {
         try {
@@ -320,6 +395,7 @@ int main() {
     test_invalid_resident_state_transitions();
     test_idle_manager();
     test_loaded_manager();
+    test_guarded_unload();
     test_invalid_identity_rejected();
     test_missing_executor_rejected();
 

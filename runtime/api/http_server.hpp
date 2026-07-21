@@ -9,13 +9,13 @@ namespace jetsonfabric::runtime {
 
 class HttpServer {
 public:
-    HttpServer(Config config, const RuntimeAPI& runtime, std::atomic_bool& running);
+    HttpServer(Config config, RuntimeAPI& runtime, std::atomic_bool& running);
 
     int run() const;
 
 private:
     Config config_;
-    const RuntimeAPI& runtime_;
+    RuntimeAPI& runtime_;
     std::atomic_bool& running_;
 
     int open_listening_socket() const;

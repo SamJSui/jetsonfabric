@@ -5,7 +5,10 @@
 
 #include <exception>
 #include <sstream>
+#include <stdexcept>
 #include <utility>
+
+#include <nlohmann/json.hpp>
 
 namespace jetsonfabric::runtime {
 namespace {
@@ -17,6 +20,32 @@ RuntimeResponse json_error(const std::string& status, const std::string& code, c
         "{\"error\":\"" + protocol::json_escape(code) + "\",\"message\":\"" +
             protocol::json_escape(message) + "\"}",
     };
+}
+
+std::string decode_unload_deployment_id(const std::string& request_body) {
+    nlohmann::json body;
+    try {
+        body = nlohmann::json::parse(request_body);
+    } catch (const nlohmann::json::parse_error&) {
+        throw std::invalid_argument("request body must be valid JSON");
+    }
+    if (!body.is_object()) {
+        throw std::invalid_argument("request body must be a JSON object");
+    }
+
+    const auto deployment_id = body.find("deployment_id");
+    if (deployment_id == body.end() || deployment_id->is_null()) {
+        throw std::invalid_argument("deployment_id is required");
+    }
+    if (!deployment_id->is_string()) {
+        throw std::invalid_argument("deployment_id must be a string");
+    }
+
+    std::string value = deployment_id->get<std::string>();
+    if (value.empty()) {
+        throw std::invalid_argument("deployment_id is required");
+    }
+    return value;
 }
 
 protocol::StageResponse stage_error_response(
@@ -98,6 +127,36 @@ RuntimeResponse RuntimeService::deployment_status() const {
          << "\"}}";
 
     return RuntimeResponse{"200 OK", "application/json", body.str()};
+}
+
+RuntimeResponse RuntimeService::unload_deployment(const std::string& request_body) {
+    std::string expected_deployment_id;
+    try {
+        expected_deployment_id = decode_unload_deployment_id(request_body);
+    } catch (const std::invalid_argument& err) {
+        return json_error("400 Bad Request", "invalid_unload_request", err.what());
+    }
+
+    deployment::UnloadDeploymentResult result =
+        model_manager_.unload_resident_deployment(expected_deployment_id);
+    if (!result.ok) {
+        return json_error(result.status, result.error_code, result.error_message);
+    }
+    if (!result.identity.has_value()) {
+        return json_error(
+            "500 Internal Server Error",
+            "invalid_unload_result",
+            "successful unload omitted deployment identity"
+        );
+    }
+
+    std::ostringstream body;
+    body << "{\"unloaded\":true,\"deployment\":{\"deployment_id\":\""
+         << protocol::json_escape(result.identity->deployment_id)
+         << "\",\"model_id\":\""
+         << protocol::json_escape(result.identity->model_id)
+         << "\"},\"resident\":false,\"active\":false,\"state\":\"idle\"}";
+    return RuntimeResponse{result.status, "application/json", body.str()};
 }
 
 RuntimeResponse RuntimeService::chat_completion(const std::string& /*request_body*/) const {
