@@ -135,8 +135,11 @@ func (s *deploymentState) beginTransition(ctx context.Context, expectedEpoch uin
 		select {
 		case <-ctx.Done():
 			s.mu.Lock()
-			s.phase = deploymentPhaseFailed
-			s.active = nil
+			if s.active != nil {
+				s.phase = deploymentPhaseActive
+			} else {
+				s.phase = deploymentPhaseUnmanaged
+			}
 			s.lastError = ctx.Err().Error()
 			s.signalLocked()
 			s.mu.Unlock()
