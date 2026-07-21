@@ -84,8 +84,8 @@ func bindCoreFlags(fs *flag.FlagSet, cfg *node.Config, values *flagValues) {
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "directory for stable logical node identity; defaults to .cache/jetsonfabric/nodes/<node-name>")
 
 	fs.StringVar(&values.engine, "engine", values.engine, "local runtime engine kind")
-	fs.StringVar(&cfg.Model, "model", cfg.Model, "model id served by the local runtime")
-	fs.StringVar(&cfg.ModelPath, "model-path", cfg.ModelPath, "GGUF model path used when supervising a local runtime")
+	fs.StringVar(&cfg.Model, "model", cfg.Model, "model id served by the configured startup deployment")
+	fs.StringVar(&cfg.ModelPath, "model-path", cfg.ModelPath, "GGUF model path used by the configured startup deployment")
 }
 
 func bindRuntimeFlags(fs *flag.FlagSet, cfg *node.Config) {
@@ -97,11 +97,15 @@ func bindRuntimeFlags(fs *flag.FlagSet, cfg *node.Config) {
 	fs.IntVar(&cfg.RuntimeCtxSize, "runtime-ctx-size", cfg.RuntimeCtxSize, "runtime context size")
 	fs.IntVar(&cfg.RuntimeNGPULayers, "runtime-n-gpu-layers", cfg.RuntimeNGPULayers, "runtime GPU layer count")
 	fs.IntVar(&cfg.RuntimeThreads, "runtime-threads", cfg.RuntimeThreads, "runtime CPU thread count")
+	fs.BoolVar(&cfg.RuntimeStartIdle, "runtime-idle", cfg.RuntimeStartIdle, "start or describe the local runtime without a resident deployment")
+	fs.StringVar(&cfg.RuntimeRevision, "runtime-revision", cfg.RuntimeRevision, "JetsonFabric runtime compatibility revision")
+	fs.StringVar(&cfg.RuntimeLlamaCPPRevision, "runtime-llama-cpp-revision", cfg.RuntimeLlamaCPPRevision, "pinned llama.cpp compatibility revision")
+	fs.BoolVar(&cfg.RuntimeCUDAActive, "runtime-cuda-active", cfg.RuntimeCUDAActive, "attest that CUDA execution is active for CUDA deployment placement")
 
-	fs.IntVar(&cfg.StageIndex, "stage-index", cfg.StageIndex, "runtime stage index")
-	fs.IntVar(&cfg.StageCount, "stage-count", cfg.StageCount, "runtime stage count")
-	fs.IntVar(&cfg.LayerStart, "layer-start", cfg.LayerStart, "first layer for this local runtime stage")
-	fs.IntVar(&cfg.LayerEnd, "layer-end", cfg.LayerEnd, "exclusive end layer for this local runtime stage")
+	fs.IntVar(&cfg.StageIndex, "stage-index", cfg.StageIndex, "configured startup runtime stage index")
+	fs.IntVar(&cfg.StageCount, "stage-count", cfg.StageCount, "configured startup runtime stage count")
+	fs.IntVar(&cfg.LayerStart, "layer-start", cfg.LayerStart, "configured startup first layer")
+	fs.IntVar(&cfg.LayerEnd, "layer-end", cfg.LayerEnd, "configured startup exclusive layer end")
 }
 
 func bindRoleFlags(fs *flag.FlagSet, cfg *node.Config, values *flagValues) {
