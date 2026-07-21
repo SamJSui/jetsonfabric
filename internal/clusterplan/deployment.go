@@ -73,6 +73,19 @@ func (plan DeploymentPlan) StageCount() int {
 	return len(plan.stages)
 }
 
+// RoutePreview returns the immutable execution route represented by this plan.
+// It does not consult live membership, so admitted sessions remain pinned to the
+// exact stage assignment selected for the deployment epoch.
+func (plan DeploymentPlan) RoutePreview() RoutePreview {
+	preview := RoutePreview{
+		Model:  plan.model.ModelID,
+		Valid:  true,
+		Mode:   plan.model.ExecutionMode,
+		Stages: plan.Stages(),
+	}
+	return finalizeTopology(preview)
+}
+
 func validateDeploymentPlan(
 	identity DeploymentIdentity,
 	model DeploymentModelIdentity,
