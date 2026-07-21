@@ -9,6 +9,7 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/clusterplan"
 	"github.com/SamJSui/jetsonfabric/internal/membership"
 	"github.com/SamJSui/jetsonfabric/internal/modelregistry"
+	"github.com/SamJSui/jetsonfabric/internal/runtimebridge"
 )
 
 type MemberSource interface {
@@ -22,6 +23,8 @@ type Server struct {
 	memberStaleAfter  time.Duration
 	clusterPlanPolicy clusterplan.Policy
 	now               func() time.Time
+	deployments       *deploymentState
+	deploymentClient  runtimebridge.DeploymentClient
 }
 
 type Option func(*Server)
@@ -51,11 +54,18 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
+func WithDeploymentClient(client runtimebridge.DeploymentClient) Option {
+	return func(s *Server) {
+		s.deploymentClient = client
+	}
+}
+
 func NewServer(registry modelregistry.Registry, opts ...Option) *Server {
 	server := &Server{
 		registry:          registry,
 		benchmarkRecorder: benchmarks.NoopRecorder{},
 		now:               func() time.Time { return time.Now().UTC() },
+		deployments:       newDeploymentState(),
 	}
 	for _, opt := range opts {
 		opt(server)
@@ -71,6 +81,12 @@ func (s *Server) applyDefaults() {
 	if s.now == nil {
 		s.now = func() time.Time { return time.Now().UTC() }
 	}
+	if s.deployments == nil {
+		s.deployments = newDeploymentState()
+	}
+	if s.deploymentClient == nil {
+		s.deploymentClient = runtimebridge.NewHTTPDeploymentClient(10 * time.Minute)
+	}
 }
 
 func (s *Server) Router() http.Handler {
@@ -80,5 +96,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc(api.RoutePreview, s.handleRoutePreview)
 	mux.HandleFunc(api.RouteLayerSplitRun, s.handleLayerSplitRun)
 	mux.HandleFunc(api.RouteChatCompletions, s.handleChatCompletions)
+	mux.HandleFunc(api.RouteDeploymentStatus, s.handleDeploymentStatus)
+	mux.HandleFunc(api.RouteDeploymentSwitch, s.handleDeploymentSwitch)
 	return mux
 }
