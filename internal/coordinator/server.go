@@ -18,6 +18,7 @@ type MemberSource interface {
 
 type Server struct {
 	nodeID            string
+	clusterToken      string
 	registry          modelregistry.Registry
 	benchmarkRecorder benchmarks.Recorder
 	memberSource      MemberSource
@@ -67,6 +68,12 @@ func WithNodeID(nodeID string) Option {
 	}
 }
 
+func WithClusterToken(token string) Option {
+	return func(s *Server) {
+		s.clusterToken = token
+	}
+}
+
 func NewServer(registry modelregistry.Registry, opts ...Option) *Server {
 	server := &Server{
 		registry:          registry,
@@ -92,7 +99,11 @@ func (s *Server) applyDefaults() {
 		s.deployments = newDeploymentState()
 	}
 	if s.deploymentClient == nil {
-		s.deploymentClient = runtimebridge.NewHTTPDeploymentClient(10*time.Minute, s.nodeID)
+		s.deploymentClient = runtimebridge.NewHTTPDeploymentClient(runtimebridge.HTTPDeploymentClientConfig{
+			Timeout:           10 * time.Minute,
+			CoordinatorNodeID: s.nodeID,
+			ClusterToken:      s.clusterToken,
+		})
 	}
 }
 

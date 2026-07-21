@@ -2,7 +2,10 @@ package api
 
 import "net/http"
 
-const HeaderCoordinatorNodeID = "X-JetsonFabric-Coordinator-Node-ID"
+const (
+	HeaderCoordinatorNodeID = "X-JetsonFabric-Coordinator-Node-ID"
+	HeaderClusterToken      = "X-JetsonFabric-Cluster-Token"
+)
 
 const (
 	PathHealth                    = "/healthz"

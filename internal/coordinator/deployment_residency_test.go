@@ -33,7 +33,9 @@ func TestValidateRuntimeStatusRequiresAssignedPartitionResidency(t *testing.T) {
 		State:    "ready",
 		Deployment: &runtimebridge.DeploymentIdentity{
 			DeploymentID: "deployment-a",
+			Epoch:        1,
 			ModelID:      "model-a",
+			ModelSHA256:  strings.Repeat("a", 64),
 		},
 		ModelMemory: &runtimebridge.ModelMemory{
 			LayerStart:          0,
@@ -53,6 +55,10 @@ func TestValidateRuntimeStatusRequiresAssignedPartitionResidency(t *testing.T) {
 		name   string
 		mutate func(*runtimebridge.DeploymentStatus)
 	}{
+		{name: "wrong epoch", mutate: func(status *runtimebridge.DeploymentStatus) { status.Deployment.Epoch++ }},
+		{name: "wrong artifact", mutate: func(status *runtimebridge.DeploymentStatus) {
+			status.Deployment.ModelSHA256 = strings.Repeat("b", 64)
+		}},
 		{name: "missing accounting", mutate: func(status *runtimebridge.DeploymentStatus) { status.ModelMemory = nil }},
 		{name: "wrong range", mutate: func(status *runtimebridge.DeploymentStatus) { status.ModelMemory.LayerEnd = 3 }},
 		{name: "full model retained", mutate: func(status *runtimebridge.DeploymentStatus) {
@@ -63,6 +69,8 @@ func TestValidateRuntimeStatusRequiresAssignedPartitionResidency(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			status := valid
+			identity := *valid.Deployment
+			status.Deployment = &identity
 			memory := *valid.ModelMemory
 			status.ModelMemory = &memory
 			test.mutate(&status)
@@ -95,7 +103,9 @@ func TestValidateRuntimeStatusRequiresCompleteFullModelResidency(t *testing.T) {
 		State:    "ready",
 		Deployment: &runtimebridge.DeploymentIdentity{
 			DeploymentID: "deployment-a",
+			Epoch:        1,
 			ModelID:      "model-a",
+			ModelSHA256:  strings.Repeat("a", 64),
 		},
 		ModelMemory: &runtimebridge.ModelMemory{
 			LayerEnd:            4,

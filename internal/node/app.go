@@ -106,6 +106,7 @@ func (a *App) coordinatorRouter() (http.Handler, error) {
 	server := coordinator.NewServer(
 		registry,
 		coordinator.WithNodeID(a.nodeID),
+		coordinator.WithClusterToken(a.cfg.ClusterToken),
 		coordinator.WithBenchmarkRecorder(benchmarks.NewJSONLRecorder(a.cfg.BenchmarksPath)),
 		coordinator.WithMembershipSource(a.store, a.cfg.StaleAfter),
 	)
@@ -150,6 +151,7 @@ func (a *App) httpServer(coordinatorRouter http.Handler, stageRunner http.Handle
 		Addr: a.cfg.Listen,
 		Handler: facade.NewRouter(facade.Config{
 			SelfID:            a.nodeID,
+			ClusterToken:      a.cfg.ClusterToken,
 			Store:             a.store,
 			StaleAfter:        a.cfg.StaleAfter,
 			Coordinator:       coordinatorRouter,

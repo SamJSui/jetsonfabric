@@ -101,6 +101,8 @@ if [[ "$http_code" != "200" ]]; then
 fi
 
 jq -e --argjson count "$STAGE_COUNT" '
+  .result.stages as $traces |
+  (.result.sampled_tokens | length) as $generated |
   .inter_stage_payload_kind == "activation" and
   .plan.topology == "distributed" and
   .plan.physical_host_count >= 2 and
@@ -111,7 +113,6 @@ jq -e --argjson count "$STAGE_COUNT" '
   ([.result.stages[] | select(.phase == "prefill")] | length) == $count and
   ([.result.stages[] | select(.phase == "prefill" and .payload_kind_out == "activation")] | length) >= 1 and
   ([.result.stages[] | select(.payload_kind_in == "activation")] | length) >= 1 and
-  .result.stages as $traces |
   all($traces[];
     if .payload_kind_out == "activation" then
       . as $source |
@@ -122,17 +123,21 @@ jq -e --argjson count "$STAGE_COUNT" '
         .payload_kind_in == "activation" and
         .payload_in == $source.payload_out and
         .payload_crc32_in == $source.payload_crc32_out)
-    else true end)
+    else true end) and
+  ([$traces[] | select(.phase == "decode")] | length) == (($generated - 1) * $count) and
+  all(range(1; $generated); . as $step |
+    ([$traces[] | select(.phase == "decode" and .decode_step == $step)] | length) == $count)
 ' "$response_file" >/dev/null
 
-if (( MAX_TOKENS > 1 )); then
-  generated_count="$(jq '.result.sampled_tokens | length' "$response_file")"
-  if (( generated_count > 1 )); then
-    jq -e --argjson count "$STAGE_COUNT" '
-      ([.result.stages[] | select(.phase == "decode" and .decode_step == 1)] | length) == $count
-    ' "$response_file" >/dev/null
-  fi
-fi
+jq -e --argjson members "$members_json" '
+  all(.plan.stages[];
+    .node_id as $node_id |
+    any($members.members[];
+      .node_id == $node_id and
+      ((.capabilities.compute_backends // []) | index("cuda")) and
+      .capabilities.runtime_compute_backend == "cuda" and
+      .capabilities.runtime_cuda_active == true))
+' "$response_file" >/dev/null
 
 if [[ -n "$EXPECTED_TOKENS" ]]; then
   jq -e --argjson expected "$EXPECTED_TOKENS" '.result.sampled_tokens == $expected' "$response_file" >/dev/null || {

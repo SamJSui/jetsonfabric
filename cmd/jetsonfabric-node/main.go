@@ -46,6 +46,7 @@ func run(args []string) error {
 
 func parseConfig(args []string) (node.Config, error) {
 	cfg := node.DefaultConfigValue()
+	cfg.ClusterToken = os.Getenv(node.ClusterTokenEnv)
 	values := defaultFlagValues(cfg)
 
 	fs := flag.NewFlagSet("jetsonfabric-node", flag.ContinueOnError)

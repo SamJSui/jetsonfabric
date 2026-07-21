@@ -5,6 +5,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace runtime = jetsonfabric::runtime;
 
@@ -66,6 +67,20 @@ runtime::pipeline_parallel::StageAssignment assignment() {
     };
 }
 
+runtime::deployment::DeploymentIdentity identity(
+    std::string deployment_id = "deployment-a",
+    std::uint64_t epoch = 1,
+    std::string model_id = "model-a",
+    char digest_character = 'a'
+) {
+    return runtime::deployment::DeploymentIdentity{
+        .deployment_id = std::move(deployment_id),
+        .epoch = epoch,
+        .model_id = std::move(model_id),
+        .model_sha256 = std::string(64, digest_character),
+    };
+}
+
 runtime::deployment::ModelResidency residency() {
     return runtime::deployment::ModelResidency{
         .layer_start = 0,
@@ -104,10 +119,7 @@ void test_idle_load_ready_activate_infer_unload_idle() {
     const runtime::deployment::LoadDeploymentResult loaded =
         manager.load_resident_deployment(
             "node-a",
-            runtime::deployment::DeploymentIdentity{
-                .deployment_id = "deployment-a",
-                .model_id = "model-a",
-            },
+            identity(),
             assignment(),
             [&]() {
                 ++build_calls;
@@ -148,10 +160,7 @@ void test_idle_load_ready_activate_infer_unload_idle() {
     const runtime::deployment::LoadDeploymentResult duplicate =
         manager.load_resident_deployment(
             "node-a",
-            runtime::deployment::DeploymentIdentity{
-                .deployment_id = "deployment-b",
-                .model_id = "model-b",
-            },
+            identity("deployment-b", 2, "model-b", 'b'),
             assignment(),
             [&]() {
                 ++rejected_builder_calls;
@@ -163,12 +172,22 @@ void test_idle_load_ready_activate_infer_unload_idle() {
     expect(rejected_builder_calls == 0, "duplicate load built a second engine");
 
     const runtime::deployment::ActivateDeploymentResult stale =
-        manager.activate_resident_deployment("deployment-b");
+        manager.activate_resident_deployment(identity("deployment-b"));
     expect(!stale.ok, "stale activation command succeeded");
     expect(stale.error_code == "deployment_mismatch", "stale activation used the wrong error");
 
+    const runtime::deployment::ActivateDeploymentResult stale_epoch =
+        manager.activate_resident_deployment(identity("deployment-a", 2));
+    expect(!stale_epoch.ok, "activation accepted a stale deployment epoch");
+    expect(stale_epoch.error_code == "deployment_mismatch", "stale epoch used the wrong error");
+
+    const runtime::deployment::ActivateDeploymentResult wrong_artifact =
+        manager.activate_resident_deployment(identity("deployment-a", 1, "model-a", 'b'));
+    expect(!wrong_artifact.ok, "activation accepted a different model artifact digest");
+    expect(wrong_artifact.error_code == "deployment_mismatch", "artifact mismatch used the wrong error");
+
     const runtime::deployment::ActivateDeploymentResult activated =
-        manager.activate_resident_deployment("deployment-a");
+        manager.activate_resident_deployment(identity());
     expect(activated.ok, "ready deployment failed to activate");
     expect(manager.has_active_deployment(), "activated deployment was not active");
     expect(
@@ -177,7 +196,7 @@ void test_idle_load_ready_activate_infer_unload_idle() {
     );
 
     const runtime::deployment::ActivateDeploymentResult repeated_activation =
-        manager.activate_resident_deployment("deployment-a");
+        manager.activate_resident_deployment(identity());
     expect(repeated_activation.ok, "activation retry was not idempotent");
 
     const runtime::pipeline_parallel::StageRunResult inference = manager.run_stage(request());
@@ -186,7 +205,7 @@ void test_idle_load_ready_activate_infer_unload_idle() {
     expect(recording->last_model_id == "model-a", "active executor received the wrong model");
 
     const runtime::deployment::UnloadDeploymentResult unloaded =
-        manager.unload_resident_deployment("deployment-a");
+        manager.unload_resident_deployment(identity());
     expect(unloaded.ok, "active deployment failed to unload");
     expect(destruction_count == 1, "unload did not release execution components exactly once");
     expect(!manager.has_resident_deployment(), "unload did not return the runtime to idle");
@@ -203,10 +222,7 @@ void test_failed_load_is_visible_and_recoverable_by_unload() {
     const runtime::deployment::LoadDeploymentResult failed =
         manager.load_resident_deployment(
             "node-a",
-            runtime::deployment::DeploymentIdentity{
-                .deployment_id = "deployment-failed",
-                .model_id = "model-failed",
-            },
+            identity("deployment-failed", 2, "model-failed", 'f'),
             assignment(),
             []() -> runtime::InferenceEngineParts {
                 throw std::runtime_error("synthetic load failure");
@@ -223,12 +239,12 @@ void test_failed_load_is_visible_and_recoverable_by_unload() {
     expect(!manager.has_active_deployment(), "failed load became active");
 
     const runtime::deployment::ActivateDeploymentResult activation =
-        manager.activate_resident_deployment("deployment-failed");
+        manager.activate_resident_deployment(identity("deployment-failed", 2, "model-failed", 'f'));
     expect(!activation.ok, "failed deployment activated");
     expect(activation.error_code == "deployment_failed", "failed activation used the wrong error");
 
     const runtime::deployment::UnloadDeploymentResult unloaded =
-        manager.unload_resident_deployment("deployment-failed");
+        manager.unload_resident_deployment(identity("deployment-failed", 2, "model-failed", 'f'));
     expect(unloaded.ok, "failed deployment could not be unloaded");
     expect(!manager.has_resident_deployment(), "failed deployment cleanup did not return idle");
 }

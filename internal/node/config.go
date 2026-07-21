@@ -17,6 +17,7 @@ const (
 	DefaultDiscoveryInterval = 10 * time.Second
 	DefaultStaleAfter        = 30 * time.Second
 	DefaultLeaderPreference  = 0
+	ClusterTokenEnv          = "JETSONFABRIC_CLUSTER_TOKEN"
 
 	AutoRuntimeURL                 = "auto"
 	DefaultRuntimeBin              = "dist/jetsonfabric-runtime-worker"
@@ -38,11 +39,12 @@ const (
 var defaultDiscoveryModes = []string{discovery.ModeMDNS}
 
 type Config struct {
-	ClusterID string
-	NodeName  string
-	Listen    string
-	APIURL    string
-	DataDir   string
+	ClusterID    string
+	ClusterToken string
+	NodeName     string
+	Listen       string
+	APIURL       string
+	DataDir      string
 
 	RuntimeURL string
 	RuntimeBin string
@@ -138,6 +140,7 @@ func NormalizeConfig(cfg Config) Config {
 
 func normalizeStringsInConfig(cfg Config) Config {
 	cfg.ClusterID = strings.TrimSpace(cfg.ClusterID)
+	cfg.ClusterToken = strings.TrimSpace(cfg.ClusterToken)
 	cfg.NodeName = strings.TrimSpace(cfg.NodeName)
 	cfg.Listen = strings.TrimSpace(cfg.Listen)
 	cfg.APIURL = strings.TrimSpace(cfg.APIURL)

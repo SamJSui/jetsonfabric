@@ -146,6 +146,11 @@ func (s *Server) handleDeploymentSwitch(w http.ResponseWriter, r *http.Request) 
 		writeError(w, status, errorDeploymentTransitioning, err.Error())
 		return
 	}
+	if err := s.ensureIncomingPlanRuntimesIdle(transitionCtx, previous, build.Plan); err != nil {
+		s.deployments.abortTransition(err)
+		writeError(w, http.StatusBadGateway, errorDeploymentSwitchFailed, err.Error())
+		return
+	}
 	if err := s.applyDeploymentSwitch(transitionCtx, previous, build.Plan, model, members, request); err != nil {
 		s.deployments.fail(previous, err)
 		writeError(w, http.StatusBadGateway, errorDeploymentSwitchFailed, err.Error())
@@ -167,9 +172,6 @@ func (s *Server) applyDeploymentSwitch(
 	members []membership.Member,
 	request deploymentSwitchRequest,
 ) error {
-	if err := s.ensureIncomingPlanRuntimesIdle(ctx, previous, next); err != nil {
-		return err
-	}
 	if previous != nil {
 		if err := s.unloadPlan(ctx, *previous); err != nil {
 			return fmt.Errorf("unload active deployment %q: %w", previous.Identity().DeploymentID, err)
@@ -274,7 +276,9 @@ func (s *Server) loadPlan(
 		}
 		response, err := s.deploymentClient.Load(ctx, stage.APIURL, runtimebridge.LoadDeploymentRequest{
 			DeploymentID:   plan.Identity().DeploymentID,
+			Epoch:          plan.Identity().Epoch,
 			ModelID:        model.ID,
+			ModelSHA256:    plan.Model().ModelSHA256,
 			Engine:         string(plan.Model().Engine),
 			ComputeBackend: string(backend),
 			ModelPath:      model.ArtifactPath,
@@ -298,8 +302,9 @@ func (s *Server) loadPlan(
 }
 
 func (s *Server) activatePlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
+	identity := runtimeDeploymentIdentity(plan)
 	for _, stage := range plan.Stages() {
-		response, err := s.deploymentClient.Activate(ctx, stage.APIURL, plan.Identity().DeploymentID)
+		response, err := s.deploymentClient.Activate(ctx, stage.APIURL, identity)
 		if err != nil {
 			return fmt.Errorf("activate deployment on node %q: %w", stage.NodeID, err)
 		}
@@ -311,6 +316,7 @@ func (s *Server) activatePlan(ctx context.Context, plan clusterplan.DeploymentPl
 }
 
 func (s *Server) unloadPlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
+	identity := runtimeDeploymentIdentity(plan)
 	stages := plan.Stages()
 	toUnload := make([]clusterplan.Stage, 0, len(stages))
 	var failures []string
@@ -323,7 +329,7 @@ func (s *Server) unloadPlan(ctx context.Context, plan clusterplan.DeploymentPlan
 		if !status.Resident && status.State == "idle" {
 			continue
 		}
-		if status.Deployment == nil || status.Deployment.DeploymentID != plan.Identity().DeploymentID {
+		if !runtimeDeploymentIdentityMatches(status.Deployment, identity) {
 			failures = append(failures, fmt.Sprintf("node %q hosts a different or unidentified deployment", stage.NodeID))
 			continue
 		}
@@ -333,9 +339,13 @@ func (s *Server) unloadPlan(ctx context.Context, plan clusterplan.DeploymentPlan
 		return errors.New(strings.Join(failures, "; "))
 	}
 	for _, stage := range toUnload {
-		response, err := s.deploymentClient.Unload(ctx, stage.APIURL, plan.Identity().DeploymentID)
+		response, err := s.deploymentClient.Unload(ctx, stage.APIURL, identity)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("node %q: %v", stage.NodeID, err))
+			continue
+		}
+		if !runtimeDeploymentIdentityMatches(response.Deployment, identity) {
+			failures = append(failures, fmt.Sprintf("node %q acknowledged a different deployment identity", stage.NodeID))
 			continue
 		}
 		if response.Resident || response.Active || response.State != "idle" {
@@ -372,13 +382,38 @@ func validateRuntimeStatus(
 	if !status.Resident || status.Active != active || status.State != state || status.Deployment == nil {
 		return fmt.Errorf("unexpected runtime status resident=%t active=%t state=%q", status.Resident, status.Active, status.State)
 	}
-	if status.Deployment.DeploymentID != plan.Identity().DeploymentID || status.Deployment.ModelID != plan.Model().ModelID {
-		return fmt.Errorf("runtime reports deployment %q model %q, want deployment %q model %q for stage %d", status.Deployment.DeploymentID, status.Deployment.ModelID, plan.Identity().DeploymentID, plan.Model().ModelID, stage.StageIndex)
+	wantIdentity := runtimeDeploymentIdentity(plan)
+	if !runtimeDeploymentIdentityMatches(status.Deployment, wantIdentity) {
+		return fmt.Errorf(
+			"runtime reports deployment %q epoch %d model %q sha256 %q, want deployment %q epoch %d model %q sha256 %q for stage %d",
+			status.Deployment.DeploymentID,
+			status.Deployment.Epoch,
+			status.Deployment.ModelID,
+			status.Deployment.ModelSHA256,
+			wantIdentity.DeploymentID,
+			wantIdentity.Epoch,
+			wantIdentity.ModelID,
+			wantIdentity.ModelSHA256,
+			stage.StageIndex,
+		)
 	}
 	if err := validateRuntimeModelMemory(status, plan, stage, active); err != nil {
 		return fmt.Errorf("stage %d model residency: %w", stage.StageIndex, err)
 	}
 	return nil
+}
+
+func runtimeDeploymentIdentity(plan clusterplan.DeploymentPlan) runtimebridge.DeploymentIdentity {
+	return runtimebridge.DeploymentIdentity{
+		DeploymentID: plan.Identity().DeploymentID,
+		Epoch:        plan.Identity().Epoch,
+		ModelID:      plan.Model().ModelID,
+		ModelSHA256:  plan.Model().ModelSHA256,
+	}
+}
+
+func runtimeDeploymentIdentityMatches(actual *runtimebridge.DeploymentIdentity, expected runtimebridge.DeploymentIdentity) bool {
+	return actual != nil && *actual == expected
 }
 
 func validateRuntimeModelMemory(

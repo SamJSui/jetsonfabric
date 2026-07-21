@@ -305,7 +305,9 @@ func (c *blockingDeploymentClient) Load(ctx context.Context, _ string, request r
 		State:    "ready",
 		Deployment: &runtimebridge.DeploymentIdentity{
 			DeploymentID: request.DeploymentID,
+			Epoch:        request.Epoch,
 			ModelID:      request.ModelID,
+			ModelSHA256:  request.ModelSHA256,
 		},
 		ModelMemory: deploymentTestModelMemory(request, false),
 	}
@@ -315,10 +317,10 @@ func (c *blockingDeploymentClient) Load(ctx context.Context, _ string, request r
 	return runtimebridge.DeploymentOperationResponse{DeploymentStatus: cloneRuntimeStatus(status), Loaded: true}, nil
 }
 
-func (c *blockingDeploymentClient) Activate(_ context.Context, _ string, deploymentID string) (runtimebridge.DeploymentOperationResponse, error) {
+func (c *blockingDeploymentClient) Activate(_ context.Context, _ string, identity runtimebridge.DeploymentIdentity) (runtimebridge.DeploymentOperationResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.status.Deployment == nil || c.status.Deployment.DeploymentID != deploymentID {
+	if !runtimeDeploymentIdentityMatches(c.status.Deployment, identity) {
 		return runtimebridge.DeploymentOperationResponse{}, errors.New("deployment mismatch")
 	}
 	c.status.Active = true
@@ -327,14 +329,14 @@ func (c *blockingDeploymentClient) Activate(_ context.Context, _ string, deploym
 	return runtimebridge.DeploymentOperationResponse{DeploymentStatus: cloneRuntimeStatus(c.status), Activated: true}, nil
 }
 
-func (c *blockingDeploymentClient) Unload(_ context.Context, _ string, deploymentID string) (runtimebridge.DeploymentOperationResponse, error) {
+func (c *blockingDeploymentClient) Unload(_ context.Context, _ string, expected runtimebridge.DeploymentIdentity) (runtimebridge.DeploymentOperationResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.failUnload {
 		c.failUnload = false
 		return runtimebridge.DeploymentOperationResponse{}, errors.New("injected unload failure")
 	}
-	if c.status.Deployment == nil || c.status.Deployment.DeploymentID != deploymentID {
+	if !runtimeDeploymentIdentityMatches(c.status.Deployment, expected) {
 		return runtimebridge.DeploymentOperationResponse{}, errors.New("deployment mismatch")
 	}
 	identity := *c.status.Deployment

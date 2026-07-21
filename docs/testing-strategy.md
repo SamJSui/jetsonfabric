@@ -67,9 +67,10 @@ Current real-process harnesses are:
 - `scripts/local/validate-colocated-pipeline.sh`;
 - `scripts/jetson/validate-distributed-cuda.sh`.
 
-Integration scripts must validate response semantics, deployment identity,
-stage count, activation byte and CRC continuity, and exact greedy tokens. A
-successful HTTP status alone is not sufficient.
+Integration scripts must validate response semantics, the complete deployment
+identity (deployment ID, epoch, model ID, and artifact SHA-256), stage count,
+activation byte and CRC continuity, and exact greedy tokens. A successful HTTP
+status alone is not sufficient.
 
 ## Hardware Acceptance
 

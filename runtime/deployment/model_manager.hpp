@@ -5,6 +5,7 @@
 #include "pipeline_parallel/stage_worker.hpp"
 #include "worker/config.hpp"
 
+#include <cctype>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -31,7 +32,9 @@ public:
                 config.node_name,
                 DeploymentIdentity{
                     .deployment_id = config.model,
+                    .epoch = 0,
                     .model_id = config.model,
+                    .model_sha256 = "",
                 },
                 config.stage_assignment,
                 build_inference_engine_parts(config)
@@ -158,13 +161,15 @@ public:
     }
 
     ActivateDeploymentResult activate_resident_deployment(
-        const std::string& expected_deployment_id
+        const DeploymentIdentity& expected_identity
     ) {
-        if (expected_deployment_id.empty()) {
+        try {
+            require_managed_identity(expected_identity);
+        } catch (const std::invalid_argument& err) {
             return operation_error(
                 "400 Bad Request",
-                "invalid_deployment_id",
-                "deployment_id is required"
+                "invalid_deployment_identity",
+                err.what()
             );
         }
         if (!resident_.has_value()) {
@@ -174,11 +179,11 @@ public:
                 "runtime has no resident deployment"
             );
         }
-        if (resident_->identity.deployment_id != expected_deployment_id) {
+        if (resident_->identity != expected_identity) {
             return operation_error(
                 "409 Conflict",
                 "deployment_mismatch",
-                "resident deployment does not match deployment_id",
+                "resident deployment does not match the expected deployment identity",
                 resident_->identity,
                 resident_->state
             );
@@ -230,13 +235,15 @@ public:
     }
 
     UnloadDeploymentResult unload_resident_deployment(
-        const std::string& expected_deployment_id
+        const DeploymentIdentity& expected_identity
     ) {
-        if (expected_deployment_id.empty()) {
+        try {
+            require_managed_identity(expected_identity);
+        } catch (const std::invalid_argument& err) {
             return operation_error(
                 "400 Bad Request",
-                "invalid_deployment_id",
-                "deployment_id is required"
+                "invalid_deployment_identity",
+                err.what()
             );
         }
         if (!resident_.has_value()) {
@@ -246,11 +253,11 @@ public:
                 "runtime has no resident deployment"
             );
         }
-        if (resident_->identity.deployment_id != expected_deployment_id) {
+        if (resident_->identity != expected_identity) {
             return operation_error(
                 "409 Conflict",
                 "deployment_mismatch",
-                "resident deployment does not match deployment_id",
+                "resident deployment does not match the expected deployment identity",
                 resident_->identity,
                 resident_->state
             );
@@ -421,6 +428,22 @@ private:
         }
         if (identity.model_id.empty()) {
             throw std::invalid_argument("model_id is required");
+        }
+        return identity;
+    }
+
+    static const DeploymentIdentity& require_managed_identity(const DeploymentIdentity& identity) {
+        require_identity(identity);
+        if (identity.epoch == 0) {
+            throw std::invalid_argument("deployment epoch must be positive");
+        }
+        if (identity.model_sha256.size() != 64) {
+            throw std::invalid_argument("model_sha256 must be a 64-character hexadecimal digest");
+        }
+        for (const unsigned char character : identity.model_sha256) {
+            if (!std::isxdigit(character)) {
+                throw std::invalid_argument("model_sha256 must be a 64-character hexadecimal digest");
+            }
         }
         return identity;
     }

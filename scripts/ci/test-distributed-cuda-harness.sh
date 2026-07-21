@@ -57,8 +57,8 @@ jq -n '{
 jq -n '{
   inter_stage_payload_kind:"activation",
   plan:{topology:"distributed",physical_host_count:2,stage_count:2,stages:[
-    {stage_index:0,node_name:"node-a",layer_start:0,layer_end:3},
-    {stage_index:1,node_name:"node-b",layer_start:3,layer_end:6}
+    {stage_index:0,node_id:"node-a",node_name:"node-a",layer_start:0,layer_end:3},
+    {stage_index:1,node_id:"node-b",node_name:"node-b",layer_start:3,layer_end:6}
   ]},
   result:{payload_kind:"sampled_token",sampled_tokens:[11,12],generated_text:"ok",finish_reason:"length",prompt_tokens:4,completion_tokens:2,stages:[
     {phase:"prefill",decode_step:0,stage_index:0,node_name:"node-a",payload_kind_in:"text",payload_kind_out:"activation",payload_in:4,payload_out:32,payload_crc32_in:1,payload_crc32_out:100,latency_ms:1},
@@ -100,6 +100,22 @@ BAD_CRC_RESPONSE="$WORK_DIR/bad-crc-response.json"
 jq '.result.stages[1].payload_crc32_in = 999' "$RESPONSE" >"$BAD_CRC_RESPONSE"
 if run_harness "$MEMBERS" "$PREVIEW" "$BAD_CRC_RESPONSE" 2>/dev/null; then
   echo "CUDA harness accepted broken activation CRC continuity" >&2
+  exit 1
+fi
+
+INACTIVE_RESPONSE_MEMBERS="$WORK_DIR/inactive-response-members.json"
+jq '(.members[] | select(.node_id == "node-c") | .capabilities.runtime_cuda_active) = false' "$MEMBERS" >"$INACTIVE_RESPONSE_MEMBERS"
+INACTIVE_RESPONSE_PLAN="$WORK_DIR/inactive-response-plan.json"
+jq '.plan.stages[1].node_id = "node-c" | .plan.stages[1].node_name = "node-c"' "$RESPONSE" >"$INACTIVE_RESPONSE_PLAN"
+if run_harness "$INACTIVE_RESPONSE_MEMBERS" "$PREVIEW" "$INACTIVE_RESPONSE_PLAN" 2>/dev/null; then
+  echo "CUDA harness accepted an inactive runtime selected by the executed plan" >&2
+  exit 1
+fi
+
+MISSING_DECODE_RESPONSE="$WORK_DIR/missing-decode-response.json"
+jq '.result.sampled_tokens += [13] | .result.completion_tokens = 3' "$RESPONSE" >"$MISSING_DECODE_RESPONSE"
+if run_harness "$MEMBERS" "$PREVIEW" "$MISSING_DECODE_RESPONSE" 2>/dev/null; then
+  echo "CUDA harness accepted missing later decode traces" >&2
   exit 1
 fi
 

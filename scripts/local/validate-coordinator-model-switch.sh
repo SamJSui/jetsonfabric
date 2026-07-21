@@ -21,6 +21,7 @@ RUNTIME_BIN="${RUNTIME_BIN:-$ROOT_DIR/dist/jetsonfabric-runtime-worker-switch-cp
 NODE_BIN="${NODE_BIN:-$ROOT_DIR/dist/jetsonfabric-node}"
 LLAMA_CPP_COMMIT="${LLAMA_CPP_COMMIT:-unknown}"
 RUNTIME_REVISION="${JF_RUNTIME_REVISION:-milestone-3-ci}"
+CLUSTER_TOKEN="${JF_CLUSTER_TOKEN:-jetsonfabric-integration-token}"
 WORK_DIR="$(mktemp -d)"
 LOG_DIR="$WORK_DIR/logs"
 mkdir -p "$LOG_DIR"
@@ -139,7 +140,7 @@ JSON
 
 start_node() {
   local name=$1 node_port=$2 runtime_port=$3 peer_port=$4 role=$5
-  "$NODE_BIN" \
+  JETSONFABRIC_CLUSTER_TOKEN="$CLUSTER_TOKEN" "$NODE_BIN" \
     --cluster-id coordinator-switch-integration \
     --node-name "$name" \
     --listen "127.0.0.1:$node_port" \
@@ -198,12 +199,13 @@ wait_for_url "$NODE1_URL/v1/runtime/deployment"
 wait_for_members
 
 assert_runtime_deployment() {
-  local node_url=$1 deployment=$2 model=$3
+  local node_url=$1 deployment=$2 epoch=$3 model=$4 model_sha256=$5
   curl -fsS "$node_url/v1/runtime/deployment" | jq -e \
-    --arg deployment "$deployment" --arg model "$model" \
+    --arg deployment "$deployment" --argjson epoch "$epoch" --arg model "$model" --arg model_sha256 "$model_sha256" \
     --argjson layer_count "$LAYER_COUNT_A" \
     '.resident == true and .active == true and .state == "active" and
-     .deployment.deployment_id == $deployment and .deployment.model_id == $model and
+     .deployment.deployment_id == $deployment and .deployment.epoch == $epoch and
+     .deployment.model_id == $model and .deployment.model_sha256 == $model_sha256 and
      .model_memory.layer_start >= 0 and .model_memory.layer_end > .model_memory.layer_start and
      .model_memory.layer_end <= $layer_count and
      .model_memory.layer_count == $layer_count and
@@ -253,14 +255,14 @@ RUN_A="$WORK_DIR/run-a.json"
 SWITCH_B="$WORK_DIR/switch-b.json"
 RUN_B="$WORK_DIR/run-b.json"
 switch_model "$DEPLOYMENT_A" "$MODEL_A_ID" 1 "$SWITCH_A"
-assert_runtime_deployment "$NODE0_URL" "$DEPLOYMENT_A" "$MODEL_A_ID"
-assert_runtime_deployment "$NODE1_URL" "$DEPLOYMENT_A" "$MODEL_A_ID"
+assert_runtime_deployment "$NODE0_URL" "$DEPLOYMENT_A" 1 "$MODEL_A_ID" "$MODEL_A_SHA"
+assert_runtime_deployment "$NODE1_URL" "$DEPLOYMENT_A" 1 "$MODEL_A_ID" "$MODEL_A_SHA"
 run_model "$MODEL_A_ID" "$DEPLOYMENT_A" 1 "$BASELINE_A" "$RUN_A"
 assert_model_not_active "$MODEL_B_ID" "$WORK_DIR/model-b-before.json"
 
 switch_model "$DEPLOYMENT_B" "$MODEL_B_ID" 2 "$SWITCH_B"
-assert_runtime_deployment "$NODE0_URL" "$DEPLOYMENT_B" "$MODEL_B_ID"
-assert_runtime_deployment "$NODE1_URL" "$DEPLOYMENT_B" "$MODEL_B_ID"
+assert_runtime_deployment "$NODE0_URL" "$DEPLOYMENT_B" 2 "$MODEL_B_ID" "$MODEL_B_SHA"
+assert_runtime_deployment "$NODE1_URL" "$DEPLOYMENT_B" 2 "$MODEL_B_ID" "$MODEL_B_SHA"
 run_model "$MODEL_B_ID" "$DEPLOYMENT_B" 2 "$BASELINE_B" "$RUN_B"
 assert_model_not_active "$MODEL_A_ID" "$WORK_DIR/model-a-after.json"
 

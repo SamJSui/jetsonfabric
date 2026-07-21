@@ -83,9 +83,10 @@ func TestRuntimeLifecycleWritesRequireElectedCoordinatorIdentity(t *testing.T) {
 
 	forwarded := 0
 	router := NewRouter(Config{
-		SelfID:     "leader",
-		Store:      store,
-		StaleAfter: 30 * time.Second,
+		SelfID:       "leader",
+		ClusterToken: "cluster-secret",
+		Store:        store,
+		StaleAfter:   30 * time.Second,
 		RuntimeDeployment: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			forwarded++
 			writeJSON(w, http.StatusOK, map[string]string{"status": "forwarded"})
@@ -103,15 +104,45 @@ func TestRuntimeLifecycleWritesRequireElectedCoordinatorIdentity(t *testing.T) {
 	if deniedResponse.Code != http.StatusForbidden || forwarded != 1 {
 		t.Fatalf("unguarded lifecycle write status=%d forwarded=%d", deniedResponse.Code, forwarded)
 	}
-	assertJSONField(t, deniedResponse.Body.String(), "error", "coordinator_identity_required")
+	assertJSONField(t, deniedResponse.Body.String(), "error", "coordinator_authentication_required")
+
+	spoofedRequest := httptest.NewRequest(http.MethodPost, api.PathRuntimeDeploymentUnload, nil)
+	spoofedRequest.Header.Set(api.HeaderCoordinatorNodeID, "leader")
+	spoofedRequest.Header.Set(api.HeaderClusterToken, "wrong-secret")
+	spoofedResponse := httptest.NewRecorder()
+	router.ServeHTTP(spoofedResponse, spoofedRequest)
+	if spoofedResponse.Code != http.StatusForbidden || forwarded != 1 {
+		t.Fatalf("spoofed lifecycle write status=%d forwarded=%d", spoofedResponse.Code, forwarded)
+	}
 
 	allowedRequest := httptest.NewRequest(http.MethodPost, api.PathRuntimeDeploymentUnload, nil)
 	allowedRequest.Header.Set(api.HeaderCoordinatorNodeID, "leader")
+	allowedRequest.Header.Set(api.HeaderClusterToken, "cluster-secret")
 	allowedResponse := httptest.NewRecorder()
 	router.ServeHTTP(allowedResponse, allowedRequest)
 	if allowedResponse.Code != http.StatusOK || forwarded != 2 {
 		t.Fatalf("coordinator lifecycle write status=%d forwarded=%d", allowedResponse.Code, forwarded)
 	}
+}
+
+func TestRuntimeLifecycleWritesFailClosedWithoutClusterToken(t *testing.T) {
+	store := membership.NewStore()
+	store.Upsert(testFacadeMember("leader", "leader", membership.NodeRoleCoordinator, time.Now().UTC()))
+	router := NewRouter(Config{
+		SelfID:            "leader",
+		Store:             store,
+		StaleAfter:        30 * time.Second,
+		RuntimeDeployment: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("write was forwarded") }),
+	})
+
+	request := httptest.NewRequest(http.MethodPost, api.PathRuntimeDeploymentLoad, nil)
+	request.Header.Set(api.HeaderCoordinatorNodeID, "leader")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unconfigured lifecycle write status=%d body=%s", response.Code, response.Body.String())
+	}
+	assertJSONField(t, response.Body.String(), "error", "coordinator_auth_unconfigured")
 }
 
 func TestFollowerProxiesCoordinatorRequestsToLeader(t *testing.T) {

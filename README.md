@@ -286,6 +286,8 @@ that combines the compute and memory of multiple Jetson devices.
   a patch tied to the pinned `llama.cpp` revision.
 - `model_memory` reports tensor payload bytes. Allocator overhead, compute
   buffers, and context/KV structures are not included in that number yet.
+- Placement conservatively applies `min_memory_gb` to every selected stage until
+  the planner has a measured per-stage memory estimator.
 - The Go coordinator currently owns both the token loop and stage loop.
 - Deployment switching is explicit and destructive; automatic reconciliation,
   rollback, and spare-node preparation remain future milestones.

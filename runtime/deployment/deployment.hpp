@@ -73,7 +73,11 @@ constexpr bool is_valid_resident_deployment_transition(
 
 struct DeploymentIdentity {
     std::string deployment_id;
+    std::uint64_t epoch = 0;
     std::string model_id;
+    std::string model_sha256;
+
+    bool operator==(const DeploymentIdentity&) const = default;
 };
 
 struct ModelResidency {

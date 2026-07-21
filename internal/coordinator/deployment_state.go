@@ -188,6 +188,23 @@ func (s *deploymentState) fail(previous *clusterplan.DeploymentPlan, err error) 
 	s.mu.Unlock()
 }
 
+func (s *deploymentState) abortTransition(err error) {
+	s.mu.Lock()
+	switch {
+	case s.active != nil:
+		s.phase = deploymentPhaseActive
+	case s.recovery != nil:
+		s.phase = deploymentPhaseFailed
+	default:
+		s.phase = deploymentPhaseUnmanaged
+	}
+	if err != nil {
+		s.lastError = err.Error()
+	}
+	s.signalLocked()
+	s.mu.Unlock()
+}
+
 func (s *deploymentState) signalLocked() {
 	close(s.changed)
 	s.changed = make(chan struct{})
