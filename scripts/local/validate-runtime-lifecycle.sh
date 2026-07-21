@@ -5,9 +5,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MODEL_PATH="${MODEL_PATH:?MODEL_PATH must point to the GGUF to validate}"
 MODEL_ID="${MODEL_ID:-qwen2.5-coder-1.5b-q4}"
 DEPLOYMENT_ID="${JF_DEPLOYMENT_ID:-lifecycle-deployment-1}"
+DEPLOYMENT_EPOCH="${JF_DEPLOYMENT_EPOCH:-1}"
 NODE_NAME="${JF_NODE_NAME:-lifecycle-node}"
 RAW_PROMPT="${JF_RAW_PROMPT:-Once upon a time}"
-MAX_TOKENS="${JF_MAX_TOKENS:-2}"
+MAX_TOKENS="${JF_MAX_TOKENS:-4}"
+EXPECTED_TOKENS="${JF_EXPECTED_TOKENS:-}"
 NODE_PORT="${JF_NODE0_PORT:-19280}"
 RUNTIME_PORT="${JF_RUNTIME0_PORT:-19290}"
 RUNTIME_BUILD_DIR="${RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build-lifecycle-cpu}"
@@ -50,7 +52,7 @@ require_command() {
     exit 2
   }
 }
-for command in curl jq go cmake head seq; do
+for command in curl jq go cmake head seq sha256sum awk; do
   require_command "$command"
 done
 
@@ -63,6 +65,7 @@ if [[ "$(head -c 4 "$MODEL_PATH")" != "GGUF" ]]; then
   exit 2
 fi
 MODEL_PATH="$(cd "$(dirname "$MODEL_PATH")" && pwd)/$(basename "$MODEL_PATH")"
+MODEL_SHA256="$(sha256sum "$MODEL_PATH" | awk '{print $1}')"
 
 cd "$ROOT_DIR"
 if [[ "${JF_SKIP_BUILD:-false}" != "true" ]]; then
@@ -83,13 +86,22 @@ for binary in "$RUNTIME_BIN" "$NODE_BIN" "$STAGE_TEST_BIN"; do
 done
 
 LAYER_COUNT="$(CI_MODEL_PATH="$MODEL_PATH" "$STAGE_TEST_BIN" --print-layer-count)"
-BASELINE_TOKENS="$(CI_MODEL_PATH="$MODEL_PATH" "$STAGE_TEST_BIN" --baseline-tokens)"
+BASELINE_TOKENS="$(
+  CI_MODEL_PATH="$MODEL_PATH" \
+  JF_BASELINE_PROMPT="$RAW_PROMPT" \
+  JF_BASELINE_MAX_TOKENS="$MAX_TOKENS" \
+  "$STAGE_TEST_BIN" --baseline-tokens
+)"
 if [[ ! "$LAYER_COUNT" =~ ^[0-9]+$ || "$LAYER_COUNT" -lt 1 ]]; then
   echo "invalid layer count: $LAYER_COUNT" >&2
   exit 1
 fi
-if ! jq -e 'type == "array" and length == 2 and all(.[]; type == "number")' <<<"$BASELINE_TOKENS" >/dev/null; then
+if ! jq -e --argjson count "$MAX_TOKENS" 'type == "array" and length == $count and all(.[]; type == "number")' <<<"$BASELINE_TOKENS" >/dev/null; then
   echo "invalid baseline tokens: $BASELINE_TOKENS" >&2
+  exit 1
+fi
+if [[ -n "$EXPECTED_TOKENS" ]] && ! jq -e --argjson actual "$BASELINE_TOKENS" --argjson expected "$EXPECTED_TOKENS" '$actual == $expected' <<<null >/dev/null; then
+  echo "baseline tokens do not match JF_EXPECTED_TOKENS: expected=$EXPECTED_TOKENS actual=$BASELINE_TOKENS" >&2
   exit 1
 fi
 
@@ -148,7 +160,8 @@ jq -e '
   .resident == false and
   .active == false and
   .state == "idle" and
-  .deployment == null
+  .deployment == null and
+  .model_memory == null
 ' "$IDLE_FILE" >/dev/null
 
 LOAD_FILE="$WORK_DIR/load.json"
@@ -157,51 +170,69 @@ LOAD_CODE="$(curl -sS -o "$LOAD_FILE" -w '%{http_code}' \
   -H 'Content-Type: application/json' \
   --data-binary "$(jq -nc \
     --arg deployment "$DEPLOYMENT_ID" \
+    --argjson epoch "$DEPLOYMENT_EPOCH" \
     --arg model "$MODEL_ID" \
+    --arg model_sha256 "$MODEL_SHA256" \
     --arg path "$MODEL_PATH" \
     --argjson layer_end "$LAYER_COUNT" \
     --argjson ctx_size "${JF_CTX_SIZE:-256}" \
     --argjson threads "${JF_RUNTIME_THREADS:-2}" \
-    '{deployment_id:$deployment,model_id:$model,engine:"llama.cpp",compute_backend:"cpu",model_path:$path,ctx_size:$ctx_size,n_gpu_layers:0,threads:$threads,mode:"pipeline_parallel",stage_index:0,stage_count:1,layer_start:0,layer_end:$layer_end}')")"
+    '{deployment_id:$deployment,epoch:$epoch,model_id:$model,model_sha256:$model_sha256,engine:"llama.cpp",compute_backend:"cpu",model_path:$path,ctx_size:$ctx_size,n_gpu_layers:0,threads:$threads,mode:"pipeline_parallel",stage_index:0,stage_count:1,layer_start:0,layer_end:$layer_end}')")"
 if [[ "$LOAD_CODE" != "200" ]]; then
   echo "runtime load returned HTTP $LOAD_CODE" >&2
   jq . "$LOAD_FILE" >&2 2>/dev/null || cat "$LOAD_FILE" >&2
   exit 1
 fi
-jq -e --arg deployment "$DEPLOYMENT_ID" --arg model "$MODEL_ID" '
+jq -e --arg deployment "$DEPLOYMENT_ID" --argjson epoch "$DEPLOYMENT_EPOCH" --arg model "$MODEL_ID" --arg model_sha256 "$MODEL_SHA256" --argjson layer_count "$LAYER_COUNT" '
   .loaded == true and
   .resident == true and
   .active == false and
   .state == "ready" and
   .deployment.deployment_id == $deployment and
-  .deployment.model_id == $model
+  .deployment.epoch == $epoch and
+  .deployment.model_id == $model and
+  .deployment.model_sha256 == $model_sha256 and
+  .model_memory.layer_start == 0 and
+  .model_memory.layer_end == $layer_count and
+  .model_memory.layer_count == $layer_count and
+  .model_memory.resident_weight_bytes > 0 and
+  .model_memory.resident_weight_bytes == .model_memory.total_weight_bytes and
+  .model_memory.resident_tensor_count > 0 and
+  .model_memory.partitioned == false and
+  .model_memory.pinned == false
 ' "$LOAD_FILE" >/dev/null
 
 READY_STATUS="$WORK_DIR/ready-status.json"
 curl -fsS "$RUNTIME_URL/v1/deployment" >"$READY_STATUS"
-jq -e --arg deployment "$DEPLOYMENT_ID" '
+jq -e --arg deployment "$DEPLOYMENT_ID" --argjson epoch "$DEPLOYMENT_EPOCH" --arg model_sha256 "$MODEL_SHA256" '
   .resident == true and
   .active == false and
   .state == "ready" and
-  .deployment.deployment_id == $deployment
+  .deployment.deployment_id == $deployment and
+  .deployment.epoch == $epoch and
+  .deployment.model_sha256 == $model_sha256 and
+  .model_memory.pinned == false
 ' "$READY_STATUS" >/dev/null
 
 ACTIVATE_FILE="$WORK_DIR/activate.json"
 ACTIVATE_CODE="$(curl -sS -o "$ACTIVATE_FILE" -w '%{http_code}' \
   -X POST "$RUNTIME_URL/v1/deployment/activate" \
   -H 'Content-Type: application/json' \
-  --data-binary "$(jq -nc --arg deployment "$DEPLOYMENT_ID" '{deployment_id:$deployment}')")"
+  --data-binary "$(jq -nc --arg deployment "$DEPLOYMENT_ID" --argjson epoch "$DEPLOYMENT_EPOCH" --arg model "$MODEL_ID" --arg model_sha256 "$MODEL_SHA256" '{deployment_id:$deployment,epoch:$epoch,model_id:$model,model_sha256:$model_sha256}')")"
 if [[ "$ACTIVATE_CODE" != "200" ]]; then
   echo "runtime activation returned HTTP $ACTIVATE_CODE" >&2
   jq . "$ACTIVATE_FILE" >&2 2>/dev/null || cat "$ACTIVATE_FILE" >&2
   exit 1
 fi
-jq -e --arg deployment "$DEPLOYMENT_ID" '
+jq -e --arg deployment "$DEPLOYMENT_ID" --argjson epoch "$DEPLOYMENT_EPOCH" --arg model_sha256 "$MODEL_SHA256" '
   .activated == true and
   .resident == true and
   .active == true and
   .state == "active" and
-  .deployment.deployment_id == $deployment
+  .deployment.deployment_id == $deployment and
+  .deployment.epoch == $epoch and
+  .deployment.model_sha256 == $model_sha256 and
+  .model_memory.pinned == true
 ' "$ACTIVATE_FILE" >/dev/null
 
 "$NODE_BIN" \
@@ -248,30 +279,36 @@ if [[ "$INFERENCE_CODE" != "200" ]]; then
   jq . "$INFERENCE_FILE" >&2 2>/dev/null || cat "$INFERENCE_FILE" >&2
   exit 1
 fi
-jq -e --argjson baseline "$BASELINE_TOKENS" '
+jq -e --argjson baseline "$BASELINE_TOKENS" --argjson max_tokens "$MAX_TOKENS" '
   .plan.valid == true and
   .plan.stage_count == 1 and
   .result.payload_kind == "sampled_token" and
   .result.sampled_tokens == $baseline and
-  .result.prompt_tokens > 0
+  .result.prompt_tokens > 0 and
+  (.result.stages | length) == $max_tokens and
+  .result.stages[0].phase == "prefill" and
+  all(.result.stages[1:][]; .phase == "decode")
 ' "$INFERENCE_FILE" >/dev/null
 
 UNLOAD_FILE="$WORK_DIR/unload.json"
 UNLOAD_CODE="$(curl -sS -o "$UNLOAD_FILE" -w '%{http_code}' \
   -X POST "$RUNTIME_URL/v1/deployment/unload" \
   -H 'Content-Type: application/json' \
-  --data-binary "$(jq -nc --arg deployment "$DEPLOYMENT_ID" '{deployment_id:$deployment}')")"
+  --data-binary "$(jq -nc --arg deployment "$DEPLOYMENT_ID" --argjson epoch "$DEPLOYMENT_EPOCH" --arg model "$MODEL_ID" --arg model_sha256 "$MODEL_SHA256" '{deployment_id:$deployment,epoch:$epoch,model_id:$model,model_sha256:$model_sha256}')")"
 if [[ "$UNLOAD_CODE" != "200" ]]; then
   echo "runtime unload returned HTTP $UNLOAD_CODE" >&2
   jq . "$UNLOAD_FILE" >&2 2>/dev/null || cat "$UNLOAD_FILE" >&2
   exit 1
 fi
-jq -e --arg deployment "$DEPLOYMENT_ID" '
+jq -e --arg deployment "$DEPLOYMENT_ID" --argjson epoch "$DEPLOYMENT_EPOCH" --arg model_sha256 "$MODEL_SHA256" '
   .unloaded == true and
   .resident == false and
   .active == false and
   .state == "idle" and
-  .deployment.deployment_id == $deployment
+  .deployment.deployment_id == $deployment and
+  .deployment.epoch == $epoch and
+  .deployment.model_sha256 == $model_sha256 and
+  .model_memory == null
 ' "$UNLOAD_FILE" >/dev/null
 
 FINAL_STATUS="$WORK_DIR/final-status.json"
@@ -280,7 +317,8 @@ jq -e '
   .resident == false and
   .active == false and
   .state == "idle" and
-  .deployment == null
+  .deployment == null and
+  .model_memory == null
 ' "$FINAL_STATUS" >/dev/null
 
 echo "Runtime deployment lifecycle validation passed"

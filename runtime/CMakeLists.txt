@@ -45,14 +45,28 @@ if(JF_LLAMA_STAGE_RANGE_API EQUAL -1)
   )
 endif()
 
+string(FIND "${JF_LLAMA_EXT_HEADER}" "llama_model_resident_tensor_bytes" JF_LLAMA_RESIDENCY_API)
+if(JF_LLAMA_RESIDENCY_API EQUAL -1)
+  message(FATAL_ERROR
+    "llama.cpp checkout is missing the JetsonFabric stage-residency patch; run runtime/patches/apply-llama-cpp-patches.sh"
+  )
+endif()
+
 include(FetchContent)
 
 set(JSON_BuildTests OFF CACHE INTERNAL "")
-FetchContent_Declare(
-  nlohmann_json
-  URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-)
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+  FetchContent_Declare(
+    nlohmann_json
+    URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  )
+else()
+  FetchContent_Declare(
+    nlohmann_json
+    URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
+  )
+endif()
 FetchContent_MakeAvailable(nlohmann_json)
 
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)

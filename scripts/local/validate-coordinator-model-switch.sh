@@ -9,7 +9,9 @@ MODEL_B_ID="${MODEL_B_ID:-ci-tiny-llama-q8}"
 DEPLOYMENT_A="${JF_DEPLOYMENT_A:-coordinator-deployment-a}"
 DEPLOYMENT_B="${JF_DEPLOYMENT_B:-coordinator-deployment-b}"
 RAW_PROMPT="${JF_RAW_PROMPT:-Once upon a time}"
-MAX_TOKENS="${JF_MAX_TOKENS:-2}"
+MAX_TOKENS="${JF_MAX_TOKENS:-4}"
+EXPECTED_TOKENS_A="${JF_EXPECTED_TOKENS_A:-}"
+EXPECTED_TOKENS_B="${JF_EXPECTED_TOKENS_B:-}"
 NODE0_PORT="${JF_NODE0_PORT:-19380}"
 NODE1_PORT="${JF_NODE1_PORT:-19381}"
 RUNTIME0_PORT="${JF_RUNTIME0_PORT:-19390}"
@@ -19,6 +21,7 @@ RUNTIME_BIN="${RUNTIME_BIN:-$ROOT_DIR/dist/jetsonfabric-runtime-worker-switch-cp
 NODE_BIN="${NODE_BIN:-$ROOT_DIR/dist/jetsonfabric-node}"
 LLAMA_CPP_COMMIT="${LLAMA_CPP_COMMIT:-unknown}"
 RUNTIME_REVISION="${JF_RUNTIME_REVISION:-milestone-3-ci}"
+CLUSTER_TOKEN="${JF_CLUSTER_TOKEN:-jetsonfabric-integration-token}"
 WORK_DIR="$(mktemp -d)"
 LOG_DIR="$WORK_DIR/logs"
 mkdir -p "$LOG_DIR"
@@ -79,13 +82,31 @@ done
 
 LAYER_COUNT_A="$(CI_MODEL_PATH="$MODEL_A_PATH" "$STAGE_TEST_BIN" --print-layer-count)"
 LAYER_COUNT_B="$(CI_MODEL_PATH="$MODEL_B_PATH" "$STAGE_TEST_BIN" --print-layer-count)"
-BASELINE_A="$(CI_MODEL_PATH="$MODEL_A_PATH" "$STAGE_TEST_BIN" --baseline-tokens)"
-BASELINE_B="$(CI_MODEL_PATH="$MODEL_B_PATH" "$STAGE_TEST_BIN" --baseline-tokens)"
+BASELINE_A="$(
+  CI_MODEL_PATH="$MODEL_A_PATH" \
+  JF_BASELINE_PROMPT="$RAW_PROMPT" \
+  JF_BASELINE_MAX_TOKENS="$MAX_TOKENS" \
+  "$STAGE_TEST_BIN" --baseline-tokens
+)"
+BASELINE_B="$(
+  CI_MODEL_PATH="$MODEL_B_PATH" \
+  JF_BASELINE_PROMPT="$RAW_PROMPT" \
+  JF_BASELINE_MAX_TOKENS="$MAX_TOKENS" \
+  "$STAGE_TEST_BIN" --baseline-tokens
+)"
 [[ "$LAYER_COUNT_A" =~ ^[0-9]+$ && "$LAYER_COUNT_A" -ge 2 ]] || { echo "invalid model A layer count" >&2; exit 1; }
 [[ "$LAYER_COUNT_B" == "$LAYER_COUNT_A" ]] || { echo "model layer counts differ: $LAYER_COUNT_A vs $LAYER_COUNT_B" >&2; exit 1; }
 for baseline in "$BASELINE_A" "$BASELINE_B"; do
-  jq -e 'type == "array" and length == 2 and all(.[]; type == "number")' <<<"$baseline" >/dev/null
+  jq -e --argjson count "$MAX_TOKENS" 'type == "array" and length == $count and all(.[]; type == "number")' <<<"$baseline" >/dev/null
 done
+if [[ -n "$EXPECTED_TOKENS_A" ]] && ! jq -e --argjson actual "$BASELINE_A" --argjson expected "$EXPECTED_TOKENS_A" '$actual == $expected' <<<null >/dev/null; then
+  echo "model A baseline tokens changed: expected=$EXPECTED_TOKENS_A actual=$BASELINE_A" >&2
+  exit 1
+fi
+if [[ -n "$EXPECTED_TOKENS_B" ]] && ! jq -e --argjson actual "$BASELINE_B" --argjson expected "$EXPECTED_TOKENS_B" '$actual == $expected' <<<null >/dev/null; then
+  echo "model B baseline tokens changed: expected=$EXPECTED_TOKENS_B actual=$BASELINE_B" >&2
+  exit 1
+fi
 
 MODEL_REGISTRY="$WORK_DIR/models.json"
 cat >"$MODEL_REGISTRY" <<JSON
@@ -119,7 +140,7 @@ JSON
 
 start_node() {
   local name=$1 node_port=$2 runtime_port=$3 peer_port=$4 role=$5
-  "$NODE_BIN" \
+  JETSONFABRIC_CLUSTER_TOKEN="$CLUSTER_TOKEN" "$NODE_BIN" \
     --cluster-id coordinator-switch-integration \
     --node-name "$name" \
     --listen "127.0.0.1:$node_port" \
@@ -178,10 +199,20 @@ wait_for_url "$NODE1_URL/v1/runtime/deployment"
 wait_for_members
 
 assert_runtime_deployment() {
-  local node_url=$1 deployment=$2 model=$3
+  local node_url=$1 deployment=$2 epoch=$3 model=$4 model_sha256=$5
   curl -fsS "$node_url/v1/runtime/deployment" | jq -e \
-    --arg deployment "$deployment" --arg model "$model" \
-    '.resident == true and .active == true and .state == "active" and .deployment.deployment_id == $deployment and .deployment.model_id == $model' >/dev/null
+    --arg deployment "$deployment" --argjson epoch "$epoch" --arg model "$model" --arg model_sha256 "$model_sha256" \
+    --argjson layer_count "$LAYER_COUNT_A" \
+    '.resident == true and .active == true and .state == "active" and
+     .deployment.deployment_id == $deployment and .deployment.epoch == $epoch and
+     .deployment.model_id == $model and .deployment.model_sha256 == $model_sha256 and
+     .model_memory.layer_start >= 0 and .model_memory.layer_end > .model_memory.layer_start and
+     .model_memory.layer_end <= $layer_count and
+     .model_memory.layer_count == $layer_count and
+     .model_memory.resident_weight_bytes > 0 and
+     .model_memory.resident_weight_bytes < .model_memory.total_weight_bytes and
+     .model_memory.resident_tensor_count > 0 and
+     .model_memory.partitioned == true and .model_memory.pinned == true' >/dev/null
 }
 
 switch_model() {
@@ -204,8 +235,8 @@ run_model() {
     -H 'Content-Type: application/json' \
     --data-binary "$(jq -nc --arg model "$model" --arg payload "$RAW_PROMPT" --argjson max_tokens "$MAX_TOKENS" '{model:$model,payload:$payload,max_tokens:$max_tokens}')")"
   [[ "$code" == "200" ]] || { echo "inference for $model returned HTTP $code" >&2; cat "$output" >&2; exit 1; }
-  jq -e --arg deployment "$deployment" --arg model "$model" --argjson epoch "$epoch" --argjson baseline "$baseline" \
-    '.runtime_identity.deployment_id == $deployment and .runtime_identity.epoch == $epoch and .runtime_identity.model_id == $model and .result.sampled_tokens == $baseline and .plan.stage_count == 2' "$output" >/dev/null
+  jq -e --arg deployment "$deployment" --arg model "$model" --argjson epoch "$epoch" --argjson baseline "$baseline" --argjson max_tokens "$MAX_TOKENS" \
+    '.runtime_identity.deployment_id == $deployment and .runtime_identity.epoch == $epoch and .runtime_identity.model_id == $model and .result.sampled_tokens == $baseline and .plan.stage_count == 2 and (.result.stages | length) == (2 * $max_tokens)' "$output" >/dev/null
 }
 
 assert_model_not_active() {
@@ -224,14 +255,14 @@ RUN_A="$WORK_DIR/run-a.json"
 SWITCH_B="$WORK_DIR/switch-b.json"
 RUN_B="$WORK_DIR/run-b.json"
 switch_model "$DEPLOYMENT_A" "$MODEL_A_ID" 1 "$SWITCH_A"
-assert_runtime_deployment "$NODE0_URL" "$DEPLOYMENT_A" "$MODEL_A_ID"
-assert_runtime_deployment "$NODE1_URL" "$DEPLOYMENT_A" "$MODEL_A_ID"
+assert_runtime_deployment "$NODE0_URL" "$DEPLOYMENT_A" 1 "$MODEL_A_ID" "$MODEL_A_SHA"
+assert_runtime_deployment "$NODE1_URL" "$DEPLOYMENT_A" 1 "$MODEL_A_ID" "$MODEL_A_SHA"
 run_model "$MODEL_A_ID" "$DEPLOYMENT_A" 1 "$BASELINE_A" "$RUN_A"
 assert_model_not_active "$MODEL_B_ID" "$WORK_DIR/model-b-before.json"
 
 switch_model "$DEPLOYMENT_B" "$MODEL_B_ID" 2 "$SWITCH_B"
-assert_runtime_deployment "$NODE0_URL" "$DEPLOYMENT_B" "$MODEL_B_ID"
-assert_runtime_deployment "$NODE1_URL" "$DEPLOYMENT_B" "$MODEL_B_ID"
+assert_runtime_deployment "$NODE0_URL" "$DEPLOYMENT_B" 2 "$MODEL_B_ID" "$MODEL_B_SHA"
+assert_runtime_deployment "$NODE1_URL" "$DEPLOYMENT_B" 2 "$MODEL_B_ID" "$MODEL_B_SHA"
 run_model "$MODEL_B_ID" "$DEPLOYMENT_B" 2 "$BASELINE_B" "$RUN_B"
 assert_model_not_active "$MODEL_A_ID" "$WORK_DIR/model-a-after.json"
 

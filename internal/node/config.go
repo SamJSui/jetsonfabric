@@ -17,17 +17,18 @@ const (
 	DefaultDiscoveryInterval = 10 * time.Second
 	DefaultStaleAfter        = 30 * time.Second
 	DefaultLeaderPreference  = 0
+	ClusterTokenEnv          = "JETSONFABRIC_CLUSTER_TOKEN"
 
-	AutoRuntimeURL                  = "auto"
-	DefaultRuntimeBin               = "dist/jetsonfabric-runtime-worker"
-	DefaultRuntimeListen            = "127.0.0.1:0"
-	DefaultRuntimeComputeBackend    = "cuda"
-	DefaultRuntimeMode              = "pipeline_parallel"
-	DefaultRuntimeCtxSize           = 4096
-	DefaultRuntimeNGPULayers        = 999
-	DefaultRuntimeThreads           = 0
-	DefaultRuntimeRevision          = "dev"
-	DefaultRuntimeLlamaCPPRevision  = "dev"
+	AutoRuntimeURL                 = "auto"
+	DefaultRuntimeBin              = "dist/jetsonfabric-runtime-worker"
+	DefaultRuntimeListen           = "127.0.0.1:0"
+	DefaultRuntimeComputeBackend   = "cuda"
+	DefaultRuntimeMode             = "pipeline_parallel"
+	DefaultRuntimeCtxSize          = 4096
+	DefaultRuntimeNGPULayers       = 999
+	DefaultRuntimeThreads          = 0
+	DefaultRuntimeRevision         = "dev"
+	DefaultRuntimeLlamaCPPRevision = "dev"
 
 	DefaultStageIndex = 0
 	DefaultStageCount = 1
@@ -38,28 +39,29 @@ const (
 var defaultDiscoveryModes = []string{discovery.ModeMDNS}
 
 type Config struct {
-	ClusterID string
-	NodeName  string
-	Listen    string
-	APIURL    string
-	DataDir   string
+	ClusterID    string
+	ClusterToken string
+	NodeName     string
+	Listen       string
+	APIURL       string
+	DataDir      string
 
 	RuntimeURL string
 	RuntimeBin string
 
-	Engine                   cluster.Engine
-	Model                    string
-	ModelPath                string
-	RuntimeListen            string
-	RuntimeComputeBackend    string
-	RuntimeMode              string
-	RuntimeCtxSize           int
-	RuntimeNGPULayers        int
-	RuntimeThreads           int
-	RuntimeStartIdle         bool
-	RuntimeRevision          string
-	RuntimeLlamaCPPRevision  string
-	RuntimeCUDAActive        bool
+	Engine                  cluster.Engine
+	Model                   string
+	ModelPath               string
+	RuntimeListen           string
+	RuntimeComputeBackend   string
+	RuntimeMode             string
+	RuntimeCtxSize          int
+	RuntimeNGPULayers       int
+	RuntimeThreads          int
+	RuntimeStartIdle        bool
+	RuntimeRevision         string
+	RuntimeLlamaCPPRevision string
+	RuntimeCUDAActive       bool
 
 	StageIndex int
 	StageCount int
@@ -84,38 +86,38 @@ type Config struct {
 
 func DefaultConfigValue() Config {
 	return Config{
-		ClusterID:                    DefaultClusterID,
-		Listen:                       DefaultNodeListen,
-		APIURL:                       "",
-		DataDir:                      "",
-		RuntimeURL:                   AutoRuntimeURL,
-		RuntimeBin:                   DefaultRuntimeBin,
-		Engine:                       cluster.EngineLlamaCPP,
-		Model:                        "qwen2.5-coder-1.5b-q4",
-		ModelPath:                    "",
-		RuntimeListen:                DefaultRuntimeListen,
-		RuntimeComputeBackend:        DefaultRuntimeComputeBackend,
-		RuntimeMode:                  DefaultRuntimeMode,
-		RuntimeCtxSize:               DefaultRuntimeCtxSize,
-		RuntimeNGPULayers:            DefaultRuntimeNGPULayers,
-		RuntimeThreads:               DefaultRuntimeThreads,
-		RuntimeRevision:              DefaultRuntimeRevision,
-		RuntimeLlamaCPPRevision:      DefaultRuntimeLlamaCPPRevision,
-		StageIndex:                   DefaultStageIndex,
-		StageCount:                   DefaultStageCount,
-		LayerStart:                   DefaultLayerStart,
-		LayerEnd:                     DefaultLayerEnd,
-		Role:                         membership.NodeRoleAuto,
-		LeaderPreference:             DefaultLeaderPreference,
-		Seeds:                        nil,
-		DiscoveryModes:               append([]string(nil), defaultDiscoveryModes...),
-		DiscoveryInterval:            DefaultDiscoveryInterval,
-		StaleAfter:                   DefaultStaleAfter,
-		MDNSService:                  discovery.DefaultMDNSService,
-		MDNSDomain:                   discovery.DefaultMDNSDomain,
-		MDNSBrowseTimeout:            discovery.DefaultMDNSBrowseTimeout,
-		ModelsPath:                   config.DefaultModelRegistryPath(),
-		BenchmarksPath:               config.DefaultBenchmarksPath(),
+		ClusterID:               DefaultClusterID,
+		Listen:                  DefaultNodeListen,
+		APIURL:                  "",
+		DataDir:                 "",
+		RuntimeURL:              AutoRuntimeURL,
+		RuntimeBin:              DefaultRuntimeBin,
+		Engine:                  cluster.EngineLlamaCPP,
+		Model:                   "qwen2.5-coder-1.5b-q4",
+		ModelPath:               "",
+		RuntimeListen:           DefaultRuntimeListen,
+		RuntimeComputeBackend:   DefaultRuntimeComputeBackend,
+		RuntimeMode:             DefaultRuntimeMode,
+		RuntimeCtxSize:          DefaultRuntimeCtxSize,
+		RuntimeNGPULayers:       DefaultRuntimeNGPULayers,
+		RuntimeThreads:          DefaultRuntimeThreads,
+		RuntimeRevision:         DefaultRuntimeRevision,
+		RuntimeLlamaCPPRevision: DefaultRuntimeLlamaCPPRevision,
+		StageIndex:              DefaultStageIndex,
+		StageCount:              DefaultStageCount,
+		LayerStart:              DefaultLayerStart,
+		LayerEnd:                DefaultLayerEnd,
+		Role:                    membership.NodeRoleAuto,
+		LeaderPreference:        DefaultLeaderPreference,
+		Seeds:                   nil,
+		DiscoveryModes:          append([]string(nil), defaultDiscoveryModes...),
+		DiscoveryInterval:       DefaultDiscoveryInterval,
+		StaleAfter:              DefaultStaleAfter,
+		MDNSService:             discovery.DefaultMDNSService,
+		MDNSDomain:              discovery.DefaultMDNSDomain,
+		MDNSBrowseTimeout:       discovery.DefaultMDNSBrowseTimeout,
+		ModelsPath:              config.DefaultModelRegistryPath(),
+		BenchmarksPath:          config.DefaultBenchmarksPath(),
 	}
 }
 
@@ -138,6 +140,7 @@ func NormalizeConfig(cfg Config) Config {
 
 func normalizeStringsInConfig(cfg Config) Config {
 	cfg.ClusterID = strings.TrimSpace(cfg.ClusterID)
+	cfg.ClusterToken = strings.TrimSpace(cfg.ClusterToken)
 	cfg.NodeName = strings.TrimSpace(cfg.NodeName)
 	cfg.Listen = strings.TrimSpace(cfg.Listen)
 	cfg.APIURL = strings.TrimSpace(cfg.APIURL)

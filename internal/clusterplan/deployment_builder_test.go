@@ -89,6 +89,37 @@ func TestBuildDeploymentPlanRequiresActiveCUDACompatibility(t *testing.T) {
 	}
 }
 
+func TestBuildDeploymentPlanExcludesStartupPinnedRuntimes(t *testing.T) {
+	now := time.Now().UTC()
+	pinned := deploymentMember("node-pinned", "pinned", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now)
+	pinned.Capabilities[cluster.CapabilityRuntimeStartsIdle] = false
+	pinned.Capabilities[cluster.CapabilityMemoryGB] = 256.0
+	members := []membership.Member{
+		pinned,
+		deploymentMember("node-a", "dopey", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now),
+		deploymentMember("node-b", "sleepy", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now),
+	}
+	members[1].Hostname = "host-a"
+	members[2].Hostname = "host-b"
+
+	result, err := BuildDeploymentPlan(DeploymentBuildRequest{
+		Identity:   DeploymentIdentity{DeploymentID: "deployment-a", Epoch: 1},
+		Model:      deployableModel(nil),
+		Members:    members,
+		Now:        now,
+		StaleAfter: time.Minute,
+		Policy:     Policy{StageCount: 2},
+	})
+	if err != nil {
+		t.Fatalf("BuildDeploymentPlan() error = %v", err)
+	}
+	for _, stage := range result.Plan.Stages() {
+		if stage.NodeID == pinned.NodeID {
+			t.Fatalf("startup-pinned runtime was selected for managed deployment: %+v", stage)
+		}
+	}
+}
+
 func deployableModel(preferred *cluster.ComputeBackend) cluster.ModelProfile {
 	return cluster.ModelProfile{
 		ID:               "model-a",
@@ -120,15 +151,15 @@ func deploymentMember(
 		APIURL:    "http://" + nodeID + ".test",
 		Arch:      arch,
 		Capabilities: map[string]any{
-			cluster.CapabilityMemoryGB:                 64.0,
-			cluster.CapabilityComputeBackends:          []string{string(backend)},
-			cluster.CapabilityRuntimeEngine:            string(cluster.EngineLlamaCPP),
-			cluster.CapabilityRuntimeComputeBackend:    string(backend),
-			cluster.CapabilityRuntimeExecutionMode:     string(cluster.ExecutionModePipelineParallel),
-			cluster.CapabilityRuntimeRevision:          runtimeRevision,
-			cluster.CapabilityRuntimeLlamaCPPRevision:  llamaRevision,
-			cluster.CapabilityRuntimeCUDAActive:        cudaActive,
-			cluster.CapabilityRuntimeStartsIdle:        true,
+			cluster.CapabilityMemoryGB:                64.0,
+			cluster.CapabilityComputeBackends:         []string{string(backend)},
+			cluster.CapabilityRuntimeEngine:           string(cluster.EngineLlamaCPP),
+			cluster.CapabilityRuntimeComputeBackend:   string(backend),
+			cluster.CapabilityRuntimeExecutionMode:    string(cluster.ExecutionModePipelineParallel),
+			cluster.CapabilityRuntimeRevision:         runtimeRevision,
+			cluster.CapabilityRuntimeLlamaCPPRevision: llamaRevision,
+			cluster.CapabilityRuntimeCUDAActive:       cudaActive,
+			cluster.CapabilityRuntimeStartsIdle:       true,
 		},
 		StartedAt: now.Add(-time.Hour),
 		LastSeen:  now,

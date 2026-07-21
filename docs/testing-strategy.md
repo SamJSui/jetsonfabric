@@ -1,156 +1,91 @@
 # Testing Strategy
 
-JetsonFabric should not chase unit tests for every file as a checkbox. It should maintain focused tests around stable contracts, risky logic, and regression-prone boundaries.
+JetsonFabric tests protect the contracts that can corrupt model execution,
+publish an invalid deployment, or misrepresent hardware evidence. The suite uses
+real model execution where engine behavior matters and focused fakes where
+failure injection matters.
 
-## Testing Pyramid
+## Required Pull Request Gates
 
-1. Pure unit tests for deterministic logic.
-2. HTTP handler tests for API behavior.
-3. Contract tests for runtime/backend boundaries.
-4. Smoke tests for real process and hardware paths.
-5. Benchmark tests as evidence, not pass/fail unit tests.
+GitHub Actions runs these gates on Linux:
 
-## Must-Have Go Unit Tests
+1. `go test ./...` for node fabric, planning, lifecycle, facade, and wire logic.
+2. Linux ARM64 cross-compilation of `jetsonfabric-node`.
+3. Shell syntax validation for every script under `scripts/`.
+4. Native C++ runtime tests against a pinned llama.cpp revision.
+5. Single-stage, lifecycle, model-switch, and colocated pipeline tests with
+   immutable GGUF fixtures.
+6. Qwen2 partition-residency and token-equivalence coverage.
+7. Synthetic binary Stagewire transport coverage.
 
-### `internal/routing`
+Model fixtures must use immutable source revisions and exact SHA-256 checks. A
+cache hit never replaces integrity verification.
 
-Test placement decisions:
+## Go Coverage
 
-- unknown model
-- no nodes
-- enough memory
-- insufficient memory
-- preferred accelerator present/missing
-- deterministic placement ordering
+The highest-value Go tests cover:
 
-### `internal/layersplit`
+- `internal/discovery` and `internal/membership`: peer normalization, freshness,
+  duplicate handling, and coordinator election inputs;
+- `internal/clusterplan`: deterministic placement, physical-host separation,
+  compatibility, contiguous layer ranges, and immutable deployment epochs;
+- `internal/coordinator`: admission barriers, incoming-runtime preflight,
+  partial failures, cleanup, model switching, and session pinning;
+- `internal/facade`: public API routing and node-local runtime forwarding;
+- `internal/stagewire`: frame bounds, metadata validation, payload length, and
+  checksum handling;
+- `internal/runtimebridge`: runtime lifecycle request and response contracts.
 
-Test planner and transport helper behavior:
+Use `httptest.Server` for HTTP boundaries. Use fakes only to inject states that
+are difficult to reproduce deterministically with a native runtime, and pair
+important success paths with real-process integration tests.
 
-- one-node single-stage mode when supported by future runtime contract
-- two-node split layer ranges
-- weighted layer allocation
-- invalid layer counts
-- invalid candidate sets
-- stage role assignment
-- activation request/response normalization
+## Native Runtime Coverage
 
-### `internal/modelregistry` and `internal/modelartifacts`
+Native tests own engine-sensitive behavior:
 
-Test config parsing:
+- runtime configuration and deployment lifecycle;
+- exact partial-layer residency ranges;
+- one-, two-, and three-stage llama.cpp execution;
+- real middle-stage activation forwarding;
+- greedy token equivalence through repeated decode steps;
+- session retention, ordering, expiry, and cleanup;
+- supported architecture checks for llama and qwen2.
 
-- valid catalog/registry
-- missing model ID
-- missing runtime
-- invalid source URL
-- pipeline_parallel model without enough layers
-- artifact lookup by model ID
+The full-model baseline and partitioned stages currently share the pinned
+llama.cpp build. Immutable fixture hashes and checked-in expected tokens should
+be used for critical fixtures so a shared regression cannot redefine the
+expected result silently.
 
-### `internal/runtimeclient`
+## Integration Scripts
 
-Use `httptest.Server`:
+Current real-process harnesses are:
 
-- successful OpenAI-compatible response
-- backend HTTP error response
-- malformed JSON
-- response with no choices
-- usage-derived token stats
-- timeout/error propagation
+- `scripts/local/validate-single-node.sh`;
+- `scripts/local/validate-runtime-lifecycle.sh`;
+- `scripts/local/validate-coordinator-model-switch.sh`;
+- `scripts/local/validate-colocated-pipeline.sh`;
+- `scripts/jetson/validate-distributed-cuda.sh`.
 
-### `internal/control`
+Integration scripts must validate response semantics, the complete deployment
+identity (deployment ID, epoch, model ID, and artifact SHA-256), stage count,
+activation byte and CRC continuity, and exact greedy tokens. A successful HTTP
+status alone is not sufficient.
 
-Use handler tests with fake backends/recorders:
+## Hardware Acceptance
 
-- health endpoint
-- heartbeat registration
-- unauthorized heartbeat
-- nodes endpoint ordering
-- route preview
-- chat completion success
-- chat completion no compatible node
-- benchmark recorder called with expected fields
-- route metadata includes node/backend/latency
+Physical CUDA acceptance is separate from portable CI. It requires at least two
+distinct Jetson hosts selected into one distributed plan. Every selected member
+must report CUDA as the configured backend and explicitly attest that CUDA is
+active. Capture `tegrastats` with stage traces so GPU utilization, memory,
+temperature, activation size, and latency are tied to the same run.
 
-### `internal/agent`
+Colocated stages on one Jetson prove orchestration and engine correctness. They
+do not satisfy the physical distributed-compute gate.
 
-Use fake control and runtime servers:
+## Change Rule
 
-- heartbeat payload includes system snapshot fields
-- join token header is sent
-- proxy forwards chat requests
-- proxy strips route metadata from backend response
-- runtime unavailable path
-
-### `internal/system`
-
-Keep tests pure where possible:
-
-- meminfo parsing
-- load average parsing
-- field helpers
-
-Do not over-test live host command availability because it depends on the machine running tests.
-
-## Runtime Tests
-
-When the C++ runtime lane begins:
-
-### Unit tests
-
-- CLI/config parsing
-- tensor frame encode/decode
-- dtype enum serialization
-- shape validation
-- byte-length validation
-- transport frame boundaries
-- checksum/length mismatch handling
-
-### Contract tests
-
-- `/healthz`
-- future `/v1/runtime/info`
-- single-node chat/stub endpoint
-- future stage endpoint
-
-### Hardware tests
-
-Run only on Jetson or explicitly marked hardware environments:
-
-- CUDA availability
-- model load
-- one-node runtime generation
-- thermal/memory sampling
-
-## Smoke Tests
-
-Keep smoke tests as scripts because they validate real processes:
-
-- `scripts/poc-dopey-smoke.sh`
-- future `scripts/runtime-single-node-smoke.sh`
-- future `scripts/layer-split-two-node-smoke.sh`
-
-Smoke tests should assert route metadata and benchmark output, not only that an HTTP response exists.
-
-## Near-Term Test Priorities
-
-Before heavy runtime work:
-
-1. Add routing tests.
-2. Add control handler tests for heartbeat and chat route success.
-3. Add runtimeclient tests with `httptest.Server`.
-4. Add layersplit planner tests.
-5. Add model registry/artifact parser tests.
-6. Add a benchmark schema test or fixture check so old `node_id` vs new `node_name` drift does not continue.
-
-## Rule
-
-Every new module should have tests if it owns either:
-
-- route decisions
-- serialized formats
-- benchmark fields
-- network/API behavior
-- runtime boundaries
-- hardware detection parsing
-
-Simple glue files and scripts do not need exhaustive unit tests, but they should be covered by smoke tests when they are part of the POC path.
+Add or update tests whenever a change owns routing, deployment lifecycle,
+serialized data, model residency, network behavior, runtime execution, or
+hardware claims. Keep narrow glue code covered through the closest integration
+harness rather than adding low-value tests for every line.

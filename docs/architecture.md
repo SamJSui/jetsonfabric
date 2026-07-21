@@ -62,14 +62,19 @@ Direct runtime-to-runtime transport and a single runtime `Generate` call are tar
 ```text
 RuntimeService
   -> ModelManager
-      -> active LoadedModel
+      -> one resident deployment slot (idle, ready, active, or failed)
           -> model identity
+          -> stage-local model tensor residency
           -> InferenceEngineParts
           -> StageWorker
               -> LayerExecutor
 ```
 
-`ModelManager` is now the ownership boundary for active model execution state. The runtime still starts with exactly one configured model and assignment; idle startup and prepare/activate/unload operations are not implemented yet.
+`ModelManager` is the ownership boundary for model execution state. A runtime can
+start idle, load one assigned partition into the ready state, activate it after
+the coordinator barrier, and explicitly unload it. The coordinator publishes a
+new immutable deployment epoch only after every selected runtime reports the
+expected active identity, layer range, and model-memory accounting.
 
 ## Stage and session contract
 
@@ -104,8 +109,12 @@ Topology describes physical placement:
 
 ## Current limitations
 
-- Every runtime still opens the complete GGUF even though it executes only its assigned transformer range.
-- Runtime deployment is fixed at process startup.
+- Stage-local tensor loading currently supports only Llama and Qwen2 at the
+  pinned `llama.cpp` revision.
+- Residency accounting covers tensor payload bytes, not allocator, compute, or
+  context/KV overhead.
+- Deployment replacement is explicit and destructive; automatic reconciliation
+  and safe rebalance are not implemented.
 - Go coordinates every stage operation and autoregressive decode step.
 - Inter-stage activations are F32.
 - Chat completions are non-streaming and greedy-only.

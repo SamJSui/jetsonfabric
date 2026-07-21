@@ -14,6 +14,8 @@ namespace jetsonfabric::runtime::adapters {
 struct LlamaCppModelConfig {
     std::string model_path;
     int n_gpu_layers = 0;
+    int layer_start = 0;
+    int layer_end = 0;
 };
 
 class LlamaCppModel final {
@@ -31,6 +33,11 @@ public:
     int n_layer() const;
     int n_vocab() const;
     const std::string& architecture() const;
+    int loaded_layer_start() const;
+    int loaded_layer_end() const;
+    std::uint64_t resident_weight_bytes() const;
+    std::uint64_t total_weight_bytes() const;
+    std::uint64_t resident_tensor_count() const;
 
     std::vector<std::int32_t> tokenize(std::string_view text, bool add_special = true) const;
     std::string token_piece(std::int32_t token) const;

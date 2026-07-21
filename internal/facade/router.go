@@ -1,10 +1,12 @@
 package facade
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/api"
@@ -21,6 +23,7 @@ const (
 
 type Config struct {
 	SelfID            string
+	ClusterToken      string
 	Store             *membership.Store
 	StaleAfter        time.Duration
 	Coordinator       http.Handler
@@ -30,6 +33,7 @@ type Config struct {
 
 type Router struct {
 	selfID            string
+	clusterToken      string
 	store             *membership.Store
 	staleAfter        time.Duration
 	coordinator       http.Handler
@@ -63,6 +67,7 @@ func NewRouter(cfg Config) http.Handler {
 func newRouter(cfg Config) *Router {
 	return &Router{
 		selfID:            cfg.SelfID,
+		clusterToken:      strings.TrimSpace(cfg.ClusterToken),
 		store:             cfg.Store,
 		staleAfter:        cfg.StaleAfter,
 		coordinator:       cfg.Coordinator,
@@ -160,6 +165,32 @@ func (r *Router) handleRuntimeDeployment(w http.ResponseWriter, req *http.Reques
 			"message": "this node has no runtime deployment gateway configured",
 		})
 		return
+	}
+	if req.Method != http.MethodGet {
+		leader, ok := r.leader()
+		if !ok {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"error":   "coordinator_unavailable",
+				"message": "runtime lifecycle writes require an elected coordinator",
+			})
+			return
+		}
+		if r.clusterToken == "" {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"error":   "coordinator_auth_unconfigured",
+				"message": "runtime lifecycle writes require JETSONFABRIC_CLUSTER_TOKEN on every node",
+			})
+			return
+		}
+		providedToken := req.Header.Get(api.HeaderClusterToken)
+		if strings.TrimSpace(req.Header.Get(api.HeaderCoordinatorNodeID)) != leader.NodeID ||
+			subtle.ConstantTimeCompare([]byte(providedToken), []byte(r.clusterToken)) != 1 {
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error":   "coordinator_authentication_required",
+				"message": "runtime lifecycle writes require the elected coordinator and cluster token",
+			})
+			return
+		}
 	}
 	r.runtimeDeployment.ServeHTTP(w, req)
 }

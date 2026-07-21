@@ -16,14 +16,28 @@ import (
 
 type DeploymentIdentity struct {
 	DeploymentID string `json:"deployment_id"`
+	Epoch        uint64 `json:"epoch"`
 	ModelID      string `json:"model_id"`
+	ModelSHA256  string `json:"model_sha256"`
+}
+
+type ModelMemory struct {
+	LayerStart          int    `json:"layer_start"`
+	LayerEnd            int    `json:"layer_end"`
+	LayerCount          int    `json:"layer_count"`
+	ResidentWeightBytes uint64 `json:"resident_weight_bytes"`
+	TotalWeightBytes    uint64 `json:"total_weight_bytes"`
+	ResidentTensorCount uint64 `json:"resident_tensor_count"`
+	Partitioned         bool   `json:"partitioned"`
+	Pinned              bool   `json:"pinned"`
 }
 
 type DeploymentStatus struct {
-	Resident   bool                `json:"resident"`
-	Active     bool                `json:"active"`
-	State      string              `json:"state"`
-	Deployment *DeploymentIdentity `json:"deployment"`
+	Resident    bool                `json:"resident"`
+	Active      bool                `json:"active"`
+	State       string              `json:"state"`
+	Deployment  *DeploymentIdentity `json:"deployment"`
+	ModelMemory *ModelMemory        `json:"model_memory"`
 }
 
 type DeploymentOperationResponse struct {
@@ -35,7 +49,9 @@ type DeploymentOperationResponse struct {
 
 type LoadDeploymentRequest struct {
 	DeploymentID   string `json:"deployment_id"`
+	Epoch          uint64 `json:"epoch"`
 	ModelID        string `json:"model_id"`
+	ModelSHA256    string `json:"model_sha256"`
 	Engine         string `json:"engine"`
 	ComputeBackend string `json:"compute_backend"`
 	ModelPath      string `json:"model_path"`
@@ -52,19 +68,31 @@ type LoadDeploymentRequest struct {
 type DeploymentClient interface {
 	Status(context.Context, string) (DeploymentStatus, error)
 	Load(context.Context, string, LoadDeploymentRequest) (DeploymentOperationResponse, error)
-	Activate(context.Context, string, string) (DeploymentOperationResponse, error)
-	Unload(context.Context, string, string) (DeploymentOperationResponse, error)
+	Activate(context.Context, string, DeploymentIdentity) (DeploymentOperationResponse, error)
+	Unload(context.Context, string, DeploymentIdentity) (DeploymentOperationResponse, error)
+}
+
+type HTTPDeploymentClientConfig struct {
+	Timeout           time.Duration
+	CoordinatorNodeID string
+	ClusterToken      string
 }
 
 type HTTPDeploymentClient struct {
-	client *http.Client
+	client            *http.Client
+	coordinatorNodeID string
+	clusterToken      string
 }
 
-func NewHTTPDeploymentClient(timeout time.Duration) *HTTPDeploymentClient {
-	if timeout <= 0 {
-		timeout = 10 * time.Minute
+func NewHTTPDeploymentClient(cfg HTTPDeploymentClientConfig) *HTTPDeploymentClient {
+	if cfg.Timeout <= 0 {
+		cfg.Timeout = 10 * time.Minute
 	}
-	return &HTTPDeploymentClient{client: &http.Client{Timeout: timeout}}
+	return &HTTPDeploymentClient{
+		client:            &http.Client{Timeout: cfg.Timeout},
+		coordinatorNodeID: strings.TrimSpace(cfg.CoordinatorNodeID),
+		clusterToken:      strings.TrimSpace(cfg.ClusterToken),
+	}
 }
 
 func (c *HTTPDeploymentClient) Status(ctx context.Context, nodeURL string) (DeploymentStatus, error) {
@@ -82,18 +110,18 @@ func (c *HTTPDeploymentClient) Load(ctx context.Context, nodeURL string, request
 	return response, err
 }
 
-func (c *HTTPDeploymentClient) Activate(ctx context.Context, nodeURL string, deploymentID string) (DeploymentOperationResponse, error) {
+func (c *HTTPDeploymentClient) Activate(ctx context.Context, nodeURL string, identity DeploymentIdentity) (DeploymentOperationResponse, error) {
 	var response DeploymentOperationResponse
-	err := c.do(ctx, http.MethodPost, nodeURL, api.PathRuntimeDeploymentActivate, map[string]string{"deployment_id": deploymentID}, &response)
+	err := c.do(ctx, http.MethodPost, nodeURL, api.PathRuntimeDeploymentActivate, identity, &response)
 	if err == nil && !response.Activated {
 		err = fmt.Errorf("runtime activation response did not confirm activated=true")
 	}
 	return response, err
 }
 
-func (c *HTTPDeploymentClient) Unload(ctx context.Context, nodeURL string, deploymentID string) (DeploymentOperationResponse, error) {
+func (c *HTTPDeploymentClient) Unload(ctx context.Context, nodeURL string, identity DeploymentIdentity) (DeploymentOperationResponse, error) {
 	var response DeploymentOperationResponse
-	err := c.do(ctx, http.MethodPost, nodeURL, api.PathRuntimeDeploymentUnload, map[string]string{"deployment_id": deploymentID}, &response)
+	err := c.do(ctx, http.MethodPost, nodeURL, api.PathRuntimeDeploymentUnload, identity, &response)
 	if err == nil && !response.Unloaded {
 		err = fmt.Errorf("runtime unload response did not confirm unloaded=true")
 	}
@@ -119,6 +147,14 @@ func (c *HTTPDeploymentClient) do(ctx context.Context, method string, nodeURL st
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if method != http.MethodGet {
+		if c.coordinatorNodeID != "" {
+			req.Header.Set(api.HeaderCoordinatorNodeID, c.coordinatorNodeID)
+		}
+		if c.clusterToken != "" {
+			req.Header.Set(api.HeaderClusterToken, c.clusterToken)
+		}
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {

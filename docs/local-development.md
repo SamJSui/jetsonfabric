@@ -5,8 +5,8 @@ runtime is stage `0/1` and executes the complete model layer range through the
 same pipeline protocol used by multi-node deployments.
 
 Co-located multi-stage execution is test-only. It is intentionally kept out of
-`make dev-up` because every current test runtime still loads the complete GGUF,
-which creates artificial memory pressure on small Jetsons.
+`make dev-up` because two runtimes still duplicate process, context, KV, and
+compute-buffer overhead even though their model tensor weights are partitioned.
 
 ## Configuration
 
@@ -205,7 +205,8 @@ stage transport without loading a model.
 
 ## Current limitation
 
-Partial-layer graph execution is implemented, but each runtime still loads the
-complete GGUF. True stage-local tensor loading and dynamic deployment rebalancing
-belong to later milestones. Until then, production-style multi-stage validation
-should use distinct physical Jetsons; co-location remains a minimal CPU test.
+Stage-local tensor loading and explicit coordinator deployment switching are
+implemented for Llama and Qwen2. Automatic placement reconciliation and safe
+rebalance remain later milestones. Production-style multi-stage validation still
+requires distinct physical Jetsons; co-location proves correctness and memory
+partition contracts, not distributed CUDA performance.

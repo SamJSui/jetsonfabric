@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -72,7 +73,24 @@ constexpr bool is_valid_resident_deployment_transition(
 
 struct DeploymentIdentity {
     std::string deployment_id;
+    std::uint64_t epoch = 0;
     std::string model_id;
+    std::string model_sha256;
+
+    bool operator==(const DeploymentIdentity&) const = default;
+};
+
+struct ModelResidency {
+    int layer_start = 0;
+    int layer_end = 0;
+    int layer_count = 0;
+    std::uint64_t resident_weight_bytes = 0;
+    std::uint64_t total_weight_bytes = 0;
+    std::uint64_t resident_tensor_count = 0;
+
+    bool partitioned() const noexcept {
+        return layer_start != 0 || layer_end != layer_count;
+    }
 };
 
 struct DeploymentStatus {
@@ -80,6 +98,7 @@ struct DeploymentStatus {
     bool active = false;
     std::optional<ResidentDeploymentState> state;
     std::optional<DeploymentIdentity> identity;
+    std::optional<ModelResidency> model_residency;
 };
 
 struct DeploymentOperationResult {

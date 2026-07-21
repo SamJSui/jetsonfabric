@@ -1,5 +1,6 @@
 #include "adapters/llama_cpp_model.hpp"
 
+#include "llama-ext.h"
 #include "llama.h"
 
 #include <array>
@@ -44,9 +45,15 @@ struct LlamaCppModel::Impl {
         if (config.model_path.empty()) {
             throw std::runtime_error("llama.cpp model path is required");
         }
+        if (config.layer_start < 0 || config.layer_end < 0 ||
+            (config.layer_end != 0 && config.layer_start >= config.layer_end)) {
+            throw std::runtime_error("invalid llama.cpp model layer residency range");
+        }
         ensure_backend_loaded();
         llama_model_params params = llama_model_default_params();
         params.n_gpu_layers = config.n_gpu_layers;
+        params.layer_start = static_cast<std::uint32_t>(config.layer_start);
+        params.layer_end = static_cast<std::uint32_t>(config.layer_end);
         model = llama_model_load_from_file(config.model_path.c_str(), params);
         if (model == nullptr) {
             throw std::runtime_error("failed to load llama.cpp model: " + config.model_path);
@@ -100,6 +107,26 @@ int LlamaCppModel::n_vocab() const {
 
 const std::string& LlamaCppModel::architecture() const {
     return impl_->architecture;
+}
+
+int LlamaCppModel::loaded_layer_start() const {
+    return static_cast<int>(llama_model_loaded_layer_start(impl_->model));
+}
+
+int LlamaCppModel::loaded_layer_end() const {
+    return static_cast<int>(llama_model_loaded_layer_end(impl_->model));
+}
+
+std::uint64_t LlamaCppModel::resident_weight_bytes() const {
+    return llama_model_resident_tensor_bytes(impl_->model);
+}
+
+std::uint64_t LlamaCppModel::total_weight_bytes() const {
+    return llama_model_size(impl_->model);
+}
+
+std::uint64_t LlamaCppModel::resident_tensor_count() const {
+    return llama_model_resident_tensor_count(impl_->model);
 }
 
 std::vector<std::int32_t> LlamaCppModel::tokenize(std::string_view text, bool add_special) const {

@@ -199,37 +199,40 @@ engine and stage-worker ownership.
 
 ### Milestone 2 — Dynamic deployment lifecycle
 
-- [ ] Allow `ModelManager` to have no active deployment.
-- [ ] Define deployment identity, assignment, and lifecycle states.
-- [ ] Add `prepare`, `activate`, `unload`, and `status` operations.
-- [ ] Allow the runtime process to start idle without loading a model.
-- [ ] Reject inference clearly when no deployment is active.
-- [ ] Add an idle -> prepare -> activate -> infer -> unload integration test.
+- [x] Allow `ModelManager` to have no active deployment.
+- [x] Define deployment identity, assignment, and lifecycle states.
+- [x] Add `load`, `activate`, `unload`, and `status` operations.
+- [x] Allow the runtime process to start idle without loading a model.
+- [x] Reject inference clearly when no deployment is active.
+- [x] Add an idle -> load -> activate -> infer -> unload integration test.
 
 **Outcome:** a long-lived runtime can change the model stage it hosts without a
 process restart.
 
 ### Milestone 3 — Versioned cluster deployment plans
 
-- [ ] Convert member capabilities and model metadata into a deployment plan.
-- [ ] Assign a versioned deployment epoch to every stage.
-- [ ] Enforce engine, model ID, artifact hash, architecture, layer count, runtime
+- [x] Convert member capabilities and model metadata into a deployment plan.
+- [x] Assign a versioned deployment epoch to every stage.
+- [x] Enforce engine, model ID, artifact hash, architecture, layer count, runtime
   revision, and `llama.cpp` revision compatibility.
-- [ ] Add CUDA-build and GPU-execution attestation to placement metadata.
-- [ ] Apply a deployment plan manually before enabling automatic reconciliation.
+- [x] Add CUDA-build and GPU-execution attestation to placement metadata.
+- [x] Apply a deployment plan manually before enabling automatic reconciliation.
 
 **Outcome:** the coordinator can prepare a consistent, auditable deployment
 across multiple runtimes.
 
 ### Milestone 4 — True model-memory partitioning
 
-- [ ] Load only tensors required by a stage's assigned layer range.
-- [ ] Separate on-disk model registration from in-memory model residency.
-- [ ] Add partition memory accounting, pinning, and eviction.
-- [ ] Verify that each stage consumes less memory than a full-model runtime.
-- [ ] Run a model whose total weights exceed the memory of any single device.
+- [x] Load only tensors required by a stage's assigned layer range.
+- [x] Separate on-disk model registration from in-memory model residency.
+- [x] Add partition memory accounting, deployment pinning, and explicit eviction.
+- [x] Verify that each stage consumes less weight memory than a full-model runtime.
+- [x] Prove with real model weights that both partitions fit a per-device weight
+  capacity that excludes the full model.
 
-**Outcome:** the cluster pools aggregate device memory, not only compute.
+**Outcome:** stage-local model-weight residency is partitioned and accounted for.
+Physical per-process and CUDA memory evidence remains part of the hardware
+acceptance milestone before claiming aggregate usable device memory.
 
 ### Milestone 5 — Runtime-owned generation data plane
 
@@ -279,11 +282,15 @@ that combines the compute and memory of multiple Jetson devices.
 
 ## Current limitations
 
-- Transformer execution is partitioned, but every runtime still opens the full
-  GGUF; model-weight memory is not partitioned yet.
+- Stage-local tensor residency currently supports Llama and Qwen2 models through
+  a patch tied to the pinned `llama.cpp` revision.
+- `model_memory` reports tensor payload bytes. Allocator overhead, compute
+  buffers, and context/KV structures are not included in that number yet.
+- Placement conservatively applies `min_memory_gb` to every selected stage until
+  the planner has a measured per-stage memory estimator.
 - The Go coordinator currently owns both the token loop and stage loop.
-- Runtime assignments are still established at startup rather than through a
-  dynamic deployment lifecycle.
+- Deployment switching is explicit and destructive; automatic reconciliation,
+  rollback, and spare-node preparation remain future milestones.
 - The generation path is sequential and does not overlap microbatches.
 - Chat completions are non-streaming and use greedy sampling.
 - Physical multi-Jetson CUDA execution has not yet completed the acceptance gate.

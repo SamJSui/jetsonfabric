@@ -91,6 +91,20 @@ runtime::pipeline_parallel::StageAssignment assignment() {
     };
 }
 
+runtime::deployment::DeploymentIdentity managed_identity(
+    std::string deployment_id = "deployment-a",
+    std::uint64_t epoch = 1,
+    std::string model_id = "model-a",
+    char digest_character = 'a'
+) {
+    return runtime::deployment::DeploymentIdentity{
+        .deployment_id = std::move(deployment_id),
+        .epoch = epoch,
+        .model_id = std::move(model_id),
+        .model_sha256 = std::string(64, digest_character),
+    };
+}
+
 runtime::protocol::StageRequest valid_request() {
     return runtime::protocol::StageRequest{
         .session_id = "session-1",
@@ -215,7 +229,7 @@ void test_idle_manager() {
     expect(close_result.error_code == "no_active_deployment", "idle close rejection used the wrong error");
 
     const runtime::deployment::UnloadDeploymentResult unload =
-        manager.unload_resident_deployment("deployment-a");
+        manager.unload_resident_deployment(managed_identity());
     expect(!unload.ok, "idle manager accepted unload");
     expect(unload.status == "409 Conflict", "idle unload used the wrong status");
     expect(unload.error_code == "no_resident_deployment", "idle unload used the wrong error");
@@ -227,12 +241,12 @@ void test_loaded_manager() {
 
     runtime::deployment::ModelManager manager(
         "node-a",
-        runtime::deployment::DeploymentIdentity{
-            .deployment_id = "deployment-a",
-            .model_id = "model-a",
-        },
+        managed_identity(),
         assignment(),
-        runtime::InferenceEngineParts{.layer_executor = std::move(executor)}
+        runtime::InferenceEngineParts{
+            .layer_executor = std::move(executor),
+            .model_residency = std::nullopt,
+        }
     );
 
     expect(manager.has_resident_deployment(), "configured manager did not report a resident deployment");
@@ -289,24 +303,24 @@ void test_guarded_unload() {
 
     runtime::deployment::ModelManager manager(
         "node-a",
-        runtime::deployment::DeploymentIdentity{
-            .deployment_id = "deployment-a",
-            .model_id = "model-a",
-        },
+        managed_identity(),
         assignment(),
-        runtime::InferenceEngineParts{.layer_executor = std::move(executor)}
+        runtime::InferenceEngineParts{
+            .layer_executor = std::move(executor),
+            .model_residency = std::nullopt,
+        }
     );
 
     const runtime::deployment::UnloadDeploymentResult missing_id =
-        manager.unload_resident_deployment("");
+        manager.unload_resident_deployment(runtime::deployment::DeploymentIdentity{});
     expect(!missing_id.ok, "unload accepted an empty deployment ID");
     expect(missing_id.status == "400 Bad Request", "empty deployment ID used the wrong status");
-    expect(missing_id.error_code == "invalid_deployment_id", "empty deployment ID used the wrong error");
+    expect(missing_id.error_code == "invalid_deployment_identity", "empty deployment ID used the wrong error");
     expect(manager.has_active_deployment(), "empty deployment ID changed active deployment");
     expect(destruction_count == 0, "empty deployment ID destroyed the executor");
 
     const runtime::deployment::UnloadDeploymentResult mismatch =
-        manager.unload_resident_deployment("deployment-b");
+        manager.unload_resident_deployment(managed_identity("deployment-b"));
     expect(!mismatch.ok, "unload accepted a stale deployment ID");
     expect(mismatch.status == "409 Conflict", "stale deployment ID used the wrong status");
     expect(mismatch.error_code == "deployment_mismatch", "stale deployment ID used the wrong error");
@@ -314,7 +328,7 @@ void test_guarded_unload() {
     expect(destruction_count == 0, "stale deployment ID destroyed the executor");
 
     const runtime::deployment::UnloadDeploymentResult unloaded =
-        manager.unload_resident_deployment("deployment-a");
+        manager.unload_resident_deployment(managed_identity());
     expect(unloaded.ok, "matching deployment ID did not unload");
     expect(unloaded.status == "200 OK", "successful unload used the wrong status");
     expect(unloaded.identity.has_value(), "successful unload omitted deployment identity");
@@ -334,7 +348,7 @@ void test_guarded_unload() {
     expect(run_result.error_code == "no_active_deployment", "unloaded execution used the wrong error");
 
     const runtime::deployment::UnloadDeploymentResult repeated =
-        manager.unload_resident_deployment("deployment-a");
+        manager.unload_resident_deployment(managed_identity());
     expect(!repeated.ok, "repeated unload unexpectedly succeeded");
     expect(repeated.error_code == "no_resident_deployment", "repeated unload used the wrong error");
     expect(destruction_count == 1, "repeated unload destroyed resources twice");
@@ -349,6 +363,7 @@ void test_invalid_identity_rejected() {
                 assignment(),
                 runtime::InferenceEngineParts{
                     .layer_executor = std::make_unique<RecordingExecutor>(),
+                    .model_residency = std::nullopt,
                 }
             );
             (void) invalid;
@@ -358,14 +373,13 @@ void test_invalid_identity_rejected() {
         }
     };
 
-    expect(
-        rejected(runtime::deployment::DeploymentIdentity{.deployment_id = "", .model_id = "model-a"}),
-        "model manager accepted an empty deployment ID"
-    );
-    expect(
-        rejected(runtime::deployment::DeploymentIdentity{.deployment_id = "deployment-a", .model_id = ""}),
-        "model manager accepted an empty model ID"
-    );
+    auto missing_deployment_id = managed_identity();
+    missing_deployment_id.deployment_id.clear();
+    expect(rejected(std::move(missing_deployment_id)), "model manager accepted an empty deployment ID");
+
+    auto missing_model_id = managed_identity();
+    missing_model_id.model_id.clear();
+    expect(rejected(std::move(missing_model_id)), "model manager accepted an empty model ID");
 }
 
 void test_missing_executor_rejected() {
@@ -373,10 +387,7 @@ void test_missing_executor_rejected() {
     try {
         runtime::deployment::ModelManager invalid(
             "node-a",
-            runtime::deployment::DeploymentIdentity{
-                .deployment_id = "deployment-a",
-                .model_id = "model-a",
-            },
+            managed_identity(),
             assignment(),
             runtime::InferenceEngineParts{}
         );

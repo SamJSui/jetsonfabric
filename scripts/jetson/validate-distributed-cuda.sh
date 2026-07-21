@@ -26,14 +26,23 @@ members_json="$(curl -fsS "$(api /v1/cluster/members)")"
 
 cuda_hosts="$(jq -r '
   [.members[]
-    | select((.capabilities.compute_backends // []) | index("cuda"))
+    | select(
+        ((.capabilities.compute_backends // []) | index("cuda")) and
+        .capabilities.runtime_compute_backend == "cuda" and
+        .capabilities.runtime_cuda_active == true)
     | (.hostname // .node_name)]
   | unique
   | length
 ' <<<"$members_json")"
 if (( cuda_hosts < 2 )); then
-  echo "expected at least two distinct CUDA-capable physical hosts, found $cuda_hosts" >&2
-  jq '.members | map({node_name, hostname, compute_backends: .capabilities.compute_backends})' <<<"$members_json" >&2
+  echo "expected at least two distinct CUDA-active physical hosts, found $cuda_hosts" >&2
+  jq '.members | map({
+    node_name,
+    hostname,
+    compute_backends: .capabilities.compute_backends,
+    runtime_compute_backend: .capabilities.runtime_compute_backend,
+    runtime_cuda_active: .capabilities.runtime_cuda_active
+  })' <<<"$members_json" >&2
   exit 1
 fi
 
@@ -47,6 +56,17 @@ jq -e --argjson count "$STAGE_COUNT" '
   .physical_host_count >= 2 and
   (.stages | length) == $count
 ' <<<"$preview_json" >/dev/null
+
+jq -e --argjson preview "$preview_json" '
+  .members as $members |
+  all($preview.stages[];
+    .node_id as $node_id |
+    any($members[];
+      .node_id == $node_id and
+      ((.capabilities.compute_backends // []) | index("cuda")) and
+      .capabilities.runtime_compute_backend == "cuda" and
+      .capabilities.runtime_cuda_active == true))
+' <<<"$members_json" >/dev/null
 
 request_file="$(mktemp)"
 response_file="$(mktemp)"
@@ -81,27 +101,44 @@ if [[ "$http_code" != "200" ]]; then
 fi
 
 jq -e --argjson count "$STAGE_COUNT" '
+  .result.stages as $traces |
+  (.result.sampled_tokens | length) as $generated |
   .inter_stage_payload_kind == "activation" and
   .plan.topology == "distributed" and
   .plan.physical_host_count >= 2 and
   .plan.stage_count == $count and
+  (.plan.stages | length) == $count and
   .result.payload_kind == "sampled_token" and
   (.result.sampled_tokens | length) >= 1 and
   .result.finish_reason != "" and
   ([.result.stages[] | select(.phase == "prefill")] | length) == $count and
   ([.result.stages[] | select(.phase == "prefill" and .payload_kind_out == "activation")] | length) >= 1 and
   ([.result.stages[] | select(.payload_kind_in == "activation")] | length) >= 1 and
-  ([.result.stages[] | select(.payload_kind_in == "activation") | .payload_crc32_in] | length) >= 1
+  all($traces[];
+    if .payload_kind_out == "activation" then
+      . as $source |
+      any($traces[];
+        .phase == $source.phase and
+        .decode_step == $source.decode_step and
+        .stage_index == ($source.stage_index + 1) and
+        .payload_kind_in == "activation" and
+        .payload_in == $source.payload_out and
+        .payload_crc32_in == $source.payload_crc32_out)
+    else true end) and
+  ([$traces[] | select(.phase == "decode")] | length) == (($generated - 1) * $count) and
+  all(range(1; $generated); . as $step |
+    ([$traces[] | select(.phase == "decode" and .decode_step == $step)] | length) == $count)
 ' "$response_file" >/dev/null
 
-if (( MAX_TOKENS > 1 )); then
-  generated_count="$(jq '.result.sampled_tokens | length' "$response_file")"
-  if (( generated_count > 1 )); then
-    jq -e --argjson count "$STAGE_COUNT" '
-      ([.result.stages[] | select(.phase == "decode" and .decode_step == 1)] | length) == $count
-    ' "$response_file" >/dev/null
-  fi
-fi
+jq -e --argjson members "$members_json" '
+  all(.plan.stages[];
+    .node_id as $node_id |
+    any($members.members[];
+      .node_id == $node_id and
+      ((.capabilities.compute_backends // []) | index("cuda")) and
+      .capabilities.runtime_compute_backend == "cuda" and
+      .capabilities.runtime_cuda_active == true))
+' "$response_file" >/dev/null
 
 if [[ -n "$EXPECTED_TOKENS" ]]; then
   jq -e --argjson expected "$EXPECTED_TOKENS" '.result.sampled_tokens == $expected' "$response_file" >/dev/null || {

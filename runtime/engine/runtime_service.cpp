@@ -5,6 +5,7 @@
 #include "protocol/stage_control.hpp"
 
 #include <cstdint>
+#include <cctype>
 #include <exception>
 #include <limits>
 #include <sstream>
@@ -100,8 +101,54 @@ int optional_int(const nlohmann::json& body, const char* field, int fallback) {
         : integer_value(*value, field);
 }
 
-std::string decode_expected_deployment_id(const std::string& request_body) {
-    return require_string(parse_request_object(request_body), "deployment_id");
+std::uint64_t require_positive_uint64(const nlohmann::json& body, const char* field) {
+    const auto value = body.find(field);
+    if (value == body.end() || value->is_null()) {
+        throw std::invalid_argument(std::string(field) + " is required");
+    }
+    if (value->is_number_unsigned()) {
+        const std::uint64_t parsed = value->get<std::uint64_t>();
+        if (parsed == 0) {
+            throw std::invalid_argument(std::string(field) + " must be positive");
+        }
+        return parsed;
+    }
+    if (!value->is_number_integer()) {
+        throw std::invalid_argument(std::string(field) + " must be a positive integer");
+    }
+    const std::int64_t parsed = value->get<std::int64_t>();
+    if (parsed <= 0) {
+        throw std::invalid_argument(std::string(field) + " must be positive");
+    }
+    return static_cast<std::uint64_t>(parsed);
+}
+
+std::string require_sha256(const nlohmann::json& body) {
+    std::string value = require_string(body, "model_sha256");
+    if (value.size() != 64) {
+        throw std::invalid_argument("model_sha256 must be a 64-character hexadecimal digest");
+    }
+    for (const unsigned char character : value) {
+        if (!std::isxdigit(character)) {
+            throw std::invalid_argument("model_sha256 must be a 64-character hexadecimal digest");
+        }
+    }
+    return value;
+}
+
+deployment::DeploymentIdentity decode_deployment_identity(const nlohmann::json& body) {
+    return deployment::DeploymentIdentity{
+        .deployment_id = require_string(body, "deployment_id"),
+        .epoch = require_positive_uint64(body, "epoch"),
+        .model_id = require_string(body, "model_id"),
+        .model_sha256 = require_sha256(body),
+    };
+}
+
+deployment::DeploymentIdentity decode_expected_deployment_identity(
+    const std::string& request_body
+) {
+    return decode_deployment_identity(parse_request_object(request_body));
 }
 
 struct DecodedLoadRequest {
@@ -113,10 +160,7 @@ DecodedLoadRequest decode_load_request(const Config& base, const std::string& re
     const nlohmann::json body = parse_request_object(request_body);
 
     DecodedLoadRequest request;
-    request.identity = deployment::DeploymentIdentity{
-        .deployment_id = require_string(body, "deployment_id"),
-        .model_id = require_string(body, "model_id"),
-    };
+    request.identity = decode_deployment_identity(body);
     request.config = base;
     request.config.start_idle = false;
     request.config.model = request.identity.model_id;
@@ -150,12 +194,45 @@ DecodedLoadRequest decode_load_request(const Config& base, const std::string& re
     return request;
 }
 
+void append_model_residency(
+    std::ostringstream& body,
+    const deployment::DeploymentStatus& status
+) {
+    body << ",\"model_memory\":";
+    if (!status.model_residency.has_value()) {
+        body << "null";
+        return;
+    }
+    const deployment::ModelResidency& memory = *status.model_residency;
+    body << "{\"layer_start\":" << memory.layer_start
+         << ",\"layer_end\":" << memory.layer_end
+         << ",\"layer_count\":" << memory.layer_count
+         << ",\"resident_weight_bytes\":" << memory.resident_weight_bytes
+         << ",\"total_weight_bytes\":" << memory.total_weight_bytes
+         << ",\"resident_tensor_count\":" << memory.resident_tensor_count
+         << ",\"partitioned\":" << (memory.partitioned() ? "true" : "false")
+         << ",\"pinned\":" << (status.active ? "true" : "false")
+         << "}";
+}
+
+void append_deployment_identity(
+    std::ostringstream& body,
+    const deployment::DeploymentIdentity& identity
+) {
+    body << "{\"deployment_id\":\""
+         << protocol::json_escape(identity.deployment_id)
+         << "\",\"epoch\":" << identity.epoch
+         << ",\"model_id\":\""
+         << protocol::json_escape(identity.model_id)
+         << "\",\"model_sha256\":\""
+         << protocol::json_escape(identity.model_sha256)
+         << "\"}";
+}
+
 RuntimeResponse operation_response(
     const char* operation,
     const deployment::DeploymentOperationResult& result,
-    bool resident,
-    bool active,
-    std::string_view state
+    const deployment::DeploymentStatus& status
 ) {
     if (!result.identity.has_value()) {
         return json_error(
@@ -165,14 +242,17 @@ RuntimeResponse operation_response(
         );
     }
 
+    const std::string_view state = status.state.has_value()
+        ? deployment::resident_deployment_state_string(*status.state)
+        : "idle";
     std::ostringstream body;
-    body << "{\"" << operation << "\":true,\"deployment\":{\"deployment_id\":\""
-         << protocol::json_escape(result.identity->deployment_id)
-         << "\",\"model_id\":\""
-         << protocol::json_escape(result.identity->model_id)
-         << "\"},\"resident\":" << (resident ? "true" : "false")
-         << ",\"active\":" << (active ? "true" : "false")
-         << ",\"state\":\"" << state << "\"}";
+    body << "{\"" << operation << "\":true,\"deployment\":";
+    append_deployment_identity(body, *result.identity);
+    body << ",\"resident\":" << (status.resident ? "true" : "false")
+         << ",\"active\":" << (status.active ? "true" : "false")
+         << ",\"state\":\"" << state << "\"";
+    append_model_residency(body, status);
+    body << "}";
     return RuntimeResponse{result.status, "application/json", body.str()};
 }
 
@@ -234,7 +314,7 @@ RuntimeResponse RuntimeService::deployment_status() const {
          << ",\"active\":" << (status.active ? "true" : "false");
 
     if (!status.resident) {
-        body << ",\"state\":\"idle\",\"deployment\":null}";
+        body << ",\"state\":\"idle\",\"deployment\":null,\"model_memory\":null}";
         return RuntimeResponse{"200 OK", "application/json", body.str()};
     }
 
@@ -248,11 +328,10 @@ RuntimeResponse RuntimeService::deployment_status() const {
 
     body << ",\"state\":\""
          << deployment::resident_deployment_state_string(*status.state)
-         << "\",\"deployment\":{\"deployment_id\":\""
-         << protocol::json_escape(status.identity->deployment_id)
-         << "\",\"model_id\":\""
-         << protocol::json_escape(status.identity->model_id)
-         << "\"}}";
+         << "\",\"deployment\":";
+    append_deployment_identity(body, *status.identity);
+    append_model_residency(body, status);
+    body << "}";
 
     return RuntimeResponse{"200 OK", "application/json", body.str()};
 }
@@ -279,39 +358,39 @@ RuntimeResponse RuntimeService::load_deployment(const std::string& request_body)
     }
 
     config_ = deployment_config;
-    return operation_response("loaded", result, true, false, "ready");
+    return operation_response("loaded", result, model_manager_.deployment_status());
 }
 
 RuntimeResponse RuntimeService::activate_deployment(const std::string& request_body) {
-    std::string expected_deployment_id;
+    deployment::DeploymentIdentity expected_identity;
     try {
-        expected_deployment_id = decode_expected_deployment_id(request_body);
+        expected_identity = decode_expected_deployment_identity(request_body);
     } catch (const std::invalid_argument& err) {
         return json_error("400 Bad Request", "invalid_activate_request", err.what());
     }
 
     const deployment::ActivateDeploymentResult result =
-        model_manager_.activate_resident_deployment(expected_deployment_id);
+        model_manager_.activate_resident_deployment(expected_identity);
     if (!result.ok) {
         return json_error(result.status, result.error_code, result.error_message);
     }
-    return operation_response("activated", result, true, true, "active");
+    return operation_response("activated", result, model_manager_.deployment_status());
 }
 
 RuntimeResponse RuntimeService::unload_deployment(const std::string& request_body) {
-    std::string expected_deployment_id;
+    deployment::DeploymentIdentity expected_identity;
     try {
-        expected_deployment_id = decode_expected_deployment_id(request_body);
+        expected_identity = decode_expected_deployment_identity(request_body);
     } catch (const std::invalid_argument& err) {
         return json_error("400 Bad Request", "invalid_unload_request", err.what());
     }
 
     const deployment::UnloadDeploymentResult result =
-        model_manager_.unload_resident_deployment(expected_deployment_id);
+        model_manager_.unload_resident_deployment(expected_identity);
     if (!result.ok) {
         return json_error(result.status, result.error_code, result.error_message);
     }
-    return operation_response("unloaded", result, false, false, "idle");
+    return operation_response("unloaded", result, model_manager_.deployment_status());
 }
 
 RuntimeResponse RuntimeService::chat_completion(const std::string& /*request_body*/) const {
