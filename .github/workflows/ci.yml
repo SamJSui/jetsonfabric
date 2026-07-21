@@ -44,7 +44,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
 
       - name: Run unit tests
         run: go test ./...
@@ -222,5 +222,6 @@ jobs:
         with:
           name: ci-diagnostics-${{ github.run_id }}
           path: .ci-logs
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
