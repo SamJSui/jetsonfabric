@@ -10,17 +10,17 @@ import (
 
 // DeploymentIdentity distinguishes one cluster assignment from the model it serves.
 type DeploymentIdentity struct {
-	DeploymentID string
-	Epoch        uint64
+	DeploymentID string `json:"deployment_id"`
+	Epoch        uint64 `json:"epoch"`
 }
 
 // DeploymentModelIdentity records correctness-critical facts shared by all stages.
 type DeploymentModelIdentity struct {
-	ModelID       string
-	ModelSHA256   string
-	Engine        cluster.Engine
-	ExecutionMode cluster.ExecutionMode
-	LayerCount    int
+	ModelID       string                `json:"model_id"`
+	ModelSHA256   string                `json:"model_sha256"`
+	Engine        cluster.Engine        `json:"engine"`
+	ExecutionMode cluster.ExecutionMode `json:"execution_mode"`
+	LayerCount    int                   `json:"layer_count"`
 }
 
 // DeploymentPlanSpec is mutable constructor input.
@@ -71,6 +71,19 @@ func (plan DeploymentPlan) Stages() []Stage {
 
 func (plan DeploymentPlan) StageCount() int {
 	return len(plan.stages)
+}
+
+// RoutePreview returns the immutable execution route represented by this plan.
+// It does not consult live membership, so admitted sessions remain pinned to the
+// exact stage assignment selected for the deployment epoch.
+func (plan DeploymentPlan) RoutePreview() RoutePreview {
+	preview := RoutePreview{
+		Model:  plan.model.ModelID,
+		Valid:  true,
+		Mode:   plan.model.ExecutionMode,
+		Stages: plan.Stages(),
+	}
+	return finalizeTopology(preview)
 }
 
 func validateDeploymentPlan(

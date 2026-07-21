@@ -75,6 +75,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "stream_not_supported", &param, "streaming is not implemented yet")
 		return
 	}
+	if request.JetsonFabric != nil && request.JetsonFabric.StageCount < 0 {
+		param := "jetsonfabric.stage_count"
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid_stage_count", &param, "stage_count must be greater than zero")
+		return
+	}
 	modelID := strings.TrimSpace(request.Model)
 	if modelID == "" {
 		param := "model"
@@ -98,40 +103,50 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	policy := s.routePreviewPolicy(r)
-	if request.JetsonFabric != nil {
-		if request.JetsonFabric.StageCount < 0 {
-			param := "jetsonfabric.stage_count"
-			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid_stage_count", &param, "stage_count must be greater than zero")
-			return
-		}
-		if request.JetsonFabric.StageCount > 0 {
-			policy.StageCount = request.JetsonFabric.StageCount
-		}
-		if request.JetsonFabric.AllowColocatedStages {
-			policy.AllowColocatedStages = true
-		}
-	}
-	requiredStages := policy.StageCount
-	if requiredStages <= 0 {
-		requiredStages = 1
-		policy.StageCount = requiredStages
-	}
-	members, identity, err := selectPipelineRuntimeMembers(
-		model,
-		s.memberSource.List(),
-		s.now(),
-		s.memberStaleAfter,
-		requiredStages,
-	)
+	admission, err := s.deployments.admit(modelID)
 	if err != nil {
-		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "runtime_identity_unavailable", nil, err.Error())
+		writeInferenceAdmissionError(w, err, true)
 		return
 	}
-	plan := clusterplan.PreviewPipeline(clusterplan.Request{
-		Model: model, Members: members, Now: s.now(),
-		StaleAfter: s.memberStaleAfter, Policy: policy,
-	})
+	defer admission.Release()
+
+	var plan clusterplan.RoutePreview
+	var identity pipelineRuntimeIdentity
+	if admission.Plan != nil {
+		plan = admission.Plan.RoutePreview()
+		identity = runtimeIdentityForDeployment(*admission.Plan)
+	} else {
+		policy := s.routePreviewPolicy(r)
+		if request.JetsonFabric != nil {
+			if request.JetsonFabric.StageCount > 0 {
+				policy.StageCount = request.JetsonFabric.StageCount
+			}
+			if request.JetsonFabric.AllowColocatedStages {
+				policy.AllowColocatedStages = true
+			}
+		}
+		requiredStages := policy.StageCount
+		if requiredStages <= 0 {
+			requiredStages = 1
+			policy.StageCount = requiredStages
+		}
+		members, legacyIdentity, err := selectPipelineRuntimeMembers(
+			model,
+			s.memberSource.List(),
+			s.now(),
+			s.memberStaleAfter,
+			requiredStages,
+		)
+		if err != nil {
+			writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "runtime_identity_unavailable", nil, err.Error())
+			return
+		}
+		identity = legacyIdentity
+		plan = clusterplan.PreviewPipeline(clusterplan.Request{
+			Model: model, Members: members, Now: s.now(),
+			StaleAfter: s.memberStaleAfter, Policy: policy,
+		})
+	}
 	if !plan.Valid || plan.Mode != cluster.ExecutionModePipelineParallel || plan.StageCount < 1 {
 		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "pipeline_route_unavailable", nil, fmt.Sprintf("no valid pipeline route for model %q: %s", modelID, plan.Reason))
 		return
@@ -153,6 +168,10 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-JetsonFabric-Session-ID", result.SessionID)
 	w.Header().Set("X-JetsonFabric-Topology", string(plan.Topology))
 	w.Header().Set("X-JetsonFabric-Model-SHA256", identity.ModelSHA256)
+	if identity.DeploymentID != "" {
+		w.Header().Set("X-JetsonFabric-Deployment-ID", identity.DeploymentID)
+		w.Header().Set("X-JetsonFabric-Deployment-Epoch", fmt.Sprintf("%d", identity.Epoch))
+	}
 	writeJSON(w, http.StatusOK, chatCompletionResponse{
 		ID:      requestID,
 		Object:  "chat.completion",

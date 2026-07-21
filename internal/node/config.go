@@ -18,14 +18,16 @@ const (
 	DefaultStaleAfter        = 30 * time.Second
 	DefaultLeaderPreference  = 0
 
-	AutoRuntimeURL               = "auto"
-	DefaultRuntimeBin            = "dist/jetsonfabric-runtime-worker"
-	DefaultRuntimeListen         = "127.0.0.1:0"
-	DefaultRuntimeComputeBackend = "cuda"
-	DefaultRuntimeMode           = "pipeline_parallel"
-	DefaultRuntimeCtxSize        = 4096
-	DefaultRuntimeNGPULayers     = 999
-	DefaultRuntimeThreads        = 0
+	AutoRuntimeURL                  = "auto"
+	DefaultRuntimeBin               = "dist/jetsonfabric-runtime-worker"
+	DefaultRuntimeListen            = "127.0.0.1:0"
+	DefaultRuntimeComputeBackend    = "cuda"
+	DefaultRuntimeMode              = "pipeline_parallel"
+	DefaultRuntimeCtxSize           = 4096
+	DefaultRuntimeNGPULayers        = 999
+	DefaultRuntimeThreads           = 0
+	DefaultRuntimeRevision          = "dev"
+	DefaultRuntimeLlamaCPPRevision  = "dev"
 
 	DefaultStageIndex = 0
 	DefaultStageCount = 1
@@ -45,15 +47,19 @@ type Config struct {
 	RuntimeURL string
 	RuntimeBin string
 
-	Engine                cluster.Engine
-	Model                 string
-	ModelPath             string
-	RuntimeListen         string
-	RuntimeComputeBackend string
-	RuntimeMode           string
-	RuntimeCtxSize        int
-	RuntimeNGPULayers     int
-	RuntimeThreads        int
+	Engine                   cluster.Engine
+	Model                    string
+	ModelPath                string
+	RuntimeListen            string
+	RuntimeComputeBackend    string
+	RuntimeMode              string
+	RuntimeCtxSize           int
+	RuntimeNGPULayers        int
+	RuntimeThreads           int
+	RuntimeStartIdle         bool
+	RuntimeRevision          string
+	RuntimeLlamaCPPRevision  string
+	RuntimeCUDAActive        bool
 
 	StageIndex int
 	StageCount int
@@ -78,36 +84,38 @@ type Config struct {
 
 func DefaultConfigValue() Config {
 	return Config{
-		ClusterID:             DefaultClusterID,
-		Listen:                DefaultNodeListen,
-		APIURL:                "",
-		DataDir:               "",
-		RuntimeURL:            AutoRuntimeURL,
-		RuntimeBin:            DefaultRuntimeBin,
-		Engine:                cluster.EngineLlamaCPP,
-		Model:                 "qwen2.5-coder-1.5b-q4",
-		ModelPath:             "",
-		RuntimeListen:         DefaultRuntimeListen,
-		RuntimeComputeBackend: DefaultRuntimeComputeBackend,
-		RuntimeMode:           DefaultRuntimeMode,
-		RuntimeCtxSize:        DefaultRuntimeCtxSize,
-		RuntimeNGPULayers:     DefaultRuntimeNGPULayers,
-		RuntimeThreads:        DefaultRuntimeThreads,
-		StageIndex:            DefaultStageIndex,
-		StageCount:            DefaultStageCount,
-		LayerStart:            DefaultLayerStart,
-		LayerEnd:              DefaultLayerEnd,
-		Role:                  membership.NodeRoleAuto,
-		LeaderPreference:      DefaultLeaderPreference,
-		Seeds:                 nil,
-		DiscoveryModes:        append([]string(nil), defaultDiscoveryModes...),
-		DiscoveryInterval:     DefaultDiscoveryInterval,
-		StaleAfter:            DefaultStaleAfter,
-		MDNSService:           discovery.DefaultMDNSService,
-		MDNSDomain:            discovery.DefaultMDNSDomain,
-		MDNSBrowseTimeout:     discovery.DefaultMDNSBrowseTimeout,
-		ModelsPath:            config.DefaultModelRegistryPath(),
-		BenchmarksPath:        config.DefaultBenchmarksPath(),
+		ClusterID:                    DefaultClusterID,
+		Listen:                       DefaultNodeListen,
+		APIURL:                       "",
+		DataDir:                      "",
+		RuntimeURL:                   AutoRuntimeURL,
+		RuntimeBin:                   DefaultRuntimeBin,
+		Engine:                       cluster.EngineLlamaCPP,
+		Model:                        "qwen2.5-coder-1.5b-q4",
+		ModelPath:                    "",
+		RuntimeListen:                DefaultRuntimeListen,
+		RuntimeComputeBackend:        DefaultRuntimeComputeBackend,
+		RuntimeMode:                  DefaultRuntimeMode,
+		RuntimeCtxSize:               DefaultRuntimeCtxSize,
+		RuntimeNGPULayers:            DefaultRuntimeNGPULayers,
+		RuntimeThreads:               DefaultRuntimeThreads,
+		RuntimeRevision:              DefaultRuntimeRevision,
+		RuntimeLlamaCPPRevision:      DefaultRuntimeLlamaCPPRevision,
+		StageIndex:                   DefaultStageIndex,
+		StageCount:                   DefaultStageCount,
+		LayerStart:                   DefaultLayerStart,
+		LayerEnd:                     DefaultLayerEnd,
+		Role:                         membership.NodeRoleAuto,
+		LeaderPreference:             DefaultLeaderPreference,
+		Seeds:                        nil,
+		DiscoveryModes:               append([]string(nil), defaultDiscoveryModes...),
+		DiscoveryInterval:            DefaultDiscoveryInterval,
+		StaleAfter:                   DefaultStaleAfter,
+		MDNSService:                  discovery.DefaultMDNSService,
+		MDNSDomain:                   discovery.DefaultMDNSDomain,
+		MDNSBrowseTimeout:            discovery.DefaultMDNSBrowseTimeout,
+		ModelsPath:                   config.DefaultModelRegistryPath(),
+		BenchmarksPath:               config.DefaultBenchmarksPath(),
 	}
 }
 
@@ -142,6 +150,8 @@ func normalizeStringsInConfig(cfg Config) Config {
 	cfg.RuntimeListen = strings.TrimSpace(cfg.RuntimeListen)
 	cfg.RuntimeComputeBackend = strings.TrimSpace(cfg.RuntimeComputeBackend)
 	cfg.RuntimeMode = strings.TrimSpace(cfg.RuntimeMode)
+	cfg.RuntimeRevision = strings.TrimSpace(cfg.RuntimeRevision)
+	cfg.RuntimeLlamaCPPRevision = strings.TrimSpace(cfg.RuntimeLlamaCPPRevision)
 
 	cfg.ModelsPath = strings.TrimSpace(cfg.ModelsPath)
 	cfg.BenchmarksPath = strings.TrimSpace(cfg.BenchmarksPath)
@@ -172,6 +182,12 @@ func normalizeRuntimeConfig(cfg Config) Config {
 	}
 	if cfg.RuntimeNGPULayers == 0 {
 		cfg.RuntimeNGPULayers = DefaultRuntimeNGPULayers
+	}
+	if cfg.RuntimeRevision == "" {
+		cfg.RuntimeRevision = DefaultRuntimeRevision
+	}
+	if cfg.RuntimeLlamaCPPRevision == "" {
+		cfg.RuntimeLlamaCPPRevision = DefaultRuntimeLlamaCPPRevision
 	}
 	if cfg.StageCount <= 0 {
 		cfg.StageCount = DefaultStageCount
@@ -217,12 +233,18 @@ func ValidateConfig(cfg Config) error {
 	if cfg.Engine == "" {
 		return fmt.Errorf("--engine is required")
 	}
+	if cfg.RuntimeRevision == "" {
+		return fmt.Errorf("--runtime-revision is required")
+	}
+	if cfg.Engine == cluster.EngineLlamaCPP && cfg.RuntimeLlamaCPPRevision == "" {
+		return fmt.Errorf("--runtime-llama-cpp-revision is required for llama.cpp")
+	}
 	if cfg.RuntimeAuto() {
 		if cfg.RuntimeBin == "" {
 			return fmt.Errorf("--runtime-bin is required when --runtime-url=auto")
 		}
-		if cfg.ModelPath == "" {
-			return fmt.Errorf("--model-path is required when --runtime-url=auto")
+		if !cfg.RuntimeStartIdle && cfg.ModelPath == "" {
+			return fmt.Errorf("--model-path is required when --runtime-url=auto unless --runtime-idle is set")
 		}
 	}
 	if err := validateDiscoveryModes(cfg.DiscoveryModes); err != nil {

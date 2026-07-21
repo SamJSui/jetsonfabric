@@ -20,20 +20,22 @@ const (
 )
 
 type Config struct {
-	SelfID      string
-	Store       *membership.Store
-	StaleAfter  time.Duration
-	Coordinator http.Handler
-	StageRunner http.Handler
+	SelfID            string
+	Store             *membership.Store
+	StaleAfter        time.Duration
+	Coordinator       http.Handler
+	StageRunner       http.Handler
+	RuntimeDeployment http.Handler
 }
 
 type Router struct {
-	selfID          string
-	store           *membership.Store
-	staleAfter      time.Duration
-	coordinator     http.Handler
-	stageRunner     http.Handler
-	electionTracker *election.Tracker
+	selfID            string
+	store             *membership.Store
+	staleAfter        time.Duration
+	coordinator       http.Handler
+	stageRunner       http.Handler
+	runtimeDeployment http.Handler
+	electionTracker   *election.Tracker
 }
 
 type ClusterView struct {
@@ -50,18 +52,23 @@ func NewRouter(cfg Config) http.Handler {
 	mux.HandleFunc("GET "+PathClusterElection, r.handleElection)
 	mux.HandleFunc("POST "+PathClusterAnnounce, r.handleAnnounce)
 	mux.HandleFunc(api.RouteLayerSplitStage, r.handleStageRun)
+	mux.HandleFunc(api.RouteRuntimeDeploymentStatus, r.handleRuntimeDeployment)
+	mux.HandleFunc(api.RouteRuntimeDeploymentLoad, r.handleRuntimeDeployment)
+	mux.HandleFunc(api.RouteRuntimeDeploymentActivate, r.handleRuntimeDeployment)
+	mux.HandleFunc(api.RouteRuntimeDeploymentUnload, r.handleRuntimeDeployment)
 	mux.HandleFunc("/", r.handleCoordinator)
 	return mux
 }
 
 func newRouter(cfg Config) *Router {
 	return &Router{
-		selfID:          cfg.SelfID,
-		store:           cfg.Store,
-		staleAfter:      cfg.StaleAfter,
-		coordinator:     cfg.Coordinator,
-		stageRunner:     cfg.StageRunner,
-		electionTracker: election.NewTracker(election.DefaultLease(cfg.StaleAfter)),
+		selfID:            cfg.SelfID,
+		store:             cfg.Store,
+		staleAfter:        cfg.StaleAfter,
+		coordinator:       cfg.Coordinator,
+		stageRunner:       cfg.StageRunner,
+		runtimeDeployment: cfg.RuntimeDeployment,
+		electionTracker:   election.NewTracker(election.DefaultLease(cfg.StaleAfter)),
 	}
 }
 
@@ -144,6 +151,17 @@ func (r *Router) handleStageRun(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	r.stageRunner.ServeHTTP(w, req)
+}
+
+func (r *Router) handleRuntimeDeployment(w http.ResponseWriter, req *http.Request) {
+	if r.runtimeDeployment == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error":   "runtime_deployment_gateway_unavailable",
+			"message": "this node has no runtime deployment gateway configured",
+		})
+		return
+	}
+	r.runtimeDeployment.ServeHTTP(w, req)
 }
 
 func (r *Router) handleCoordinator(w http.ResponseWriter, req *http.Request) {

@@ -53,7 +53,7 @@ func StartRuntimeSupervisor(ctx context.Context, cfg Config) (*RuntimeSupervisor
 }
 
 func runtimeArgs(cfg Config, listen string) []string {
-	return []string{
+	args := []string{
 		"--listen", listen,
 		"--node-name", cfg.NodeName,
 		"--engine", string(cfg.Engine),
@@ -69,6 +69,10 @@ func runtimeArgs(cfg Config, listen string) []string {
 		"--layer-start", strconv.Itoa(cfg.LayerStart),
 		"--layer-end", strconv.Itoa(cfg.LayerEnd),
 	}
+	if cfg.RuntimeStartIdle {
+		args = append(args, "--idle")
+	}
+	return args
 }
 
 func (s *RuntimeSupervisor) Stop(ctx context.Context) error {

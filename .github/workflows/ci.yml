@@ -20,6 +20,8 @@ env:
   CI_RUNTIME_BUILD_DIR: runtime/build-ci-cpu
   CI_MODEL_PATH: ${{ github.workspace }}/.cache/models/stories15M-q4_0.gguf
   CI_MODEL_URL: https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories15M-q4_0.gguf
+  CI_MODEL_B_PATH: ${{ github.workspace }}/.cache/models/stories15M-q8_0.gguf
+  CI_MODEL_B_URL: https://huggingface.co/ggml-org/tiny-llamas/resolve/main/stories15M-q8_0.gguf
 
 jobs:
   ci:
@@ -68,6 +70,20 @@ jobs:
           test "$(head -c 4 "$CI_MODEL_PATH")" = "GGUF"
           ls -lh "$CI_MODEL_PATH"
 
+      - name: Download second CI model
+        run: |
+          mkdir -p "$(dirname "$CI_MODEL_B_PATH")"
+          if [[ ! -s "$CI_MODEL_B_PATH" ]]; then
+            curl -fL --retry 3 --retry-delay 2 "$CI_MODEL_B_URL" -o "$CI_MODEL_B_PATH"
+          fi
+
+      - name: Verify second CI model
+        run: |
+          test -s "$CI_MODEL_B_PATH"
+          test "$(head -c 4 "$CI_MODEL_B_PATH")" = "GGUF"
+          test "$(sha256sum "$CI_MODEL_PATH" | awk '{print $1}')" != "$(sha256sum "$CI_MODEL_B_PATH" | awk '{print $1}')"
+          ls -lh "$CI_MODEL_B_PATH"
+
       - name: Cache llama.cpp checkout and CPU build
         uses: actions/cache@v4
         with:
@@ -107,6 +123,25 @@ jobs:
           JF_RUNTIME0_PORT=18290 \
           bash scripts/local/validate-runtime-lifecycle.sh \
             2>&1 | tee .ci-logs/runtime-lifecycle/step.log
+
+      - name: Run coordinator model switch real CPU E2E
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p .ci-logs/coordinator-model-switch
+          MODEL_A_PATH="$CI_MODEL_PATH" \
+          MODEL_B_PATH="$CI_MODEL_B_PATH" \
+          LLAMA_CPP_COMMIT="$CI_LLAMA_CPP_COMMIT" \
+          RUNTIME_BUILD_DIR="$CI_RUNTIME_BUILD_DIR" \
+          RUNTIME_BIN=dist/jetsonfabric-runtime-worker-ci-cpu \
+          NODE_BIN=dist/jetsonfabric-node \
+          JF_SKIP_BUILD=true \
+          JF_NODE0_PORT=18380 \
+          JF_NODE1_PORT=18381 \
+          JF_RUNTIME0_PORT=18390 \
+          JF_RUNTIME1_PORT=18391 \
+          bash scripts/local/validate-coordinator-model-switch.sh \
+            2>&1 | tee .ci-logs/coordinator-model-switch/step.log
 
       - name: Run two-node real CPU E2E
         shell: bash

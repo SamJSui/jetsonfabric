@@ -86,11 +86,15 @@ func (a *App) configureHTTPServer() error {
 	if err != nil {
 		return err
 	}
+	runtimeDeployment, err := a.runtimeDeploymentGateway()
+	if err != nil {
+		return err
+	}
 	publicRouter, err := a.publicRouter(coordinatorRouter)
 	if err != nil {
 		return err
 	}
-	a.server = a.httpServer(publicRouter, stageRunner)
+	a.server = a.httpServer(publicRouter, stageRunner, runtimeDeployment)
 	return nil
 }
 
@@ -109,6 +113,10 @@ func (a *App) coordinatorRouter() (http.Handler, error) {
 
 func (a *App) stageRunner() (http.Handler, error) {
 	return runtimebridge.NewStageProxy(a.cfg.RuntimeURL)
+}
+
+func (a *App) runtimeDeploymentGateway() (http.Handler, error) {
+	return runtimebridge.NewDeploymentProxy(a.cfg.RuntimeURL)
 }
 
 func (a *App) publicRouter(coordinatorRouter http.Handler) (http.Handler, error) {
@@ -136,15 +144,16 @@ func (a *App) newMDNSAdvertiser(self discovery.SelfFunc) *discovery.MDNSAdvertis
 	})
 }
 
-func (a *App) httpServer(coordinatorRouter http.Handler, stageRunner http.Handler) *http.Server {
+func (a *App) httpServer(coordinatorRouter http.Handler, stageRunner http.Handler, runtimeDeployment http.Handler) *http.Server {
 	return &http.Server{
 		Addr: a.cfg.Listen,
 		Handler: facade.NewRouter(facade.Config{
-			SelfID:      a.nodeID,
-			Store:       a.store,
-			StaleAfter:  a.cfg.StaleAfter,
-			Coordinator: coordinatorRouter,
-			StageRunner: stageRunner,
+			SelfID:            a.nodeID,
+			Store:             a.store,
+			StaleAfter:        a.cfg.StaleAfter,
+			Coordinator:       coordinatorRouter,
+			StageRunner:       stageRunner,
+			RuntimeDeployment: runtimeDeployment,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
