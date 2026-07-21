@@ -107,6 +107,7 @@ jq -e --argjson count "$STAGE_COUNT" '
   .plan.topology == "distributed" and
   .plan.physical_host_count >= 2 and
   .plan.stage_count == $count and
+  (.plan.stages | length) == $count and
   .result.payload_kind == "sampled_token" and
   (.result.sampled_tokens | length) >= 1 and
   .result.finish_reason != "" and

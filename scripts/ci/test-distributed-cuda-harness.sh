@@ -119,4 +119,11 @@ if run_harness "$MEMBERS" "$PREVIEW" "$MISSING_DECODE_RESPONSE" 2>/dev/null; the
   exit 1
 fi
 
+EMPTY_EXECUTED_PLAN="$WORK_DIR/empty-executed-plan.json"
+jq '.plan.stages = []' "$RESPONSE" >"$EMPTY_EXECUTED_PLAN"
+if run_harness "$MEMBERS" "$PREVIEW" "$EMPTY_EXECUTED_PLAN" 2>/dev/null; then
+  echo "CUDA harness accepted an empty executed plan" >&2
+  exit 1
+fi
+
 echo "Distributed CUDA harness contract tests passed"
