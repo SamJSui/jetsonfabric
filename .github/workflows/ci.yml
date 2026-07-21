@@ -74,7 +74,7 @@ jobs:
           path: |
             runtime/third_party/llama.cpp
             runtime/build-ci-cpu
-          key: ci-runtime-${{ runner.os }}-${{ env.CI_LLAMA_CPP_COMMIT }}-${{ hashFiles('Makefile', 'runtime/CMakeLists.txt', 'runtime/**/*.cpp', 'runtime/**/*.h', 'runtime/**/*.hpp', 'runtime/patches/**', 'scripts/ci/smoke-binary-activation.sh', 'scripts/local/validate-single-node.sh', 'scripts/local/validate-colocated-pipeline.sh') }}
+          key: ci-runtime-${{ runner.os }}-${{ env.CI_LLAMA_CPP_COMMIT }}-${{ hashFiles('Makefile', 'runtime/CMakeLists.txt', 'runtime/**/*.cpp', 'runtime/**/*.h', 'runtime/**/*.hpp', 'runtime/patches/**', 'scripts/ci/smoke-binary-activation.sh', 'scripts/local/validate-single-node.sh', 'scripts/local/validate-colocated-pipeline.sh', 'scripts/local/validate-runtime-lifecycle.sh') }}
 
       - name: Run one-node real CPU E2E
         shell: bash
@@ -90,6 +90,23 @@ jobs:
             RUNTIME_BUILD_JOBS=2 \
             JF_NODE0_PORT=18180 \
             2>&1 | tee .ci-logs/single-runtime/step.log
+
+      - name: Run runtime lifecycle real CPU E2E
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p .ci-logs/runtime-lifecycle
+          MODEL_PATH="$CI_MODEL_PATH" \
+          MODEL_ID=ci-tiny-llama \
+          LLAMA_CPP_COMMIT="$CI_LLAMA_CPP_COMMIT" \
+          RUNTIME_BUILD_DIR="$CI_RUNTIME_BUILD_DIR" \
+          RUNTIME_BIN=dist/jetsonfabric-runtime-worker-ci-cpu \
+          NODE_BIN=dist/jetsonfabric-node \
+          JF_SKIP_BUILD=true \
+          JF_NODE0_PORT=18280 \
+          JF_RUNTIME0_PORT=18290 \
+          bash scripts/local/validate-runtime-lifecycle.sh \
+            2>&1 | tee .ci-logs/runtime-lifecycle/step.log
 
       - name: Run two-node real CPU E2E
         shell: bash
