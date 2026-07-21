@@ -20,6 +20,13 @@ const (
 	errorPipelineStageFailed     errorCode = "pipeline_parallel_stage_failed"
 	errorLayerSplitUnsupported   errorCode = "pipeline_parallel_unsupported"
 	errorNoPipelineParallelRoute errorCode = "no_pipeline_parallel_route"
+
+	errorDeploymentConfigInvalid errorCode = "deployment_config_invalid"
+	errorDeploymentUnavailable   errorCode = "deployment_unavailable"
+	errorDeploymentPlanInvalid   errorCode = "deployment_plan_invalid"
+	errorDeploymentTransitioning errorCode = "deployment_transitioning"
+	errorDeploymentSwitchFailed  errorCode = "deployment_switch_failed"
+	errorModelNotActive          errorCode = "model_not_active"
 )
 
 func writeError(w http.ResponseWriter, status int, code errorCode, message string) {
