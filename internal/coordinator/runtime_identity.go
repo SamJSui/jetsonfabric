@@ -19,6 +19,8 @@ type pipelineRuntimeIdentity struct {
 	ModelID       string                `json:"model_id"`
 	ModelSHA256   string                `json:"model_sha256"`
 	ExecutionMode cluster.ExecutionMode `json:"execution_mode"`
+	DeploymentID  string                `json:"deployment_id,omitempty"`
+	Epoch         uint64                `json:"epoch,omitempty"`
 }
 
 func (i pipelineRuntimeIdentity) key() string {
