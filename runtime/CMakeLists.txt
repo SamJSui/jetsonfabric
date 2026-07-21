@@ -162,6 +162,25 @@ if(BUILD_TESTING)
     COMMAND jetsonfabric-model-manager-test
   )
 
+  add_executable(jetsonfabric-deployment-lifecycle-test
+    inference/stage.cpp
+    pipeline_parallel/stage_assignment.cpp
+    pipeline_parallel/stage_worker.cpp
+    deployment/lifecycle_test.cpp
+  )
+  target_include_directories(jetsonfabric-deployment-lifecycle-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-deployment-lifecycle-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME deployment-lifecycle
+    COMMAND jetsonfabric-deployment-lifecycle-test
+  )
+
   add_executable(jetsonfabric-llama-stage-test
     inference/stage.cpp
     adapters/llama_cpp_model.cpp

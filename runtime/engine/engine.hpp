@@ -22,6 +22,8 @@ public:
     virtual std::string model() const = 0;
 
     virtual RuntimeResponse deployment_status() const = 0;
+    virtual RuntimeResponse load_deployment(const std::string& request_body) = 0;
+    virtual RuntimeResponse activate_deployment(const std::string& request_body) = 0;
     virtual RuntimeResponse unload_deployment(const std::string& request_body) = 0;
     virtual RuntimeResponse chat_completion(const std::string& request_body) const = 0;
     virtual RuntimeResponse run_stage(const std::string& request_body) const = 0;

@@ -6,8 +6,8 @@
 
 namespace jetsonfabric::runtime {
 
-// RuntimeService is the JetsonFabric-owned host service. It exposes the runtime
-// HTTP contract while ModelManager owns the active model execution components.
+// RuntimeService exposes the runtime HTTP contract while ModelManager owns the
+// single resident deployment and its execution components.
 class RuntimeService final : public RuntimeAPI {
 public:
     explicit RuntimeService(Config config);
@@ -18,6 +18,8 @@ public:
     std::string model() const override;
 
     RuntimeResponse deployment_status() const override;
+    RuntimeResponse load_deployment(const std::string& request_body) override;
+    RuntimeResponse activate_deployment(const std::string& request_body) override;
     RuntimeResponse unload_deployment(const std::string& request_body) override;
     RuntimeResponse chat_completion(const std::string& request_body) const override;
     RuntimeResponse run_stage(const std::string& request_body) const override;

@@ -23,9 +23,13 @@ struct Config {
 
     ExecutionMode mode = ExecutionMode::DataParallel;
     pipeline_parallel::StageAssignment stage_assignment;
+
+    bool start_idle = false;
 };
 
 Config parse_args(int argc, char** argv);
+void validate_runtime_config(const Config& config);
+void validate_deployment_config(const Config& config);
 void print_help();
 
 } // namespace jetsonfabric::runtime

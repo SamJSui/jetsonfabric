@@ -150,7 +150,7 @@ int HttpServer::run() const {
     std::cout << runtime_.runtime_name() << " listening on http://"
               << config_.host << ":" << config_.port
               << " engine=" << runtime_.engine_name()
-              << " model=" << config_.model
+              << " model=" << runtime_.model()
               << " mode=" << execution_mode_string(runtime_.execution_mode()) << "\n";
 
     while (running_.load()) {
@@ -227,6 +227,12 @@ void HttpServer::handle_client(int client_fd) const {
         } else if (starts_with(request, "GET /v1/deployment ")) {
             const RuntimeResponse runtime_response = runtime_.deployment_status();
             response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+        } else if (starts_with(request, "POST /v1/deployment/load ")) {
+            const RuntimeResponse runtime_response = runtime_.load_deployment(body);
+            response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+        } else if (starts_with(request, "POST /v1/deployment/activate ")) {
+            const RuntimeResponse runtime_response = runtime_.activate_deployment(body);
+            response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
         } else if (starts_with(request, "POST /v1/deployment/unload ")) {
             const RuntimeResponse runtime_response = runtime_.unload_deployment(body);
             response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
@@ -238,7 +244,10 @@ void HttpServer::handle_client(int client_fd) const {
             response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
         }
     } catch (const std::exception& err) {
-        response = json_response("400 Bad Request", std::string("{\"error\":\"invalid_http_request\",\"message\":\"") + err.what() + "\"}");
+        response = json_response(
+            "400 Bad Request",
+            std::string("{\"error\":\"invalid_http_request\",\"message\":\"") + err.what() + "\"}"
+        );
     }
     send_all(client_fd, response.serialize());
     close(client_fd);
