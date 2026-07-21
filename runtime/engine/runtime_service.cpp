@@ -1,11 +1,15 @@
 #include "engine/runtime_service.hpp"
 
+#include "protocol/execution_mode.hpp"
 #include "protocol/stage.hpp"
 #include "protocol/stage_control.hpp"
 
+#include <cstdint>
 #include <exception>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -22,7 +26,7 @@ RuntimeResponse json_error(const std::string& status, const std::string& code, c
     };
 }
 
-std::string decode_unload_deployment_id(const std::string& request_body) {
+nlohmann::json parse_request_object(const std::string& request_body) {
     nlohmann::json body;
     try {
         body = nlohmann::json::parse(request_body);
@@ -32,20 +36,144 @@ std::string decode_unload_deployment_id(const std::string& request_body) {
     if (!body.is_object()) {
         throw std::invalid_argument("request body must be a JSON object");
     }
+    return body;
+}
 
-    const auto deployment_id = body.find("deployment_id");
-    if (deployment_id == body.end() || deployment_id->is_null()) {
-        throw std::invalid_argument("deployment_id is required");
+std::string require_string(const nlohmann::json& body, const char* field) {
+    const auto value = body.find(field);
+    if (value == body.end() || value->is_null()) {
+        throw std::invalid_argument(std::string(field) + " is required");
     }
-    if (!deployment_id->is_string()) {
-        throw std::invalid_argument("deployment_id must be a string");
+    if (!value->is_string()) {
+        throw std::invalid_argument(std::string(field) + " must be a string");
+    }
+    std::string parsed = value->get<std::string>();
+    if (parsed.empty()) {
+        throw std::invalid_argument(std::string(field) + " is required");
+    }
+    return parsed;
+}
+
+std::string optional_string(
+    const nlohmann::json& body,
+    const char* field,
+    const std::string& fallback
+) {
+    const auto value = body.find(field);
+    if (value == body.end() || value->is_null()) {
+        return fallback;
+    }
+    if (!value->is_string()) {
+        throw std::invalid_argument(std::string(field) + " must be a string");
+    }
+    return value->get<std::string>();
+}
+
+int integer_value(const nlohmann::json& value, const char* field) {
+    if (!value.is_number_integer() && !value.is_number_unsigned()) {
+        throw std::invalid_argument(std::string(field) + " must be an integer");
+    }
+    try {
+        const std::int64_t parsed = value.get<std::int64_t>();
+        if (parsed < std::numeric_limits<int>::min() ||
+            parsed > std::numeric_limits<int>::max()) {
+            throw std::invalid_argument(std::string(field) + " is outside int range");
+        }
+        return static_cast<int>(parsed);
+    } catch (const nlohmann::json::exception&) {
+        throw std::invalid_argument(std::string(field) + " is outside int range");
+    }
+}
+
+int require_int(const nlohmann::json& body, const char* field) {
+    const auto value = body.find(field);
+    if (value == body.end() || value->is_null()) {
+        throw std::invalid_argument(std::string(field) + " is required");
+    }
+    return integer_value(*value, field);
+}
+
+int optional_int(const nlohmann::json& body, const char* field, int fallback) {
+    const auto value = body.find(field);
+    return value == body.end() || value->is_null()
+        ? fallback
+        : integer_value(*value, field);
+}
+
+std::string decode_expected_deployment_id(const std::string& request_body) {
+    return require_string(parse_request_object(request_body), "deployment_id");
+}
+
+struct DecodedLoadRequest {
+    deployment::DeploymentIdentity identity;
+    Config config;
+};
+
+DecodedLoadRequest decode_load_request(const Config& base, const std::string& request_body) {
+    const nlohmann::json body = parse_request_object(request_body);
+
+    DecodedLoadRequest request;
+    request.identity = deployment::DeploymentIdentity{
+        .deployment_id = require_string(body, "deployment_id"),
+        .model_id = require_string(body, "model_id"),
+    };
+    request.config = base;
+    request.config.start_idle = false;
+    request.config.model = request.identity.model_id;
+    request.config.engine = optional_string(body, "engine", request.config.engine);
+    request.config.compute_backend = optional_string(
+        body,
+        "compute_backend",
+        request.config.compute_backend
+    );
+    request.config.model_path = optional_string(body, "model_path", "");
+    request.config.ctx_size = optional_int(body, "ctx_size", request.config.ctx_size);
+    request.config.n_gpu_layers = optional_int(
+        body,
+        "n_gpu_layers",
+        request.config.n_gpu_layers
+    );
+    request.config.threads = optional_int(body, "threads", request.config.threads);
+    request.config.mode = parse_execution_mode(optional_string(
+        body,
+        "mode",
+        std::string(execution_mode_string(request.config.mode))
+    ));
+    request.config.stage_assignment = pipeline_parallel::StageAssignment{
+        .stage_index = require_int(body, "stage_index"),
+        .stage_count = require_int(body, "stage_count"),
+        .layer_start = require_int(body, "layer_start"),
+        .layer_end = require_int(body, "layer_end"),
+    };
+
+    validate_deployment_config(request.config);
+    return request;
+}
+
+RuntimeResponse operation_response(
+    const char* operation,
+    const deployment::DeploymentOperationResult& result,
+    bool resident,
+    bool active,
+    std::string_view state
+) {
+    if (!result.identity.has_value()) {
+        return json_error(
+            "500 Internal Server Error",
+            "invalid_deployment_result",
+            "successful deployment operation omitted deployment identity"
+        );
     }
 
-    std::string value = deployment_id->get<std::string>();
-    if (value.empty()) {
-        throw std::invalid_argument("deployment_id is required");
-    }
-    return value;
+    std::ostringstream body;
+    body << "{\"" << operation << "\":true,\"deployment\":{\"deployment_id\":\""
+         << protocol::json_escape(result.identity->deployment_id)
+         << "\",\"model_id\":\""
+         << protocol::json_escape(result.identity->model_id)
+         << "\"},\"resident\":" << (resident ? "true" : "false")
+         << ",\"active\":" << (active ? "true" : "false")
+         << ",\"state\":\"" << state << "\"}";
+    return RuntimeResponse{result.status, "application/json", body.str()};
 }
 
 protocol::StageResponse stage_error_response(
@@ -129,34 +257,61 @@ RuntimeResponse RuntimeService::deployment_status() const {
     return RuntimeResponse{"200 OK", "application/json", body.str()};
 }
 
+RuntimeResponse RuntimeService::load_deployment(const std::string& request_body) {
+    DecodedLoadRequest request;
+    try {
+        request = decode_load_request(config_, request_body);
+    } catch (const std::invalid_argument& err) {
+        return json_error("400 Bad Request", "invalid_load_request", err.what());
+    }
+
+    const Config deployment_config = request.config;
+    deployment::LoadDeploymentResult result = model_manager_.load_resident_deployment(
+        deployment_config.node_name,
+        request.identity,
+        deployment_config.stage_assignment,
+        [deployment_config]() {
+            return build_inference_engine_parts(deployment_config);
+        }
+    );
+    if (!result.ok) {
+        return json_error(result.status, result.error_code, result.error_message);
+    }
+
+    config_ = deployment_config;
+    return operation_response("loaded", result, true, false, "ready");
+}
+
+RuntimeResponse RuntimeService::activate_deployment(const std::string& request_body) {
+    std::string expected_deployment_id;
+    try {
+        expected_deployment_id = decode_expected_deployment_id(request_body);
+    } catch (const std::invalid_argument& err) {
+        return json_error("400 Bad Request", "invalid_activate_request", err.what());
+    }
+
+    const deployment::ActivateDeploymentResult result =
+        model_manager_.activate_resident_deployment(expected_deployment_id);
+    if (!result.ok) {
+        return json_error(result.status, result.error_code, result.error_message);
+    }
+    return operation_response("activated", result, true, true, "active");
+}
+
 RuntimeResponse RuntimeService::unload_deployment(const std::string& request_body) {
     std::string expected_deployment_id;
     try {
-        expected_deployment_id = decode_unload_deployment_id(request_body);
+        expected_deployment_id = decode_expected_deployment_id(request_body);
     } catch (const std::invalid_argument& err) {
         return json_error("400 Bad Request", "invalid_unload_request", err.what());
     }
 
-    deployment::UnloadDeploymentResult result =
+    const deployment::UnloadDeploymentResult result =
         model_manager_.unload_resident_deployment(expected_deployment_id);
     if (!result.ok) {
         return json_error(result.status, result.error_code, result.error_message);
     }
-    if (!result.identity.has_value()) {
-        return json_error(
-            "500 Internal Server Error",
-            "invalid_unload_result",
-            "successful unload omitted deployment identity"
-        );
-    }
-
-    std::ostringstream body;
-    body << "{\"unloaded\":true,\"deployment\":{\"deployment_id\":\""
-         << protocol::json_escape(result.identity->deployment_id)
-         << "\",\"model_id\":\""
-         << protocol::json_escape(result.identity->model_id)
-         << "\"},\"resident\":false,\"active\":false,\"state\":\"idle\"}";
-    return RuntimeResponse{result.status, "application/json", body.str()};
+    return operation_response("unloaded", result, false, false, "idle");
 }
 
 RuntimeResponse RuntimeService::chat_completion(const std::string& /*request_body*/) const {
@@ -168,8 +323,13 @@ RuntimeResponse RuntimeService::chat_completion(const std::string& /*request_bod
 }
 
 RuntimeResponse RuntimeService::run_stage(const std::string& request_body) const {
-    if (config_.mode != ExecutionMode::PipelineParallel) {
-        return json_error("400 Bad Request", "invalid_execution_mode", "stage execution requires pipeline_parallel mode");
+    if (model_manager_.has_active_deployment() &&
+        config_.mode != ExecutionMode::PipelineParallel) {
+        return json_error(
+            "400 Bad Request",
+            "invalid_execution_mode",
+            "stage execution requires pipeline_parallel mode"
+        );
     }
 
     std::string operation;
@@ -186,7 +346,11 @@ RuntimeResponse RuntimeService::run_stage(const std::string& request_body) const
         : model_manager_.run_stage(request);
     if (!result.ok) {
         protocol::StageResponse response = stage_error_response(request, result.error_code, result.error_message);
-        return RuntimeResponse{result.status, protocol::kStageWireContentType, protocol::encode_stage_response(std::move(response))};
+        return RuntimeResponse{
+            result.status,
+            protocol::kStageWireContentType,
+            protocol::encode_stage_response(std::move(response))
+        };
     }
 
     return RuntimeResponse{
