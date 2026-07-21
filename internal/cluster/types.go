@@ -8,6 +8,7 @@ type Engine string
 
 const (
 	EngineLlamaCPP Engine = "llama.cpp"
+	EngineSynthetic Engine = "synthetic"
 )
 
 // ExecutionMode identifies how inference work is distributed.
@@ -72,11 +73,15 @@ const (
 	// Runtime identity describes the process that is actually serving requests.
 	// Host-level CUDA or engine installation detection is not a substitute for
 	// these configured runtime facts.
-	CapabilityRuntimeEngine          = "runtime_engine"
-	CapabilityRuntimeModelID         = "runtime_model_id"
-	CapabilityRuntimeModelSHA256     = "runtime_model_sha256"
-	CapabilityRuntimeComputeBackend  = "runtime_compute_backend"
-	CapabilityRuntimeExecutionMode   = "runtime_execution_mode"
+	CapabilityRuntimeEngine           = "runtime_engine"
+	CapabilityRuntimeModelID          = "runtime_model_id"
+	CapabilityRuntimeModelSHA256      = "runtime_model_sha256"
+	CapabilityRuntimeComputeBackend   = "runtime_compute_backend"
+	CapabilityRuntimeExecutionMode    = "runtime_execution_mode"
+	CapabilityRuntimeRevision         = "runtime_revision"
+	CapabilityRuntimeLlamaCPPRevision = "runtime_llama_cpp_revision"
+	CapabilityRuntimeCUDAActive       = "runtime_cuda_active"
+	CapabilityRuntimeStartsIdle       = "runtime_starts_idle"
 
 	MetricTemperatureC = "temperature_c"
 )
@@ -115,4 +120,6 @@ type ModelProfile struct {
 	MinMemoryGB      float64         `json:"min_memory_gb"`
 	PreferredCompute *ComputeBackend `json:"preferred_compute,omitempty"`
 	PlacementModes   []ExecutionMode `json:"placement_modes"`
+	ArtifactPath     string          `json:"artifact_path,omitempty"`
+	ArtifactSHA256   string          `json:"artifact_sha256,omitempty"`
 }
