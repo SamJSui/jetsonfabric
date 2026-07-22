@@ -26,6 +26,7 @@ tmp/
 !.env.example
 node.env
 runtime-assignment*.json
+configs/*.local.json
 
 data/
 artifacts/

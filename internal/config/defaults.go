@@ -11,13 +11,12 @@ const (
 )
 
 const (
-	configDir          = "configs"
-	modelRegistryFile  = "models.example.json"
-	modelArtifactsFile = "model-artifacts.example.json"
-	dataDir            = "data"
-	benchmarksFile     = "benchmarks.jsonl"
-	urlFormat          = "http://%s:%d"
-	listenFormat       = "%s:%d"
+	configDir         = "configs"
+	modelRegistryFile = "models.example.json"
+	dataDir           = "data"
+	benchmarksFile    = "benchmarks.jsonl"
+	urlFormat         = "http://%s:%d"
+	listenFormat      = "%s:%d"
 )
 
 func DefaultNodeListen() string {
@@ -30,10 +29,6 @@ func DefaultNodeURL() string {
 
 func DefaultModelRegistryPath() string {
 	return filepath.Join(configDir, modelRegistryFile)
-}
-
-func DefaultModelArtifactsPath() string {
-	return filepath.Join(configDir, modelArtifactsFile)
 }
 
 func DefaultBenchmarksPath() string {

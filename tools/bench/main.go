@@ -20,7 +20,7 @@ import (
 
 const (
 	defaultEndpoint    = "http://127.0.0.1:52415" + api.PathChatCompletions
-	defaultRequestPath = "examples/poc-local-smoke/chat-request.json"
+	defaultRequestPath = "examples/chat-request.json"
 	defaultBenchCount  = 1
 	defaultConcurrency = 1
 	outputFilePerm     = 0o644

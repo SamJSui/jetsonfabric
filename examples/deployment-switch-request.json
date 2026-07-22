@@ -1,0 +1,6 @@
+{
+  "deployment_id": "qwen-two-node",
+  "model": "qwen2.5-coder-1.5b-q4",
+  "stage_count": 2,
+  "ctx_size": 4096
+}

@@ -69,7 +69,7 @@ DEV_PROMPT ?= Explain JetsonFabric in one sentence.
 DEV_MAX_TOKENS ?= 16
 
 BENCH_URL ?= http://127.0.0.1:52415/v1/chat/completions
-BENCH_REQUEST ?= examples/poc-local-smoke/chat-request.json
+BENCH_REQUEST ?= examples/chat-request.json
 BENCH_COUNT ?= 1
 BENCH_CONCURRENCY ?= 1
 

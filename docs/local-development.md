@@ -96,10 +96,10 @@ Logs and lifecycle files are retained under:
 
 ```text
 .cache/jetsonfabric/dev/
-├── dev.lock
-├── node.pid
-├── runtime.pid
-└── logs/
+|-- dev.lock
+|-- node.pid
+|-- runtime.pid
+`-- logs/
 ```
 
 ## Inspect and use the service

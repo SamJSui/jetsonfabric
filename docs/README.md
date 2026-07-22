@@ -17,6 +17,8 @@ validation procedures.
   architecture views.
 - [Deployment invariants](deployment-invariants.md) - current and target
   constraints for model admission, residency, epochs, membership, and sessions.
+- [Deployment standards](deployment-standards.md) - public source-build,
+  configuration, security, and release expectations.
 
 ## Runtime Contracts
 

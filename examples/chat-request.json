@@ -1,0 +1,14 @@
+{
+  "model": "qwen2.5-coder-1.5b-q4",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a concise technical assistant."
+    },
+    {
+      "role": "user",
+      "content": "In one sentence, explain what JetsonFabric does."
+    }
+  ],
+  "max_tokens": 80
+}
