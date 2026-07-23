@@ -12,10 +12,6 @@ bool StageAssignment::is_last_stage() const {
     return stage_count > 0 && stage_index == stage_count - 1;
 }
 
-bool StageAssignment::is_intermediate_stage() const {
-    return stage_count > 2 && stage_index > 0 && stage_index < stage_count - 1;
-}
-
 std::string validate_stage_assignment(const StageAssignment& assignment) {
     if (assignment.stage_count < 1) {
         return "stage_count must be at least 1";

@@ -12,7 +12,6 @@ struct StageAssignment {
 
     bool is_first_stage() const;
     bool is_last_stage() const;
-    bool is_intermediate_stage() const;
 };
 
 std::string validate_stage_assignment(const StageAssignment& assignment);

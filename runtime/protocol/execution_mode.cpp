@@ -31,10 +31,4 @@ std::string execution_mode_string(ExecutionMode mode) {
     return "data_parallel";
 }
 
-bool is_valid_execution_mode(const std::string& value) {
-    return value == "data_parallel" ||
-           value == "pipeline_parallel" ||
-           value == "tensor_parallel";
-}
-
 } // namespace jetsonfabric::runtime

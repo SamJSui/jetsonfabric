@@ -89,10 +89,6 @@ llama_model* LlamaCppModel::raw_model() const {
     return impl_->model;
 }
 
-const llama_vocab* LlamaCppModel::raw_vocab() const {
-    return impl_->vocab;
-}
-
 int LlamaCppModel::n_embd() const {
     return llama_model_n_embd(impl_->model);
 }

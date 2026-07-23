@@ -89,9 +89,6 @@ func (m Metadata) Position() inference.StagePosition {
 	return inference.StagePosition{Index: m.StageIndex, Count: m.StageCount}
 }
 
-func (m Metadata) IsFirstStage() bool { return m.Position().IsFirst() }
-func (m Metadata) IsLastStage() bool  { return m.Position().IsLast() }
-
 // Frame is the in-process representation of one stagewire message. Metadata is
 // embedded so existing call sites can continue to access fields directly.
 type Frame struct {

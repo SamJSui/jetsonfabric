@@ -12,6 +12,5 @@ enum class ExecutionMode {
 
 ExecutionMode parse_execution_mode(const std::string& value);
 std::string execution_mode_string(ExecutionMode mode);
-bool is_valid_execution_mode(const std::string& value);
 
 } // namespace jetsonfabric::runtime
