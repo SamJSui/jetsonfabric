@@ -110,38 +110,6 @@ func (t *Tracker) Explain(now time.Time, members []membership.Member, staleAfter
 	return result
 }
 
-func (t *Tracker) selectLeader(now time.Time, candidates []Candidate) *membership.Member {
-	best := firstEligible(candidates)
-	incumbent := eligibleCandidate(candidates, t.state.LeaderID)
-	if best == nil || incumbent == nil {
-		return best
-	}
-	if now.After(t.state.LeaseExpiresAt) {
-		return best
-	}
-	if canPreempt(*best, incumbent.Member) {
-		return best
-	}
-	leader := incumbent.Member
-	return &leader
-}
-
-func (t *Tracker) applyLeader(now time.Time, leader *membership.Member, result *Result) {
-	if leader == nil {
-		t.clearLeader(result)
-		return
-	}
-	if t.state.LeaderID != leader.NodeID {
-		t.state.Epoch++
-	}
-	expiresAt := now.Add(t.leaseDuration)
-	t.state.LeaderID = leader.NodeID
-	t.state.LeaseExpiresAt = expiresAt
-	result.Leader = leader
-	result.Epoch = t.state.Epoch
-	result.LeaseExpiresAt = &expiresAt
-}
-
 func (t *Tracker) clearLeader(result *Result) {
 	t.state.LeaderID = ""
 	t.state.LeaseExpiresAt = time.Time{}
@@ -205,16 +173,6 @@ func firstEligible(candidates []Candidate) *membership.Member {
 	return nil
 }
 
-func eligibleCandidate(candidates []Candidate, nodeID string) *Candidate {
-	for index := range candidates {
-		candidate := &candidates[index]
-		if candidate.Eligible && candidate.Member.NodeID == nodeID {
-			return candidate
-		}
-	}
-	return nil
-}
-
 func betterCandidate(left Candidate, right Candidate) bool {
 	if left.Eligible != right.Eligible {
 		return left.Eligible
@@ -223,15 +181,6 @@ func betterCandidate(left Candidate, right Candidate) bool {
 		return betterPeer(left.Member, right.Member)
 	}
 	return left.Member.NodeID < right.Member.NodeID
-}
-
-func canPreempt(challenger membership.Member, incumbent membership.Member) bool {
-	challengerRank := membership.RoleRank(challenger.EffectiveRole())
-	incumbentRank := membership.RoleRank(incumbent.EffectiveRole())
-	if challengerRank != incumbentRank {
-		return challengerRank > incumbentRank
-	}
-	return challenger.EffectiveLeaderPreference() > incumbent.EffectiveLeaderPreference()
 }
 
 func betterPeer(left membership.Member, right membership.Member) bool {

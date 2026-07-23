@@ -36,10 +36,6 @@ bool StagePosition::is_last() const {
     return count > 0 && index >= 0 && index < count && index == count - 1;
 }
 
-bool StagePosition::is_intermediate() const {
-    return count > 0 && index > 0 && index < count - 1;
-}
-
 ExecutionResult ExecutionResult::success(StageOutput output) {
     ExecutionResult result;
     result.ok = true;

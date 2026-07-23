@@ -86,15 +86,6 @@ func NormalizeRole(role NodeRole) NodeRole {
 	}
 }
 
-func RoleLeaderEligible(role NodeRole) bool {
-	switch NormalizeRole(role) {
-	case NodeRoleCoordinator, NodeRoleJetson:
-		return true
-	default:
-		return false
-	}
-}
-
 func RoleRank(role NodeRole) int {
 	switch NormalizeRole(role) {
 	case NodeRoleCoordinator:

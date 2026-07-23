@@ -1,7 +1,5 @@
 package cluster
 
-import "time"
-
 // Engine identifies the inference engine hosted by a node runtime.
 // It answers: "Which model implementation executes inference?"
 type Engine string
@@ -63,7 +61,6 @@ const (
 	CapabilityMemoryGB        = "memory_gb"
 	CapabilityDeviceClass     = "device_class"
 	CapabilityComputeBackends = "compute_backends"
-	CapabilityPipelineWeight  = "pipeline_weight"
 
 	CapabilityRuntimeStageIndex = "runtime_stage_index"
 	CapabilityRuntimeStageCount = "runtime_stage_count"
@@ -99,17 +96,6 @@ type EngineEndpoint struct {
 	ComputeBackend   ComputeBackend `json:"compute_backend,omitempty"`
 	ExecutionMode    ExecutionMode  `json:"execution_mode,omitempty"`
 	OpenAICompatible bool           `json:"openai_compatible"`
-}
-
-type NodeRecord struct {
-	NodeName     string           `json:"node_name"`
-	Hostname     string           `json:"hostname"`
-	Arch         string           `json:"arch"`
-	OS           OperatingSystem  `json:"os"`
-	Capabilities map[string]any   `json:"capabilities"`
-	Metrics      map[string]any   `json:"metrics"`
-	Engines      []EngineEndpoint `json:"engines,omitempty"`
-	LastSeen     time.Time        `json:"last_seen"`
 }
 
 type ModelProfile struct {

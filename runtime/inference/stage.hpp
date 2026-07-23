@@ -29,7 +29,6 @@ struct StagePosition {
 
     bool is_first() const;
     bool is_last() const;
-    bool is_intermediate() const;
 };
 
 struct LayerRange {

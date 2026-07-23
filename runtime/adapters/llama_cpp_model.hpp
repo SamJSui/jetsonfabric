@@ -27,7 +27,6 @@ public:
     LlamaCppModel& operator=(const LlamaCppModel&) = delete;
 
     llama_model* raw_model() const;
-    const llama_vocab* raw_vocab() const;
 
     int n_embd() const;
     int n_layer() const;
