@@ -73,8 +73,6 @@ jq -e \
       .capabilities.runtime_compute_backend == "cuda" and
       .capabilities.runtime_cuda_active == true and
       .capabilities.runtime_engine == $engine and
-      .capabilities.runtime_model_id == $model and
-      (.capabilities.runtime_model_sha256 // "") != "" and
       .capabilities.runtime_stage_transport == $stage_transport))
 ' <<<"$members_json" >/dev/null
 
@@ -121,6 +119,8 @@ jq -e \
   .runtime_identity.model_id == $model and
   (.runtime_identity.model_sha256 // "") != "" and
   .runtime_identity.stage_transport == $stage_transport and
+  (.runtime_identity.deployment_id // "") != "" and
+  .runtime_identity.epoch > 0 and
   .inter_stage_payload_kind == "activation" and
   .plan.topology == "distributed" and
   .plan.physical_host_count >= 2 and
@@ -158,10 +158,39 @@ jq -e --argjson members "$members_json" '
       .capabilities.runtime_compute_backend == "cuda" and
       .capabilities.runtime_cuda_active == true and
       .capabilities.runtime_engine == $identity.engine and
-      .capabilities.runtime_model_id == $identity.model_id and
-      .capabilities.runtime_model_sha256 == $identity.model_sha256 and
       .capabilities.runtime_stage_transport == $identity.stage_transport))
 ' "$response_file" >/dev/null
+
+runtime_identity="$(jq -c '.runtime_identity' "$response_file")"
+while IFS= read -r stage; do
+  stage_api_url="$(jq -r '.api_url // empty' <<<"$stage")"
+  if [[ -z "$stage_api_url" ]]; then
+    echo "executed stage omitted api_url" >&2
+    jq . <<<"$stage" >&2
+    exit 1
+  fi
+  runtime_status="$(curl -fsS "${stage_api_url%/}/v1/runtime/deployment")"
+  if ! jq -e \
+    --argjson identity "$runtime_identity" \
+    --argjson stage "$stage" '
+      .resident == true and
+      .active == true and
+      .state == "active" and
+      .deployment.deployment_id == $identity.deployment_id and
+      .deployment.epoch == $identity.epoch and
+      .deployment.model_id == $identity.model_id and
+      .deployment.model_sha256 == $identity.model_sha256 and
+      .model_memory.layer_start == $stage.layer_start and
+      .model_memory.layer_end == $stage.layer_end and
+      .model_memory.partitioned == true and
+      .model_memory.pinned == true
+    ' <<<"$runtime_status" >/dev/null; then
+    echo "stage runtime does not match the executed deployment" >&2
+    jq -n --argjson stage "$stage" --argjson runtime "$runtime_status" \
+      '{stage: $stage, runtime: $runtime}' >&2
+    exit 1
+  fi
+done < <(jq -c '.plan.stages[]' "$response_file")
 
 if [[ -n "$EXPECTED_TOKENS" ]]; then
   jq -e --argjson expected "$EXPECTED_TOKENS" '.result.sampled_tokens == $expected' "$response_file" >/dev/null || {
