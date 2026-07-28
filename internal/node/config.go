@@ -28,6 +28,8 @@ const (
 	DefaultRuntimeCtxSize          = 4096
 	DefaultRuntimeNGPULayers       = 999
 	DefaultRuntimeThreads          = 0
+	DefaultRuntimeHTTPWorkers      = 2
+	MaxRuntimeHTTPWorkers          = 64
 	DefaultRuntimeRevision         = "dev"
 	DefaultRuntimeLlamaCPPRevision = "dev"
 
@@ -60,6 +62,7 @@ type Config struct {
 	RuntimeCtxSize          int
 	RuntimeNGPULayers       int
 	RuntimeThreads          int
+	RuntimeHTTPWorkers      int
 	RuntimeStartIdle        bool
 	RuntimeRevision         string
 	RuntimeLlamaCPPRevision string
@@ -104,6 +107,7 @@ func DefaultConfigValue() Config {
 		RuntimeCtxSize:          DefaultRuntimeCtxSize,
 		RuntimeNGPULayers:       DefaultRuntimeNGPULayers,
 		RuntimeThreads:          DefaultRuntimeThreads,
+		RuntimeHTTPWorkers:      DefaultRuntimeHTTPWorkers,
 		RuntimeRevision:         DefaultRuntimeRevision,
 		RuntimeLlamaCPPRevision: DefaultRuntimeLlamaCPPRevision,
 		StageIndex:              DefaultStageIndex,
@@ -193,6 +197,9 @@ func normalizeRuntimeConfig(cfg Config) Config {
 	if cfg.RuntimeNGPULayers == 0 {
 		cfg.RuntimeNGPULayers = DefaultRuntimeNGPULayers
 	}
+	if cfg.RuntimeHTTPWorkers == 0 {
+		cfg.RuntimeHTTPWorkers = DefaultRuntimeHTTPWorkers
+	}
 	if cfg.RuntimeRevision == "" {
 		cfg.RuntimeRevision = DefaultRuntimeRevision
 	}
@@ -245,6 +252,9 @@ func ValidateConfig(cfg Config) error {
 	}
 	if cfg.RuntimeStageTransport == "" {
 		return fmt.Errorf("--runtime-stage-transport is required")
+	}
+	if cfg.RuntimeHTTPWorkers < 1 || cfg.RuntimeHTTPWorkers > MaxRuntimeHTTPWorkers {
+		return fmt.Errorf("--runtime-http-workers must be between 1 and %d", MaxRuntimeHTTPWorkers)
 	}
 	if cfg.RuntimeRevision == "" {
 		return fmt.Errorf("--runtime-revision is required")

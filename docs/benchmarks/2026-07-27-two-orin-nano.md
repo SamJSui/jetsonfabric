@@ -220,15 +220,17 @@ Killing Grumpy during a 512-token stream caused the client to fail in 2.149
 seconds with `runtime_stage_unreachable`; the process and coordinator did not
 hang. After lease expiry, the deployment correctly became `degraded`.
 
-Recovery is not yet correct. When Grumpy restarted:
+At benchmark time, recovery was not yet correct. When Grumpy restarted:
 
 1. membership returned and the coordinator reported the deployment `active`;
 2. Grumpy's runtime remained idle with no loaded deployment;
 3. the next request failed with `no_active_deployment`;
 4. an explicit deployment switch restored service in 4.074 seconds.
 
-The coordinator must verify stage runtime identity/state before returning an
-active phase and must reload the last intent on a restarted runtime.
+The subsequent coordinator implementation verifies stage runtime
+identity/state and reloads an empty restarted runtime at the current active
+epoch. This report keeps the original failure because it is the regression
+case that the recovery test now represents.
 
 ## UTF-8 Transport Regression
 

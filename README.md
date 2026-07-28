@@ -14,9 +14,9 @@ capacity, not a distributed speedup: Qwen2.5-Coder 14B Q4_K_M requires both
 nodes, while smaller models remain faster and more energy-efficient on one.
 
 JetsonFabric is an experimental source release, not production-ready software.
-Traffic currently assumes a trusted LAN, installation is source-based, and
-runtime restart recovery still has an open correctness issue. Detailed
-contracts and operator guides are indexed in [docs/README.md](docs/README.md).
+Traffic currently assumes a trusted LAN and installation is source-based.
+Detailed contracts and operator guides are indexed in
+[docs/README.md](docs/README.md).
 
 ## How It Works
 
@@ -53,6 +53,8 @@ Implemented behavior includes:
 - stage-local model-weight residency and persistent prefill/decode contexts;
 - raw binary F32 activation transport with byte-count and CRC validation;
 - dynamic load, activate, drain, and unload without restarting the node;
+- active-deployment repair after an empty runtime process restarts;
+- bounded runtime HTTP workers and persistent ordered connections to peer nodes;
 - OpenAI-compatible buffered and streaming chat completions through any node.
 
 See [the architecture](docs/architecture.md) for component ownership and
@@ -257,16 +259,16 @@ or mutable node state.
 
 ## Roadmap
 
-The distributed runtime and physical CUDA proof are complete. Current work is
-focused on turning that proof into a repeatable and defensible system:
+The distributed runtime, physical CUDA proof, runtime restart repair, and
+persistent peer connection baseline are complete. Current work is:
 
-1. **Recovery correctness:** verify runtime identity after restart and restore
-   the active deployment before reporting the cluster healthy.
-2. **Transport efficiency:** replace per-stage connection setup with a
-   persistent channel, measure its contribution to ITL, and only then evaluate
-   gRPC or a custom data plane.
-3. **Operator experience:** package installation and service management, model
+1. **Measure transport impact:** repeat the physical benchmark sweep to quantify
+   changes in ITL, TTFT, throughput, and energy before considering gRPC or a
+   custom data plane.
+2. **Operator experience:** package installation and service management, model
    distribution, deployment inspection, and repeatable benchmark commands.
+3. **Recovery acceptance:** automate process restart, disconnect/reconnect, and
+   node-loss recovery tests on the physical cluster.
 
 After those are stable:
 
@@ -285,10 +287,10 @@ After those are stable:
   patch tied to the pinned `llama.cpp` revision.
 - Reported model residency covers tensor payloads, not allocator overhead,
   compute buffers, KV cache, fragmentation, or replacement overlap.
-- A restarted stage can rejoin membership before its runtime deployment is
-  restored; automatic recovery is not yet correct.
-- Generation is sequential, opens one HTTP connection per remote stage
-  operation, and does not overlap microbatches.
+- Runtime HTTP serving is bounded to two workers by default. Model execution
+  remains serialized inside each stage adapter.
+- Peer operations reuse one ordered HTTP/1.1 connection per target; they are
+  not multiplexed and do not overlap microbatches.
 - Chat completions use greedy sampling.
 - Stage traffic uses a shared cluster token over plaintext HTTP. Use only a
   trusted network.

@@ -37,12 +37,12 @@ public:
     ModelManager(ModelManager&&) = delete;
     ModelManager& operator=(ModelManager&&) = delete;
 
-    bool has_resident_deployment() const noexcept;
-    std::size_t resident_deployment_count() const noexcept;
-    bool has_active_deployment() const noexcept;
+    bool has_resident_deployment() const;
+    std::size_t resident_deployment_count() const;
+    bool has_active_deployment() const;
 
-    const DeploymentIdentity* resident_deployment_identity() const noexcept;
-    std::optional<ResidentDeploymentState> resident_deployment_state() const noexcept;
+    std::optional<DeploymentIdentity> resident_deployment_identity() const;
+    std::optional<ResidentDeploymentState> resident_deployment_state() const;
     DeploymentStatus deployment_status() const;
     DeploymentStatus deployment_status(const DeploymentIdentity& identity) const;
 
@@ -62,12 +62,12 @@ public:
         const DeploymentIdentity& expected_identity
     );
 
-    const DeploymentIdentity* active_deployment_identity() const noexcept;
-    const DeploymentIdentity* executable_deployment_identity(
+    std::optional<DeploymentIdentity> active_deployment_identity() const;
+    std::optional<DeploymentIdentity> executable_deployment_identity(
         const DeploymentIdentity& expected_identity
-    ) const noexcept;
-    const std::string& active_deployment_id() const noexcept;
-    const std::string& active_model_id() const noexcept;
+    ) const;
+    std::string active_deployment_id() const;
+    std::string active_model_id() const;
 
     pipeline_parallel::StageRunResult run_stage(
         const protocol::StageRequest& request

@@ -164,11 +164,14 @@ Topology describes physical placement:
   nodes; insufficient overlap capacity causes rollback to the old epoch.
 - Reconciliation state is not replicated across coordinator failover yet.
 - Inter-stage activations are F32.
-- Runtime peer calls currently use sequential HTTP/1.1 connections through node
-  facades; connection reuse and overlapped microbatches are not implemented.
+- Runtime peer calls reuse one ordered HTTP/1.1 connection per node facade;
+  request multiplexing and overlapped microbatches are not implemented.
+- Runtime HTTP serving uses a bounded worker pool, while each stage adapter
+  still serializes model execution.
 - Peer authentication uses one shared bearer token over plaintext HTTP. TLS,
   per-node credentials, and secure admission are not implemented.
 - Cancellation is checked between stage passes and stream writes; it cannot
   interrupt a blocking peer request before that request's transport timeout.
 - Chat completions support buffered and SSE responses but are greedy-only.
-- Physical multi-Jetson CUDA acceptance has not yet been completed.
+- Physical two-node CUDA correctness and capacity are proven; a distributed
+  speedup is not.

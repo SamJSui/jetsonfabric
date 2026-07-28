@@ -64,6 +64,7 @@ func runtimeArgs(cfg Config, listen string) []string {
 		"--ctx-size", strconv.Itoa(cfg.RuntimeCtxSize),
 		"--n-gpu-layers", strconv.Itoa(cfg.RuntimeNGPULayers),
 		"--threads", strconv.Itoa(cfg.RuntimeThreads),
+		"--http-workers", strconv.Itoa(cfg.RuntimeHTTPWorkers),
 		"--mode", cfg.RuntimeMode,
 		"--stage-index", strconv.Itoa(cfg.StageIndex),
 		"--stage-count", strconv.Itoa(cfg.StageCount),

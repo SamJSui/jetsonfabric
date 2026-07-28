@@ -97,6 +97,42 @@ func TestReconcilerPublishesAroundNodeLossAndCleansOnReturn(t *testing.T) {
 	}
 }
 
+func TestReconcilerRestoresActiveDeploymentAfterRuntimeRestart(t *testing.T) {
+	now := time.Date(2026, 7, 21, 7, 0, 0, 0, time.UTC)
+	node := deploymentSwitchMember("http://node-a", now)
+	source := newMutableMemberSource(node)
+	client := newMultiDeploymentClient()
+	server := NewServer(
+		deploymentSwitchRegistry(),
+		WithMembershipSource(source, time.Minute),
+		WithClusterPlanPolicy(clusterplan.Policy{}),
+		WithClock(func() time.Time { return now }),
+		WithDeploymentClient(client),
+	)
+	assertSwitchStatus(t, server, `{"deployment_id":"deployment-a","model":"model-a"}`, 200, "model-a", 1)
+
+	before := readDeploymentStatus(t, server)
+	if before.Active == nil {
+		t.Fatal("initial deployment is not active")
+	}
+	activeBefore := *server.deployments.snapshot().Active
+	identity := runtimeDeploymentIdentity(activeBefore)
+	client.restartRuntime(node.APIURL)
+
+	if err := server.Reconcile(context.Background()); err != nil {
+		t.Fatalf("runtime restart reconciliation failed: %v", err)
+	}
+	after := readDeploymentStatus(t, server)
+	if after.Active == nil || after.Active.Epoch != before.Active.Epoch {
+		t.Fatalf("runtime repair changed the active deployment epoch: before=%+v after=%+v", before, after)
+	}
+	activeAfter := *server.deployments.snapshot().Active
+	status := client.snapshot(node.APIURL, identity)
+	if err := validateRuntimeStatus(status, activeAfter, activeAfter.Stages()[0], "active", true); err != nil {
+		t.Fatalf("runtime was not restored to the active deployment: %v", err)
+	}
+}
+
 type mutableMemberSource struct {
 	mu      sync.RWMutex
 	members []membership.Member

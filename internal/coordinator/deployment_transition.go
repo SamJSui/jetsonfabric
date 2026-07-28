@@ -28,6 +28,9 @@ func (c *DeploymentController) switchDeploymentLocked(
 	}
 	current := c.state.snapshot()
 	if !force && current.Active != nil && plansEquivalent(*current.Active, build.result.Plan) {
+		if err := c.repairActivePlan(ctx, *current.Active, build.model, build.members, spec); err != nil {
+			return build, nil, fmt.Errorf("repair active deployment: %w", err)
+		}
 		return build, nil, nil
 	}
 	cleanupErr, err := c.transitionDeployment(ctx, build, spec)

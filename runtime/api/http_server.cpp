@@ -12,13 +12,18 @@
 #include <algorithm>
 #include <cerrno>
 #include <cctype>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
 #include <iostream>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
+#include <vector>
 
 namespace jetsonfabric::runtime {
 namespace {
@@ -172,6 +177,34 @@ int HttpServer::run() const {
               << " model=" << runtime_.model()
               << " mode=" << execution_mode_string(runtime_.execution_mode()) << "\n";
 
+    std::mutex queue_mutex;
+    std::condition_variable queue_ready;
+    std::deque<int> clients;
+    bool accepting = true;
+    const std::size_t queue_capacity =
+        static_cast<std::size_t>(config_.http_workers) * 8;
+    std::vector<std::thread> workers;
+    workers.reserve(static_cast<std::size_t>(config_.http_workers));
+    for (int index = 0; index < config_.http_workers; ++index) {
+        workers.emplace_back([this, &queue_mutex, &queue_ready, &clients, &accepting]() {
+            while (true) {
+                int client_fd = -1;
+                {
+                    std::unique_lock lock(queue_mutex);
+                    queue_ready.wait(lock, [&clients, &accepting]() {
+                        return !clients.empty() || !accepting;
+                    });
+                    if (clients.empty()) {
+                        return;
+                    }
+                    client_fd = clients.front();
+                    clients.pop_front();
+                }
+                handle_client(client_fd);
+            }
+        });
+    }
+
     while (running_.load()) {
         if (!wait_for_client(server_fd)) continue;
         sockaddr_in client_addr{};
@@ -182,9 +215,36 @@ int HttpServer::run() const {
             if (running_.load()) std::cerr << "accept failed: " << std::strerror(errno) << "\n";
             continue;
         }
-        handle_client(client_fd);
+        bool queued = false;
+        {
+            const std::lock_guard lock(queue_mutex);
+            if (clients.size() < queue_capacity) {
+                clients.push_back(client_fd);
+                queued = true;
+            }
+        }
+        if (queued) {
+            queue_ready.notify_one();
+        } else {
+            (void) send_all(
+                client_fd,
+                json_response(
+                    "503 Service Unavailable",
+                    "{\"error\":\"runtime_http_queue_full\"}"
+                ).serialize()
+            );
+            close(client_fd);
+        }
     }
     close(server_fd);
+    {
+        const std::lock_guard lock(queue_mutex);
+        accepting = false;
+    }
+    queue_ready.notify_all();
+    for (std::thread& worker : workers) {
+        worker.join();
+    }
     return 0;
 }
 

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log"
 	"time"
+
+	"github.com/SamJSui/jetsonfabric/internal/clusterplan"
 )
 
 // NotifyMembershipChanged coalesces membership refreshes. Reconciliation also
@@ -78,10 +80,23 @@ func (c *DeploymentController) reconcile(ctx context.Context) error {
 		c.members(),
 		c.now(),
 		c.memberStaleAfter,
-	)
+	) && c.activeRuntimePlanHealthy(ctx, *snapshot.Active)
 	result := errors.Join(pendingCleanupErr, err)
 	c.state.recordReconcileError(result, healthy)
 	return result
+}
+
+func (c *DeploymentController) activeRuntimePlanHealthy(
+	ctx context.Context,
+	plan clusterplan.DeploymentPlan,
+) bool {
+	for _, stage := range plan.Stages() {
+		status, err := c.runtimeClient.Status(ctx, stage.APIURL)
+		if err != nil || validateRuntimeStatus(status, plan, stage, "active", true) != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *DeploymentController) retryDraining(ctx context.Context) error {

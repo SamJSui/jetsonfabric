@@ -32,7 +32,8 @@ pipeline_parallel::GenerationResult GenerationService::generate(
     const protocol::GenerationRequest& request,
     const pipeline_parallel::TokenSink& sink
 ) const {
-    const deployment::DeploymentIdentity* selected = select_deployment(request);
+    const std::optional<deployment::DeploymentIdentity> selected =
+        select_deployment(request);
     if (const auto validation_error = validate_request(request, selected);
         validation_error.has_value()) {
         return *validation_error;
@@ -50,7 +51,7 @@ pipeline_parallel::GenerationResult GenerationService::generate(
     return runner.run(request, sink);
 }
 
-const deployment::DeploymentIdentity* GenerationService::select_deployment(
+std::optional<deployment::DeploymentIdentity> GenerationService::select_deployment(
     const protocol::GenerationRequest& request
 ) const {
     return request.deployment.has_value()
@@ -60,7 +61,7 @@ const deployment::DeploymentIdentity* GenerationService::select_deployment(
 
 std::optional<pipeline_parallel::GenerationResult> GenerationService::validate_request(
     const protocol::GenerationRequest& request,
-    const deployment::DeploymentIdentity* selected
+    const std::optional<deployment::DeploymentIdentity>& selected
 ) const {
     if (execution_mode_ != ExecutionMode::PipelineParallel) {
         return generation_error(
@@ -68,7 +69,7 @@ std::optional<pipeline_parallel::GenerationResult> GenerationService::validate_r
             "runtime-owned generation requires pipeline_parallel mode"
         );
     }
-    if (selected == nullptr) {
+    if (!selected.has_value()) {
         const bool identity_mismatch =
             request.deployment.has_value() && model_manager_.has_active_deployment();
         return generation_error(

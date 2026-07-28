@@ -99,6 +99,7 @@ func bindRuntimeFlags(fs *flag.FlagSet, cfg *node.Config) {
 	fs.IntVar(&cfg.RuntimeCtxSize, "runtime-ctx-size", cfg.RuntimeCtxSize, "runtime context size")
 	fs.IntVar(&cfg.RuntimeNGPULayers, "runtime-n-gpu-layers", cfg.RuntimeNGPULayers, "runtime GPU layer count")
 	fs.IntVar(&cfg.RuntimeThreads, "runtime-threads", cfg.RuntimeThreads, "runtime CPU thread count")
+	fs.IntVar(&cfg.RuntimeHTTPWorkers, "runtime-http-workers", cfg.RuntimeHTTPWorkers, "bounded runtime HTTP worker count")
 	fs.BoolVar(&cfg.RuntimeStartIdle, "runtime-idle", cfg.RuntimeStartIdle, "start or describe the local runtime without a resident deployment")
 	fs.StringVar(&cfg.RuntimeRevision, "runtime-revision", cfg.RuntimeRevision, "JetsonFabric runtime compatibility revision")
 	fs.StringVar(&cfg.RuntimeLlamaCPPRevision, "runtime-llama-cpp-revision", cfg.RuntimeLlamaCPPRevision, "pinned llama.cpp compatibility revision")

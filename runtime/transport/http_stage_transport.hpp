@@ -2,15 +2,15 @@
 
 #include "transport/stage_transport.hpp"
 
+#include <memory>
 #include <string>
-#include <utility>
 
 namespace jetsonfabric::runtime::transport {
 
 class HTTPStageTransport final : public StageTransport {
 public:
-    explicit HTTPStageTransport(std::string cluster_token)
-        : cluster_token_(std::move(cluster_token)) {}
+    explicit HTTPStageTransport(std::string cluster_token);
+    ~HTTPStageTransport() override;
 
     pipeline_parallel::StageRunResult invoke(
         const protocol::GenerationStage& stage,
@@ -19,7 +19,8 @@ public:
     ) const override;
 
 private:
-    std::string cluster_token_;
+    class Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace jetsonfabric::runtime::transport

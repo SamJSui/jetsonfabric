@@ -22,6 +22,7 @@ struct Config {
     int ctx_size = 4096;
     int n_gpu_layers = 999;
     int threads = 0;
+    int http_workers = 2;
 
     ExecutionMode mode = ExecutionMode::DataParallel;
     pipeline_parallel::StageAssignment stage_assignment;

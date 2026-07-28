@@ -27,12 +27,12 @@ public:
     ) const;
 
 private:
-    const deployment::DeploymentIdentity* select_deployment(
+    std::optional<deployment::DeploymentIdentity> select_deployment(
         const protocol::GenerationRequest& request
     ) const;
     std::optional<pipeline_parallel::GenerationResult> validate_request(
         const protocol::GenerationRequest& request,
-        const deployment::DeploymentIdentity* deployment
+        const std::optional<deployment::DeploymentIdentity>& deployment
     ) const;
     pipeline_parallel::StageRunResult invoke_stage(
         const protocol::GenerationStage& stage,

@@ -51,6 +51,7 @@ RUNTIME_MODE ?= pipeline_parallel
 RUNTIME_CTX_SIZE ?= 4096
 RUNTIME_N_GPU_LAYERS ?= 999
 RUNTIME_THREADS ?= 0
+RUNTIME_HTTP_WORKERS ?= 2
 
 STAGE_INDEX ?= 0
 STAGE_COUNT ?= 1
@@ -221,6 +222,7 @@ run-node:
 		--runtime-ctx-size "$(RUNTIME_CTX_SIZE)" \
 		--runtime-n-gpu-layers "$(RUNTIME_N_GPU_LAYERS)" \
 		--runtime-threads "$(RUNTIME_THREADS)" \
+		--runtime-http-workers "$(RUNTIME_HTTP_WORKERS)" \
 		--engine "$(NODE_ENGINE)" \
 		--model "$(MODEL)" \
 		--model-path "$(MODEL_PATH)" \
@@ -263,6 +265,7 @@ run-runtime:
 		--ctx-size "$(RUNTIME_CTX_SIZE)" \
 		--n-gpu-layers "$(RUNTIME_N_GPU_LAYERS)" \
 		--threads "$(RUNTIME_THREADS)" \
+		--http-workers "$(RUNTIME_HTTP_WORKERS)" \
 		--mode "$(RUNTIME_MODE)" \
 		--stage-index "$(STAGE_INDEX)" \
 		--stage-count "$(STAGE_COUNT)" \
@@ -284,6 +287,7 @@ dev-up:
 	RUNTIME_CTX_SIZE="$(RUNTIME_CTX_SIZE)" \
 	RUNTIME_N_GPU_LAYERS="$(RUNTIME_N_GPU_LAYERS)" \
 	RUNTIME_THREADS="$(RUNTIME_THREADS)" \
+	RUNTIME_HTTP_WORKERS="$(RUNTIME_HTTP_WORKERS)" \
 	NODE_CLUSTER_ID="$(NODE_CLUSTER_ID)" \
 	NODE_ENGINE="$(NODE_ENGINE)" \
 	JF_CLUSTER_TOKEN="$(JETSONFABRIC_CLUSTER_TOKEN)" \

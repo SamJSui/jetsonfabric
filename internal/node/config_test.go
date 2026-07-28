@@ -69,18 +69,37 @@ func TestNormalizeConfigDefaultsRuntimeStageTransport(t *testing.T) {
 	}
 }
 
-func TestRuntimeArgsPassConfiguredStageTransport(t *testing.T) {
+func TestRuntimeArgsPassConfiguredTransportAndHTTPWorkers(t *testing.T) {
 	cfg := NormalizeConfig(DefaultConfigValue())
 	cfg.RuntimeStageTransport = "test_transport"
+	cfg.RuntimeHTTPWorkers = 3
 
 	args := runtimeArgs(cfg, "127.0.0.1:9090")
 
+	hasTransport := false
+	hasHTTPWorkers := false
 	for index := 0; index+1 < len(args); index++ {
 		if args[index] == "--stage-transport" && args[index+1] == "test_transport" {
-			return
+			hasTransport = true
+		}
+		if args[index] == "--http-workers" && args[index+1] == "3" {
+			hasHTTPWorkers = true
 		}
 	}
-	t.Fatalf("runtime args do not contain configured stage transport: %v", args)
+	if !hasTransport || !hasHTTPWorkers {
+		t.Fatalf("runtime args omitted transport or HTTP workers: %v", args)
+	}
+}
+
+func TestValidateConfigRejectsInvalidRuntimeHTTPWorkers(t *testing.T) {
+	for _, workers := range []int{-1, MaxRuntimeHTTPWorkers + 1} {
+		cfg := NormalizeConfig(DefaultConfigValue())
+		cfg.RuntimeHTTPWorkers = workers
+
+		if err := ValidateConfig(cfg); err == nil {
+			t.Fatalf("ValidateConfig accepted %d runtime HTTP workers", workers)
+		}
+	}
 }
 
 func TestValidateConfigDoesNotRequireGGUFForCustomEngine(t *testing.T) {

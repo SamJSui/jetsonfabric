@@ -7,6 +7,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -61,15 +62,22 @@ public:
     Impl(Impl&&) = delete;
     Impl& operator=(Impl&&) = delete;
 
-    bool has_resident_deployment() const noexcept {
+    bool has_resident_deployment() const {
+        const std::lock_guard lock(mutex_);
         return !deployments_.empty();
     }
 
-    std::size_t resident_deployment_count() const noexcept {
+    std::size_t resident_deployment_count() const {
+        const std::lock_guard lock(mutex_);
         return deployments_.size();
     }
 
-    bool has_active_deployment() const noexcept {
+    bool has_active_deployment() const {
+        const std::lock_guard lock(mutex_);
+        return has_active_deployment_locked();
+    }
+
+    bool has_active_deployment_locked() const noexcept {
         for (const auto& [key, deployment] : deployments_) {
             (void) key;
             if (is_executable(*deployment)) {
@@ -79,23 +87,29 @@ public:
         return false;
     }
 
-    const DeploymentIdentity* resident_deployment_identity() const noexcept {
-        const ResidentDeployment* deployment = preferred_deployment();
-        return deployment != nullptr ? &deployment->identity : nullptr;
+    std::optional<DeploymentIdentity> resident_deployment_identity() const {
+        const std::lock_guard lock(mutex_);
+        const std::shared_ptr<const ResidentDeployment> deployment = preferred_deployment();
+        return deployment != nullptr
+            ? std::optional<DeploymentIdentity>{deployment->identity}
+            : std::nullopt;
     }
 
-    std::optional<ResidentDeploymentState> resident_deployment_state() const noexcept {
-        const ResidentDeployment* deployment = preferred_deployment();
+    std::optional<ResidentDeploymentState> resident_deployment_state() const {
+        const std::lock_guard lock(mutex_);
+        const std::shared_ptr<const ResidentDeployment> deployment = preferred_deployment();
         return deployment != nullptr
             ? std::optional<ResidentDeploymentState>{deployment->state}
             : std::nullopt;
     }
 
     DeploymentStatus deployment_status() const {
+        const std::lock_guard lock(mutex_);
         return status_for(preferred_deployment());
     }
 
     DeploymentStatus deployment_status(const DeploymentIdentity& identity) const {
+        const std::lock_guard lock(mutex_);
         return status_for(find_exact(identity));
     }
 
@@ -133,35 +147,44 @@ public:
         }
 
         const DeploymentKey key = key_for(identity);
-        if (const ResidentDeployment* existing = find_key(key); existing != nullptr) {
-            return operation_error(
-                "409 Conflict",
-                "resident_deployment_exists",
-                "runtime already has this resident deployment identity",
-                existing->identity,
-                existing->state
-            );
-        }
+        std::shared_ptr<ResidentDeployment> resident;
+        {
+            const std::lock_guard lock(mutex_);
+            if (const std::shared_ptr<ResidentDeployment> existing = find_key(key);
+                existing != nullptr) {
+                return operation_error(
+                    "409 Conflict",
+                    "resident_deployment_exists",
+                    "runtime already has this resident deployment identity",
+                    existing->identity,
+                    existing->state
+                );
+            }
 
-        auto deployment = std::make_unique<ResidentDeployment>(
-            std::move(identity),
-            ResidentDeploymentState::Loading
-        );
-        ResidentDeployment* resident = deployment.get();
-        deployments_.emplace(key, std::move(deployment));
-        if (!preferred_.has_value()) {
-            preferred_ = key;
+            resident = std::make_shared<ResidentDeployment>(
+                std::move(identity),
+                ResidentDeploymentState::Loading
+            );
+            deployments_.emplace(key, resident);
+            if (!preferred_.has_value()) {
+                preferred_ = key;
+            }
         }
 
         try {
             InferenceEngineParts engine_parts = build_engine_parts();
-            resident->model_residency = engine_parts.model_residency;
-            resident->execution = std::make_unique<ResidentExecution>(
-                std::move(node_name),
-                resident->identity.model_id,
-                assignment,
-                std::move(engine_parts)
-            );
+            const std::optional<ModelResidency> model_residency =
+                engine_parts.model_residency;
+            std::unique_ptr<ResidentExecution> execution =
+                std::make_unique<ResidentExecution>(
+                    std::move(node_name),
+                    resident->identity.model_id,
+                    assignment,
+                    std::move(engine_parts)
+                );
+            const std::lock_guard lock(mutex_);
+            resident->model_residency = model_residency;
+            resident->execution = std::move(execution);
             transition(*resident, ResidentDeploymentState::Ready);
             return operation_success(
                 "200 OK",
@@ -169,6 +192,7 @@ public:
                 ResidentDeploymentState::Ready
             );
         } catch (const std::invalid_argument& error) {
+            const std::lock_guard lock(mutex_);
             transition(*resident, ResidentDeploymentState::Failed);
             return operation_error(
                 "400 Bad Request",
@@ -178,6 +202,7 @@ public:
                 ResidentDeploymentState::Failed
             );
         } catch (const std::exception& error) {
+            const std::lock_guard lock(mutex_);
             transition(*resident, ResidentDeploymentState::Failed);
             return operation_error(
                 "500 Internal Server Error",
@@ -196,7 +221,8 @@ public:
             !invalid.ok) {
             return invalid;
         }
-        ResidentDeployment* resident = find_exact(expected_identity);
+        const std::lock_guard lock(mutex_);
+        std::shared_ptr<ResidentDeployment> resident = find_exact(expected_identity);
         if (resident == nullptr) {
             return deployment_not_found(expected_identity);
         }
@@ -235,7 +261,8 @@ public:
             !invalid.ok) {
             return invalid;
         }
-        ResidentDeployment* resident = find_exact(expected_identity);
+        const std::lock_guard lock(mutex_);
+        std::shared_ptr<ResidentDeployment> resident = find_exact(expected_identity);
         if (resident == nullptr) {
             return operation_success("200 OK", expected_identity, std::nullopt);
         }
@@ -256,7 +283,8 @@ public:
             !invalid.ok) {
             return invalid;
         }
-        ResidentDeployment* resident = find_exact(expected_identity);
+        const std::lock_guard lock(mutex_);
+        std::shared_ptr<ResidentDeployment> resident = find_exact(expected_identity);
         if (resident == nullptr) {
             return operation_success("200 OK", expected_identity, std::nullopt);
         }
@@ -282,40 +310,47 @@ public:
         return operation_success("200 OK", unloaded_identity, std::nullopt);
     }
 
-    const DeploymentIdentity* active_deployment_identity() const noexcept {
-        const ResidentDeployment* deployment = preferred_deployment();
+    std::optional<DeploymentIdentity> active_deployment_identity() const {
+        const std::lock_guard lock(mutex_);
+        const std::shared_ptr<const ResidentDeployment> deployment = preferred_deployment();
         return deployment != nullptr && is_executable(*deployment)
-            ? &deployment->identity
-            : nullptr;
+            ? std::optional<DeploymentIdentity>{deployment->identity}
+            : std::nullopt;
     }
 
-    const DeploymentIdentity* executable_deployment_identity(
+    std::optional<DeploymentIdentity> executable_deployment_identity(
         const DeploymentIdentity& expected_identity
-    ) const noexcept {
-        const ResidentDeployment* deployment = find_exact(expected_identity);
+    ) const {
+        const std::lock_guard lock(mutex_);
+        const std::shared_ptr<const ResidentDeployment> deployment =
+            find_exact(expected_identity);
         return deployment != nullptr && is_executable(*deployment)
-            ? &deployment->identity
-            : nullptr;
+            ? std::optional<DeploymentIdentity>{deployment->identity}
+            : std::nullopt;
     }
 
-    const std::string& active_deployment_id() const noexcept {
-        static const std::string empty_deployment_id;
-        const DeploymentIdentity* identity = active_deployment_identity();
-        return identity != nullptr ? identity->deployment_id : empty_deployment_id;
+    std::string active_deployment_id() const {
+        const std::optional<DeploymentIdentity> identity = active_deployment_identity();
+        return identity.has_value() ? identity->deployment_id : "";
     }
 
-    const std::string& active_model_id() const noexcept {
-        static const std::string empty_model_id;
-        const DeploymentIdentity* identity = active_deployment_identity();
-        return identity != nullptr ? identity->model_id : empty_model_id;
+    std::string active_model_id() const {
+        const std::optional<DeploymentIdentity> identity = active_deployment_identity();
+        return identity.has_value() ? identity->model_id : "";
     }
 
     pipeline_parallel::StageRunResult run_stage(
         const protocol::StageRequest& request
     ) const {
-        const ResidentDeployment* deployment = deployment_for(request);
+        std::shared_ptr<const ResidentDeployment> deployment;
+        bool any_active = false;
+        {
+            const std::lock_guard lock(mutex_);
+            deployment = deployment_for(request);
+            any_active = has_active_deployment_locked();
+        }
         if (deployment == nullptr) {
-            return unavailable_for(request);
+            return unavailable_for(request, any_active);
         }
         if (pipeline_parallel::StageRunResult mismatch =
                 validate_stage_deployment(deployment->identity, request);
@@ -328,9 +363,15 @@ public:
     pipeline_parallel::StageRunResult close_session(
         const protocol::StageRequest& request
     ) const {
-        const ResidentDeployment* deployment = deployment_for(request);
+        std::shared_ptr<const ResidentDeployment> deployment;
+        bool any_active = false;
+        {
+            const std::lock_guard lock(mutex_);
+            deployment = deployment_for(request);
+            any_active = has_active_deployment_locked();
+        }
         if (deployment == nullptr) {
-            return unavailable_for(request);
+            return unavailable_for(request, any_active);
         }
         if (pipeline_parallel::StageRunResult mismatch =
                 validate_stage_deployment(deployment->identity, request);
@@ -399,7 +440,7 @@ private:
         const DeploymentKey key = key_for(identity);
         deployments_.emplace(
             key,
-            std::make_unique<ResidentDeployment>(
+            std::make_shared<ResidentDeployment>(
                 std::move(node_name),
                 std::move(identity),
                 assignment,
@@ -413,44 +454,48 @@ private:
         return {identity.deployment_id, identity.epoch};
     }
 
-    ResidentDeployment* find_key(const DeploymentKey& key) noexcept {
+    std::shared_ptr<ResidentDeployment> find_key(const DeploymentKey& key) noexcept {
         const auto found = deployments_.find(key);
-        return found != deployments_.end() ? found->second.get() : nullptr;
+        return found != deployments_.end() ? found->second : nullptr;
     }
 
-    const ResidentDeployment* find_key(const DeploymentKey& key) const noexcept {
+    std::shared_ptr<const ResidentDeployment> find_key(
+        const DeploymentKey& key
+    ) const noexcept {
         const auto found = deployments_.find(key);
-        return found != deployments_.end() ? found->second.get() : nullptr;
+        return found != deployments_.end() ? found->second : nullptr;
     }
 
-    ResidentDeployment* find_exact(const DeploymentIdentity& identity) noexcept {
-        ResidentDeployment* deployment = find_key(key_for(identity));
+    std::shared_ptr<ResidentDeployment> find_exact(
+        const DeploymentIdentity& identity
+    ) noexcept {
+        std::shared_ptr<ResidentDeployment> deployment = find_key(key_for(identity));
         return deployment != nullptr && deployment->identity == identity
             ? deployment
             : nullptr;
     }
 
-    const ResidentDeployment* find_exact(
+    std::shared_ptr<const ResidentDeployment> find_exact(
         const DeploymentIdentity& identity
     ) const noexcept {
-        const ResidentDeployment* deployment = find_key(key_for(identity));
+        std::shared_ptr<const ResidentDeployment> deployment = find_key(key_for(identity));
         return deployment != nullptr && deployment->identity == identity
             ? deployment
             : nullptr;
     }
 
-    const ResidentDeployment* preferred_deployment() const noexcept {
+    std::shared_ptr<const ResidentDeployment> preferred_deployment() const noexcept {
         return preferred_.has_value() ? find_key(*preferred_) : nullptr;
     }
 
-    const ResidentDeployment* deployment_for(
+    std::shared_ptr<const ResidentDeployment> deployment_for(
         const protocol::StageRequest& request
     ) const noexcept {
         const bool managed = !request.deployment_id.empty() ||
             request.deployment_epoch != 0 ||
             !request.model_sha256.empty();
         if (!managed) {
-            const ResidentDeployment* deployment = preferred_deployment();
+            std::shared_ptr<const ResidentDeployment> deployment = preferred_deployment();
             return deployment != nullptr && is_executable(*deployment)
                 ? deployment
                 : nullptr;
@@ -461,7 +506,7 @@ private:
             .model_id = request.model_id,
             .model_sha256 = request.model_sha256,
         };
-        const ResidentDeployment* deployment = find_exact(expected);
+        std::shared_ptr<const ResidentDeployment> deployment = find_exact(expected);
         return deployment != nullptr && is_executable(*deployment)
             ? deployment
             : nullptr;
@@ -473,7 +518,9 @@ private:
              deployment.state == ResidentDeploymentState::Draining);
     }
 
-    static DeploymentStatus status_for(const ResidentDeployment* deployment) {
+    static DeploymentStatus status_for(
+        const std::shared_ptr<const ResidentDeployment>& deployment
+    ) {
         if (deployment == nullptr) {
             return DeploymentStatus{};
         }
@@ -560,13 +607,14 @@ private:
         return result;
     }
 
-    pipeline_parallel::StageRunResult unavailable_for(
-        const protocol::StageRequest& request
-    ) const {
+    static pipeline_parallel::StageRunResult unavailable_for(
+        const protocol::StageRequest& request,
+        bool any_active
+    ) {
         const bool managed = !request.deployment_id.empty() ||
             request.deployment_epoch != 0 ||
             !request.model_sha256.empty();
-        if (!managed || !has_active_deployment()) {
+        if (!managed || !any_active) {
             return no_active_deployment();
         }
         pipeline_parallel::StageRunResult result;
@@ -692,7 +740,8 @@ private:
         deployment.state = next;
     }
 
-    std::map<DeploymentKey, std::unique_ptr<ResidentDeployment>> deployments_;
+    mutable std::mutex mutex_;
+    std::map<DeploymentKey, std::shared_ptr<ResidentDeployment>> deployments_;
     std::optional<DeploymentKey> preferred_;
 };
 
@@ -720,23 +769,23 @@ ModelManager::ModelManager(
 
 ModelManager::~ModelManager() = default;
 
-bool ModelManager::has_resident_deployment() const noexcept {
+bool ModelManager::has_resident_deployment() const {
     return impl_->has_resident_deployment();
 }
 
-std::size_t ModelManager::resident_deployment_count() const noexcept {
+std::size_t ModelManager::resident_deployment_count() const {
     return impl_->resident_deployment_count();
 }
 
-bool ModelManager::has_active_deployment() const noexcept {
+bool ModelManager::has_active_deployment() const {
     return impl_->has_active_deployment();
 }
 
-const DeploymentIdentity* ModelManager::resident_deployment_identity() const noexcept {
+std::optional<DeploymentIdentity> ModelManager::resident_deployment_identity() const {
     return impl_->resident_deployment_identity();
 }
 
-std::optional<ResidentDeploymentState> ModelManager::resident_deployment_state() const noexcept {
+std::optional<ResidentDeploymentState> ModelManager::resident_deployment_state() const {
     return impl_->resident_deployment_state();
 }
 
@@ -782,21 +831,21 @@ UnloadDeploymentResult ModelManager::unload_resident_deployment(
     return impl_->unload_resident_deployment(expected_identity);
 }
 
-const DeploymentIdentity* ModelManager::active_deployment_identity() const noexcept {
+std::optional<DeploymentIdentity> ModelManager::active_deployment_identity() const {
     return impl_->active_deployment_identity();
 }
 
-const DeploymentIdentity* ModelManager::executable_deployment_identity(
+std::optional<DeploymentIdentity> ModelManager::executable_deployment_identity(
     const DeploymentIdentity& expected_identity
-) const noexcept {
+) const {
     return impl_->executable_deployment_identity(expected_identity);
 }
 
-const std::string& ModelManager::active_deployment_id() const noexcept {
+std::string ModelManager::active_deployment_id() const {
     return impl_->active_deployment_id();
 }
 
-const std::string& ModelManager::active_model_id() const noexcept {
+std::string ModelManager::active_model_id() const {
     return impl_->active_model_id();
 }
 

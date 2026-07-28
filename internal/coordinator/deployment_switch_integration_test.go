@@ -466,6 +466,14 @@ func (c *multiDeploymentClient) setUnreachable(nodeURL string, unreachable bool)
 	c.unreachable[nodeURL] = unreachable
 }
 
+func (c *multiDeploymentClient) restartRuntime(nodeURL string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.runtimes[nodeURL] = &fakeRuntimeDeployments{
+		deployments: make(map[runtimeDeploymentKey]runtimebridge.DeploymentStatus),
+	}
+}
+
 func (c *multiDeploymentClient) operationBefore(first, second string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()

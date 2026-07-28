@@ -63,6 +63,9 @@ void validate_engine_config(const Config& cfg) {
     if (cfg.threads < 0) {
         throw std::invalid_argument("--threads must be zero or greater");
     }
+    if (cfg.http_workers <= 0 || cfg.http_workers > 64) {
+        throw std::invalid_argument("--http-workers must be between 1 and 64");
+    }
 }
 
 } // namespace
@@ -126,7 +129,8 @@ void print_help() {
         << "  --model-path path        GGUF model path for llama.cpp\n"
         << "  --ctx-size n             context size, default 4096\n"
         << "  --n-gpu-layers n         llama.cpp GPU layers, default 999\n"
-        << "  --threads n              CPU threads, default 0\n";
+        << "  --threads n              CPU threads, default 0\n"
+        << "  --http-workers n         bounded HTTP worker count, default 2\n";
 }
 
 Config parse_args(int argc, char** argv) {
@@ -173,6 +177,8 @@ Config parse_args(int argc, char** argv) {
             cfg.n_gpu_layers = parse_int(require_value(i, argc, argv, arg), arg);
         } else if (arg == "--threads") {
             cfg.threads = parse_int(require_value(i, argc, argv, arg), arg);
+        } else if (arg == "--http-workers") {
+            cfg.http_workers = parse_int(require_value(i, argc, argv, arg), arg);
         } else if (arg == "--help" || arg == "-h") {
             print_help();
             std::exit(0);
@@ -193,7 +199,8 @@ Config parse_args(int argc, char** argv) {
         << " stage_transport=" << cfg.stage_transport
         << " compute_backend=" << cfg.compute_backend
         << " n_gpu_layers=" << cfg.n_gpu_layers
-        << " ctx_size=" << cfg.ctx_size;
+        << " ctx_size=" << cfg.ctx_size
+        << " http_workers=" << cfg.http_workers;
     if (!cfg.start_idle) {
         std::cerr
             << " stage=" << cfg.stage_assignment.stage_index << "/" << cfg.stage_assignment.stage_count

@@ -31,14 +31,28 @@ func (c *DeploymentController) loadPlan(
 		if !ok {
 			return fmt.Errorf("deployment member %q disappeared from the immutable snapshot", stage.NodeID)
 		}
-		loadRequest := newRuntimeLoadRequest(plan, model, member, stage, spec)
-		response, err := c.runtimeClient.Load(ctx, stage.APIURL, loadRequest)
-		if err != nil {
-			return fmt.Errorf("load deployment on node %q: %w", stage.NodeID, err)
+		if err := c.loadStage(ctx, plan, model, member, stage, spec); err != nil {
+			return err
 		}
-		if err := validateRuntimeStatus(response.DeploymentStatus, plan, stage, "ready", false); err != nil {
-			return fmt.Errorf("load deployment on node %q: %w", stage.NodeID, err)
-		}
+	}
+	return nil
+}
+
+func (c *DeploymentController) loadStage(
+	ctx context.Context,
+	plan clusterplan.DeploymentPlan,
+	model cluster.ModelProfile,
+	member membership.Member,
+	stage clusterplan.Stage,
+	spec deploymentSpec,
+) error {
+	loadRequest := newRuntimeLoadRequest(plan, model, member, stage, spec)
+	response, err := c.runtimeClient.Load(ctx, stage.APIURL, loadRequest)
+	if err != nil {
+		return fmt.Errorf("load deployment on node %q: %w", stage.NodeID, err)
+	}
+	if err := validateRuntimeStatus(response.DeploymentStatus, plan, stage, "ready", false); err != nil {
+		return fmt.Errorf("load deployment on node %q: %w", stage.NodeID, err)
 	}
 	return nil
 }
@@ -74,14 +88,71 @@ func newRuntimeLoadRequest(
 }
 
 func (c *DeploymentController) activatePlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
-	identity := runtimeDeploymentIdentity(plan)
 	for _, stage := range plan.Stages() {
-		response, err := c.runtimeClient.Activate(ctx, stage.APIURL, identity)
-		if err != nil {
-			return fmt.Errorf("node %q: %w", stage.NodeID, err)
+		if err := c.activateStage(ctx, plan, stage); err != nil {
+			return err
 		}
-		if err := validateRuntimeStatus(response.DeploymentStatus, plan, stage, "active", true); err != nil {
-			return fmt.Errorf("node %q: %w", stage.NodeID, err)
+	}
+	return nil
+}
+
+func (c *DeploymentController) activateStage(
+	ctx context.Context,
+	plan clusterplan.DeploymentPlan,
+	stage clusterplan.Stage,
+) error {
+	response, err := c.runtimeClient.Activate(ctx, stage.APIURL, runtimeDeploymentIdentity(plan))
+	if err != nil {
+		return fmt.Errorf("activate deployment on node %q: %w", stage.NodeID, err)
+	}
+	if err := validateRuntimeStatus(response.DeploymentStatus, plan, stage, "active", true); err != nil {
+		return fmt.Errorf("activate deployment on node %q: %w", stage.NodeID, err)
+	}
+	return nil
+}
+
+func (c *DeploymentController) repairActivePlan(
+	ctx context.Context,
+	plan clusterplan.DeploymentPlan,
+	model cluster.ModelProfile,
+	members []membership.Member,
+	spec deploymentSpec,
+) error {
+	byNode := make(map[string]membership.Member, len(members))
+	for _, member := range members {
+		byNode[member.NodeID] = member
+	}
+	for _, stage := range plan.Stages() {
+		member, ok := byNode[stage.NodeID]
+		if !ok {
+			return fmt.Errorf("deployment member %q disappeared from the immutable snapshot", stage.NodeID)
+		}
+		status, err := c.runtimeClient.Status(ctx, stage.APIURL)
+		if err != nil {
+			return fmt.Errorf("inspect deployment on node %q: %w", stage.NodeID, err)
+		}
+		if validateRuntimeStatus(status, plan, stage, "active", true) == nil {
+			continue
+		}
+		if status.Resident {
+			if runtimeDeploymentIdentityMatches(status.Deployment, runtimeDeploymentIdentity(plan)) &&
+				validateRuntimeStatus(status, plan, stage, "ready", false) == nil {
+				if err := c.activateStage(ctx, plan, stage); err != nil {
+					return err
+				}
+				continue
+			}
+			return fmt.Errorf(
+				"node %q has resident state %q that cannot be repaired in place",
+				stage.NodeID,
+				status.State,
+			)
+		}
+		if err := c.loadStage(ctx, plan, model, member, stage, spec); err != nil {
+			return err
+		}
+		if err := c.activateStage(ctx, plan, stage); err != nil {
+			return err
 		}
 	}
 	return nil

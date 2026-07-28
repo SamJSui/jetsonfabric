@@ -392,7 +392,6 @@ RuntimeResponse RuntimeService::load_deployment(const std::string& request_body)
         return json_error(result.status, result.error_code, result.error_message);
     }
 
-    config_ = deployment_config;
     return operation_response(
         "loaded",
         result,

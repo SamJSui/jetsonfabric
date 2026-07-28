@@ -93,5 +93,7 @@ The llama.cpp stage executor:
 - Inter-stage activations are F32.
 - Llama and Qwen2 runtimes load only the model tensors assigned to their stage;
   context/KV and allocator overhead are accounted separately.
-- Physical multi-Jetson CUDA execution is proven; stage-restart recovery remains
-  an open acceptance issue.
+- Physical multi-Jetson CUDA execution is proven. Reconciliation verifies the
+  active runtime identity and reloads an empty restarted runtime at the current
+  deployment epoch; repeated physical restart acceptance remains to be
+  automated.

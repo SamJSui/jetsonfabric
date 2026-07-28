@@ -253,6 +253,25 @@ if(BUILD_TESTING)
     COMMAND jetsonfabric-http-media-type-test
   )
 
+  add_executable(jetsonfabric-http-server-test
+    api/http_response.cpp
+    api/http_server.cpp
+    protocol/execution_mode.cpp
+    api/http_server_test.cpp
+  )
+  target_include_directories(jetsonfabric-http-server-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-http-server-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME http-server-concurrency
+    COMMAND jetsonfabric-http-server-test
+  )
+
   add_executable(jetsonfabric-inference-engine-factory-test
     engine/inference_engine_factory.cpp
     engine/inference_engine_factory_test.cpp
@@ -284,6 +303,30 @@ if(BUILD_TESTING)
   add_test(
     NAME stage-transport
     COMMAND jetsonfabric-stage-transport-test
+  )
+
+  add_executable(jetsonfabric-http-stage-transport-test
+    protocol/stage.cpp
+    protocol/stage_control.cpp
+    protocol/utf8.cpp
+    transport/media_type.cpp
+    transport/http_stage_transport.cpp
+    transport/http_stage_transport_test.cpp
+  )
+  target_include_directories(jetsonfabric-http-stage-transport-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-http-stage-transport-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  target_link_libraries(jetsonfabric-http-stage-transport-test PRIVATE
+    nlohmann_json::nlohmann_json
+  )
+  add_test(
+    NAME http-stage-transport
+    COMMAND jetsonfabric-http-stage-transport-test
   )
 
   add_executable(jetsonfabric-stage-transport-factory-test
