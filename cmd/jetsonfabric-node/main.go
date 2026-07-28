@@ -93,6 +93,7 @@ func bindRuntimeFlags(fs *flag.FlagSet, cfg *node.Config) {
 	fs.StringVar(&cfg.RuntimeURL, "runtime-url", cfg.RuntimeURL, "local runtime URL, or auto to let this node supervise one")
 	fs.StringVar(&cfg.RuntimeBin, "runtime-bin", cfg.RuntimeBin, "runtime worker binary path")
 	fs.StringVar(&cfg.RuntimeListen, "runtime-listen", cfg.RuntimeListen, "runtime listen address; use 127.0.0.1:0 for auto port")
+	fs.StringVar(&cfg.RuntimeStageTransport, "runtime-stage-transport", cfg.RuntimeStageTransport, "peer-stage transport used by the runtime")
 	fs.StringVar(&cfg.RuntimeComputeBackend, "runtime-compute-backend", cfg.RuntimeComputeBackend, "runtime compute backend: cuda or cpu")
 	fs.StringVar(&cfg.RuntimeMode, "runtime-mode", cfg.RuntimeMode, "runtime execution mode")
 	fs.IntVar(&cfg.RuntimeCtxSize, "runtime-ctx-size", cfg.RuntimeCtxSize, "runtime context size")

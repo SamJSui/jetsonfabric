@@ -79,8 +79,20 @@ func TestCoordinatorPublishesNewEpochWhileOldSessionsDrain(t *testing.T) {
 	if status.InFlightByEpoch[1] != 2 {
 		t.Fatalf("old epoch admission count changed during publication: %+v", status.InFlightByEpoch)
 	}
-	if response := performLayerRun(server, "model-b", "new-during-drain"); response.Code != http.StatusOK {
-		t.Fatalf("new epoch inference status=%d body=%s", response.Code, response.Body.String())
+	responseDuringDrain := performLayerRun(server, "model-b", "new-during-drain")
+	if responseDuringDrain.Code != http.StatusOK {
+		t.Fatalf(
+			"new epoch inference status=%d body=%s",
+			responseDuringDrain.Code,
+			responseDuringDrain.Body.String(),
+		)
+	}
+	var runResponse layerSplitRunResponse
+	if err := json.Unmarshal(responseDuringDrain.Body.Bytes(), &runResponse); err != nil {
+		t.Fatalf("decode managed generation response: %v", err)
+	}
+	if runResponse.RuntimeIdentity.StageTransport != cluster.StageTransportHTTPBinaryV1 {
+		t.Fatalf("managed runtime identity lost stage transport: %+v", runResponse.RuntimeIdentity)
 	}
 	select {
 	case response := <-switchDone:
@@ -168,6 +180,7 @@ func deploymentSwitchMember(apiURL string, now time.Time) membership.Member {
 			cluster.CapabilityRuntimeEngine:           string(cluster.EngineLlamaCPP),
 			cluster.CapabilityRuntimeComputeBackend:   string(cluster.ComputeBackendCPU),
 			cluster.CapabilityRuntimeExecutionMode:    string(cluster.ExecutionModePipelineParallel),
+			cluster.CapabilityRuntimeStageTransport:   cluster.StageTransportHTTPBinaryV1,
 			cluster.CapabilityRuntimeRevision:         "runtime-test",
 			cluster.CapabilityRuntimeLlamaCPPRevision: "llama-test",
 			cluster.CapabilityRuntimeCUDAActive:       false,

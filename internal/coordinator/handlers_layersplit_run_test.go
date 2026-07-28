@@ -60,7 +60,8 @@ func TestLayerSplitRunReportsActivationHandoff(t *testing.T) {
 	if decoded.InterStagePayloadKind != stagewire.PayloadKindActivation || decoded.Result.PayloadKind != stagewire.PayloadKindSampledToken || decoded.Result.SampledToken == nil {
 		t.Fatalf("unexpected response: %+v", decoded)
 	}
-	if decoded.RuntimeIdentity.ModelSHA256 != coordinatorTestModelSHA256 {
+	if decoded.RuntimeIdentity.ModelSHA256 != coordinatorTestModelSHA256 ||
+		decoded.RuntimeIdentity.StageTransport != cluster.StageTransportHTTPBinaryV1 {
 		t.Fatalf("runtime identity was not returned: %+v", decoded.RuntimeIdentity)
 	}
 	if decoded.Result.RequestID != "run-1" || decoded.Result.SessionID == "" {
@@ -248,6 +249,7 @@ func (items membershipMembersForRun) members() []membership.Member {
 		member.Capabilities[cluster.CapabilityRuntimeModelSHA256] = modelSHA256
 		member.Capabilities[cluster.CapabilityRuntimeComputeBackend] = string(cluster.ComputeBackendCPU)
 		member.Capabilities[cluster.CapabilityRuntimeExecutionMode] = string(cluster.ExecutionModePipelineParallel)
+		member.Capabilities[cluster.CapabilityRuntimeStageTransport] = cluster.StageTransportHTTPBinaryV1
 		members = append(members, member)
 	}
 	return members

@@ -45,11 +45,14 @@ void parse_listen(Config& cfg, const std::string& value) {
 }
 
 void validate_engine_config(const Config& cfg) {
-    if (cfg.engine != "llama.cpp" && cfg.engine != "synthetic") {
-        throw std::invalid_argument("--engine supports llama.cpp or synthetic");
+    if (cfg.engine.empty()) {
+        throw std::invalid_argument("--engine must not be empty");
     }
-    if (cfg.compute_backend != "cpu" && cfg.compute_backend != "cuda") {
-        throw std::invalid_argument("--compute-backend must be cpu or cuda");
+    if (cfg.stage_transport.empty()) {
+        throw std::invalid_argument("--stage-transport must not be empty");
+    }
+    if (cfg.compute_backend.empty()) {
+        throw std::invalid_argument("--compute-backend must not be empty");
     }
     if (cfg.ctx_size <= 0) {
         throw std::invalid_argument("--ctx-size must be greater than zero");
@@ -72,9 +75,6 @@ void validate_deployment_config(const Config& cfg) {
         throw std::invalid_argument("--model must not be empty");
     }
     validate_engine_config(cfg);
-    if (cfg.engine == "llama.cpp" && cfg.model_path.empty()) {
-        throw std::invalid_argument("--model-path is required when --engine llama.cpp");
-    }
     if (cfg.mode == ExecutionMode::PipelineParallel &&
         cfg.stage_assignment.layer_end <= cfg.stage_assignment.layer_start) {
         throw std::invalid_argument("pipeline_parallel mode requires --layer-end greater than --layer-start");
@@ -120,8 +120,9 @@ void print_help() {
         << "  --stage-count n          total number of ordered stages\n"
         << "  --layer-start n          first transformer layer, inclusive\n"
         << "  --layer-end n            transformer layer end, exclusive\n"
-        << "  --engine engine          hosted inference engine: llama.cpp or synthetic\n"
-        << "  --compute-backend name   local compute backend: cpu or cuda\n"
+        << "  --engine engine          registered inference engine name\n"
+        << "  --stage-transport name   registered peer-stage transport name\n"
+        << "  --compute-backend name   compute backend passed to the engine\n"
         << "  --model-path path        GGUF model path for llama.cpp\n"
         << "  --ctx-size n             context size, default 4096\n"
         << "  --n-gpu-layers n         llama.cpp GPU layers, default 999\n"
@@ -160,6 +161,8 @@ Config parse_args(int argc, char** argv) {
             cfg.stage_assignment.layer_end = parse_int(require_value(i, argc, argv, arg), arg);
         } else if (arg == "--engine") {
             cfg.engine = require_value(i, argc, argv, arg);
+        } else if (arg == "--stage-transport") {
+            cfg.stage_transport = require_value(i, argc, argv, arg);
         } else if (arg == "--compute-backend") {
             cfg.compute_backend = require_value(i, argc, argv, arg);
         } else if (arg == "--model-path") {
@@ -187,6 +190,7 @@ Config parse_args(int argc, char** argv) {
     std::cerr
         << "runtime configuration: state=" << (cfg.start_idle ? "idle" : "active")
         << " engine=" << cfg.engine
+        << " stage_transport=" << cfg.stage_transport
         << " compute_backend=" << cfg.compute_backend
         << " n_gpu_layers=" << cfg.n_gpu_layers
         << " ctx_size=" << cfg.ctx_size;

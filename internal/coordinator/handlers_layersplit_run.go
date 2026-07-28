@@ -146,12 +146,13 @@ func (s *Server) handleLayerSplitRun(w http.ResponseWriter, r *http.Request) {
 func runtimeIdentityForDeployment(plan clusterplan.DeploymentPlan) pipelineRuntimeIdentity {
 	model := plan.Model()
 	return pipelineRuntimeIdentity{
-		Engine:        model.Engine,
-		ModelID:       model.ModelID,
-		ModelSHA256:   model.ModelSHA256,
-		ExecutionMode: model.ExecutionMode,
-		DeploymentID:  plan.Identity().DeploymentID,
-		Epoch:         plan.Identity().Epoch,
+		Engine:         model.Engine,
+		ModelID:        model.ModelID,
+		ModelSHA256:    model.ModelSHA256,
+		ExecutionMode:  model.ExecutionMode,
+		StageTransport: model.StageTransport,
+		DeploymentID:   plan.Identity().DeploymentID,
+		Epoch:          plan.Identity().Epoch,
 	}
 }
 

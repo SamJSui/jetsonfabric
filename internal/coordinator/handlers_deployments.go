@@ -33,6 +33,18 @@ type deploymentSwitchRequest struct {
 	NGPULayers           *int   `json:"n_gpu_layers,omitempty"`
 }
 
+func (r deploymentSwitchRequest) spec() deploymentSpec {
+	return deploymentSpec{
+		DeploymentID:         r.DeploymentID,
+		ModelID:              r.Model,
+		StageCount:           r.StageCount,
+		AllowColocatedStages: r.AllowColocatedStages,
+		ContextSize:          r.ContextSize,
+		Threads:              r.Threads,
+		NGPULayers:           r.NGPULayers,
+	}
+}
+
 type deploymentPlanResponse struct {
 	DeploymentID string                              `json:"deployment_id"`
 	Epoch        uint64                              `json:"epoch"`
@@ -100,11 +112,9 @@ func (s *Server) handleDeploymentSwitch(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), s.transitionTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), s.deployments.transitionTimeout)
 	defer cancel()
-	s.reconcileMu.Lock()
-	build, cleanupErr, err := s.switchDeployment(ctx, request, true)
-	s.reconcileMu.Unlock()
+	build, cleanupErr, err := s.deployments.switchDeployment(ctx, request.spec(), true)
 	if err != nil {
 		writeDeploymentSwitchError(w, err)
 		return
@@ -163,44 +173,44 @@ func writeDeploymentSwitchError(w http.ResponseWriter, err error) {
 	writeError(w, status, code, err.Error())
 }
 
-func (s *Server) switchDeployment(
+func (c *DeploymentController) switchDeploymentLocked(
 	ctx context.Context,
-	request deploymentSwitchRequest,
+	spec deploymentSpec,
 	force bool,
 ) (deploymentBuild, error, error) {
-	build, err := s.buildDeployment(request)
+	build, err := c.buildDeployment(spec)
 	if err != nil {
 		return deploymentBuild{}, nil, fmt.Errorf("%w: %v", errDeploymentPlanInvalid, err)
 	}
-	current := s.deployments.snapshot()
+	current := c.state.snapshot()
 	if !force && current.Active != nil && plansEquivalent(*current.Active, build.result.Plan) {
 		return build, nil, nil
 	}
-	cleanupErr, err := s.transitionDeployment(ctx, build, request)
+	cleanupErr, err := c.transitionDeployment(ctx, build, spec)
 	return build, cleanupErr, err
 }
 
-func (s *Server) buildDeployment(request deploymentSwitchRequest) (deploymentBuild, error) {
-	model, ok := s.registry.Find(request.Model)
+func (c *DeploymentController) buildDeployment(spec deploymentSpec) (deploymentBuild, error) {
+	model, ok := c.registry.Find(spec.ModelID)
 	if !ok {
-		return deploymentBuild{}, fmt.Errorf("model %q is not in the registry", request.Model)
+		return deploymentBuild{}, fmt.Errorf("model %q is not in the registry", spec.ModelID)
 	}
-	if s.memberSource == nil {
+	if c.memberSource == nil {
 		return deploymentBuild{}, errDeploymentUnavailable
 	}
-	snapshot := s.deployments.snapshot()
+	snapshot := c.state.snapshot()
 	identity := clusterplan.DeploymentIdentity{
-		DeploymentID: request.DeploymentID,
+		DeploymentID: spec.DeploymentID,
 		Epoch:        snapshot.ProposedEpoch,
 	}
 	if identity.DeploymentID == "" {
-		identity.DeploymentID = fmt.Sprintf("deployment-%d-%d", identity.Epoch, s.now().UnixNano())
+		identity.DeploymentID = fmt.Sprintf("deployment-%d-%d", identity.Epoch, c.now().UnixNano())
 	}
-	policy := deploymentPolicy(s.clusterPlanPolicy, request)
-	members := append([]membership.Member(nil), s.memberSource.List()...)
+	policy := deploymentPolicy(c.planPolicy, spec)
+	members := append([]membership.Member(nil), c.memberSource.List()...)
 	result, err := clusterplan.BuildDeploymentPlan(clusterplan.DeploymentBuildRequest{
 		Identity: identity, Model: model, Members: members,
-		Now: s.now(), StaleAfter: s.memberStaleAfter, Policy: policy,
+		Now: c.now(), StaleAfter: c.memberStaleAfter, Policy: policy,
 	})
 	if err != nil {
 		return deploymentBuild{}, err
@@ -208,89 +218,89 @@ func (s *Server) buildDeployment(request deploymentSwitchRequest) (deploymentBui
 	return deploymentBuild{model: model, members: members, policy: policy, result: result}, nil
 }
 
-func deploymentPolicy(base clusterplan.Policy, request deploymentSwitchRequest) clusterplan.Policy {
+func deploymentPolicy(base clusterplan.Policy, spec deploymentSpec) clusterplan.Policy {
 	policy := base
-	if request.StageCount > 0 {
-		policy.StageCount = request.StageCount
+	if spec.StageCount > 0 {
+		policy.StageCount = spec.StageCount
 	}
-	if request.AllowColocatedStages {
+	if spec.AllowColocatedStages {
 		policy.AllowColocatedStages = true
 	}
 	return policy
 }
 
-func (s *Server) transitionDeployment(
+func (c *DeploymentController) transitionDeployment(
 	ctx context.Context,
 	build deploymentBuild,
-	request deploymentSwitchRequest,
+	spec deploymentSpec,
 ) (error, error) {
-	previous, err := s.deployments.beginTransition(build.result.Plan)
+	previous, err := c.state.beginTransition(build.result.Plan)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.preparePlan(ctx, build, request); err != nil {
-		failure := s.rollbackPreparedPlan(build.result.Plan, previous, err)
+	if err := c.preparePlan(ctx, build, spec); err != nil {
+		failure := c.rollbackPreparedPlan(build.result.Plan, previous, err)
 		return nil, failure
 	}
 
-	intent := intentFromSwitch(request, build.policy)
-	previous = s.deployments.publish(build.result.Plan, intent)
+	intent := intentFromSpec(spec, build.policy)
+	previous = c.state.publish(build.result.Plan, intent)
 	if previous == nil {
 		return nil, nil
 	}
-	if err := s.retirePlan(ctx, *previous); err != nil {
-		s.deployments.recordReconcileError(err, true)
+	if err := c.retirePlan(ctx, *previous); err != nil {
+		c.state.recordReconcileError(err, true)
 		return err, nil
 	}
 	return nil, nil
 }
 
-func (s *Server) preparePlan(
+func (c *DeploymentController) preparePlan(
 	ctx context.Context,
 	build deploymentBuild,
-	request deploymentSwitchRequest,
+	spec deploymentSpec,
 ) error {
-	if err := s.loadPlan(ctx, build.result.Plan, build.model, build.members, request); err != nil {
+	if err := c.loadPlan(ctx, build.result.Plan, build.model, build.members, spec); err != nil {
 		return fmt.Errorf("prepare deployment: %w", err)
 	}
-	if err := s.activatePlan(ctx, build.result.Plan); err != nil {
+	if err := c.activatePlan(ctx, build.result.Plan); err != nil {
 		return fmt.Errorf("activate deployment: %w", err)
 	}
 	return nil
 }
 
-func (s *Server) rollbackPreparedPlan(
+func (c *DeploymentController) rollbackPreparedPlan(
 	plan clusterplan.DeploymentPlan,
 	previous *clusterplan.DeploymentPlan,
 	cause error,
 ) error {
-	ctx, cancel := context.WithTimeout(context.Background(), s.cleanupTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), c.cleanupTimeout)
 	defer cancel()
-	cleanupErr := s.cleanupPlan(ctx, plan)
-	healthy := previous == nil || activePlanHealthy(*previous, s.memberSource.List(), s.now(), s.memberStaleAfter)
+	cleanupErr := c.cleanupPlan(ctx, plan)
+	healthy := previous == nil || activePlanHealthy(*previous, c.members(), c.now(), c.memberStaleAfter)
 	if cleanupErr != nil {
 		cause = fmt.Errorf("%w; rollback cleanup: %v", cause, cleanupErr)
 	}
-	s.deployments.rollback(cause, healthy)
+	c.state.rollback(cause, healthy)
 	return cause
 }
 
-func (s *Server) retirePlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
-	drainErr := s.drainPlan(ctx, plan)
-	if err := s.deployments.waitForEpoch(ctx, plan.Identity().Epoch); err != nil {
+func (c *DeploymentController) retirePlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
+	drainErr := c.drainPlan(ctx, plan)
+	if err := c.state.waitForEpoch(ctx, plan.Identity().Epoch); err != nil {
 		return errors.Join(
 			drainErr,
 			fmt.Errorf("wait for deployment %q sessions: %w", plan.Identity().DeploymentID, err),
 		)
 	}
-	unloadErr := s.unloadPlan(ctx, plan)
+	unloadErr := c.unloadPlan(ctx, plan)
 	if drainErr != nil || unloadErr != nil {
 		return errors.Join(
 			wrappedPlanError("drain", plan, drainErr),
 			wrappedPlanError("unload", plan, unloadErr),
 		)
 	}
-	s.deployments.finishDraining(plan.Identity().Epoch)
+	c.state.finishDraining(plan.Identity().Epoch)
 	return nil
 }
 
@@ -301,9 +311,9 @@ func wrappedPlanError(operation string, plan clusterplan.DeploymentPlan, err err
 	return fmt.Errorf("%s deployment %q: %w", operation, plan.Identity().DeploymentID, err)
 }
 
-func (s *Server) cleanupPlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
-	drainErr := s.drainPlan(ctx, plan)
-	unloadErr := s.unloadPlan(ctx, plan)
+func (c *DeploymentController) cleanupPlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
+	drainErr := c.drainPlan(ctx, plan)
+	unloadErr := c.unloadPlan(ctx, plan)
 	switch {
 	case drainErr != nil && unloadErr != nil:
 		return fmt.Errorf("drain: %v; unload: %v", drainErr, unloadErr)
@@ -314,12 +324,12 @@ func (s *Server) cleanupPlan(ctx context.Context, plan clusterplan.DeploymentPla
 	}
 }
 
-func (s *Server) loadPlan(
+func (c *DeploymentController) loadPlan(
 	ctx context.Context,
 	plan clusterplan.DeploymentPlan,
 	model cluster.ModelProfile,
 	members []membership.Member,
-	request deploymentSwitchRequest,
+	spec deploymentSpec,
 ) error {
 	byNode := make(map[string]membership.Member, len(members))
 	for _, member := range members {
@@ -330,8 +340,8 @@ func (s *Server) loadPlan(
 		if !ok {
 			return fmt.Errorf("deployment member %q disappeared from the immutable snapshot", stage.NodeID)
 		}
-		loadRequest := newRuntimeLoadRequest(plan, model, member, stage, request)
-		response, err := s.deploymentClient.Load(ctx, stage.APIURL, loadRequest)
+		loadRequest := newRuntimeLoadRequest(plan, model, member, stage, spec)
+		response, err := c.runtimeClient.Load(ctx, stage.APIURL, loadRequest)
 		if err != nil {
 			return fmt.Errorf("load deployment on node %q: %w", stage.NodeID, err)
 		}
@@ -347,9 +357,9 @@ func newRuntimeLoadRequest(
 	model cluster.ModelProfile,
 	member membership.Member,
 	stage clusterplan.Stage,
-	request deploymentSwitchRequest,
+	spec deploymentSpec,
 ) runtimebridge.LoadDeploymentRequest {
-	ctxSize := request.ContextSize
+	ctxSize := spec.ContextSize
 	if ctxSize == 0 {
 		ctxSize = defaultDeploymentContextSize
 	}
@@ -358,24 +368,24 @@ func newRuntimeLoadRequest(
 	if backend == cluster.ComputeBackendCUDA {
 		nGPULayers = 999
 	}
-	if request.NGPULayers != nil {
-		nGPULayers = *request.NGPULayers
+	if spec.NGPULayers != nil {
+		nGPULayers = *spec.NGPULayers
 	}
 	return runtimebridge.LoadDeploymentRequest{
 		DeploymentID: plan.Identity().DeploymentID, Epoch: plan.Identity().Epoch,
 		ModelID: model.ID, ModelSHA256: plan.Model().ModelSHA256,
 		Engine: string(plan.Model().Engine), ComputeBackend: string(backend),
 		ModelPath: model.ArtifactPath, CtxSize: ctxSize, NGPULayers: nGPULayers,
-		Threads: request.Threads, Mode: string(plan.Model().ExecutionMode),
+		Threads: spec.Threads, Mode: string(plan.Model().ExecutionMode),
 		StageIndex: stage.StageIndex, StageCount: stage.StageCount,
 		LayerStart: stage.LayerStart, LayerEnd: stage.LayerEnd,
 	}
 }
 
-func (s *Server) activatePlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
+func (c *DeploymentController) activatePlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
 	identity := runtimeDeploymentIdentity(plan)
 	for _, stage := range plan.Stages() {
-		response, err := s.deploymentClient.Activate(ctx, stage.APIURL, identity)
+		response, err := c.runtimeClient.Activate(ctx, stage.APIURL, identity)
 		if err != nil {
 			return fmt.Errorf("node %q: %w", stage.NodeID, err)
 		}
@@ -386,11 +396,11 @@ func (s *Server) activatePlan(ctx context.Context, plan clusterplan.DeploymentPl
 	return nil
 }
 
-func (s *Server) drainPlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
+func (c *DeploymentController) drainPlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
 	identity := runtimeDeploymentIdentity(plan)
 	var failures []string
 	for _, stage := range plan.Stages() {
-		response, err := s.deploymentClient.Drain(ctx, stage.APIURL, identity)
+		response, err := c.runtimeClient.Drain(ctx, stage.APIURL, identity)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("node %q: %v", stage.NodeID, err))
 			continue
@@ -402,11 +412,11 @@ func (s *Server) drainPlan(ctx context.Context, plan clusterplan.DeploymentPlan)
 	return joinedFailures(failures)
 }
 
-func (s *Server) unloadPlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
+func (c *DeploymentController) unloadPlan(ctx context.Context, plan clusterplan.DeploymentPlan) error {
 	identity := runtimeDeploymentIdentity(plan)
 	var failures []string
 	for _, stage := range plan.Stages() {
-		response, err := s.deploymentClient.Unload(ctx, stage.APIURL, identity)
+		response, err := c.runtimeClient.Unload(ctx, stage.APIURL, identity)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("node %q: %v", stage.NodeID, err))
 			continue

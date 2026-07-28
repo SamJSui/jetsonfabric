@@ -19,6 +19,7 @@ RUNTIME1_PORT="${JF_RUNTIME1_PORT:-19191}"
 RUNTIME_COMPUTE_BACKEND="${JF_RUNTIME_COMPUTE_BACKEND:-cpu}"
 RUNTIME_N_GPU_LAYERS="${JF_RUNTIME_N_GPU_LAYERS:-0}"
 RUNTIME_CUDA_ACTIVE="${JF_RUNTIME_CUDA_ACTIVE:-false}"
+RUNTIME_STAGE_TRANSPORT="${JF_RUNTIME_STAGE_TRANSPORT:-http_binary_v1}"
 RUNTIME_BUILD_DIR="${RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build}"
 RUNTIME_BIN="${RUNTIME_BIN:-$ROOT_DIR/dist/jetsonfabric-runtime-worker}"
 NODE_BIN="${NODE_BIN:-$ROOT_DIR/dist/jetsonfabric-node}"
@@ -198,6 +199,7 @@ start_node() {
     --runtime-url auto \
     --runtime-bin "$RUNTIME_BIN" \
     --runtime-listen "127.0.0.1:$runtime_port" \
+    --runtime-stage-transport "$RUNTIME_STAGE_TRANSPORT" \
     --runtime-compute-backend "$RUNTIME_COMPUTE_BACKEND" \
     "${RUNTIME_CUDA_ACTIVE_ARGS[@]}" \
     --runtime-mode pipeline_parallel \
@@ -314,6 +316,7 @@ jq -e \
   --arg model "$MODEL_ID" \
   --arg sha "$MODEL_SHA256" \
   --arg backend "$RUNTIME_COMPUTE_BACKEND" \
+  --arg stage_transport "$RUNTIME_STAGE_TRANSPORT" \
   --argjson cuda_active "$RUNTIME_CUDA_ACTIVE" '
   (.members | length) == 2 and
   all(.members[];
@@ -322,6 +325,7 @@ jq -e \
     .capabilities.runtime_engine == "llama.cpp" and
     .capabilities.runtime_compute_backend == $backend and
     .capabilities.runtime_cuda_active == $cuda_active and
+    .capabilities.runtime_stage_transport == $stage_transport and
     .capabilities.runtime_execution_mode == "pipeline_parallel")
 ' "$MEMBERS_FILE" >/dev/null
 

@@ -13,11 +13,12 @@ func TestValidateRuntimeStatusRequiresAssignedPartitionResidency(t *testing.T) {
 	plan, err := clusterplan.NewDeploymentPlan(clusterplan.DeploymentPlanSpec{
 		Identity: clusterplan.DeploymentIdentity{DeploymentID: "deployment-a", Epoch: 1},
 		Model: clusterplan.DeploymentModelIdentity{
-			ModelID:       "model-a",
-			ModelSHA256:   strings.Repeat("a", 64),
-			Engine:        cluster.EngineLlamaCPP,
-			ExecutionMode: cluster.ExecutionModePipelineParallel,
-			LayerCount:    4,
+			ModelID:        "model-a",
+			ModelSHA256:    strings.Repeat("a", 64),
+			Engine:         cluster.EngineLlamaCPP,
+			ExecutionMode:  cluster.ExecutionModePipelineParallel,
+			StageTransport: cluster.StageTransportHTTPBinaryV1,
+			LayerCount:     4,
 		},
 		Stages: []clusterplan.Stage{
 			{StageIndex: 0, StageCount: 2, NodeID: "node-a", LayerStart: 0, LayerEnd: 2},
@@ -85,11 +86,12 @@ func TestValidateRuntimeStatusRequiresCompleteFullModelResidency(t *testing.T) {
 	plan, err := clusterplan.NewDeploymentPlan(clusterplan.DeploymentPlanSpec{
 		Identity: clusterplan.DeploymentIdentity{DeploymentID: "deployment-a", Epoch: 1},
 		Model: clusterplan.DeploymentModelIdentity{
-			ModelID:       "model-a",
-			ModelSHA256:   strings.Repeat("a", 64),
-			Engine:        cluster.EngineLlamaCPP,
-			ExecutionMode: cluster.ExecutionModePipelineParallel,
-			LayerCount:    4,
+			ModelID:        "model-a",
+			ModelSHA256:    strings.Repeat("a", 64),
+			Engine:         cluster.EngineLlamaCPP,
+			ExecutionMode:  cluster.ExecutionModePipelineParallel,
+			StageTransport: cluster.StageTransportHTTPBinaryV1,
+			LayerCount:     4,
 		},
 		Stages: []clusterplan.Stage{
 			{StageIndex: 0, StageCount: 1, NodeID: "node-a", LayerStart: 0, LayerEnd: 4},

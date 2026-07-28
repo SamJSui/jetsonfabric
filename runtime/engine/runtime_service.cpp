@@ -1,11 +1,11 @@
 #include "engine/runtime_service.hpp"
 
-#include "pipeline_parallel/generation_runner.hpp"
+#include "engine/generation_service.hpp"
 #include "protocol/execution_mode.hpp"
 #include "protocol/generation.hpp"
 #include "protocol/stage.hpp"
 #include "protocol/stage_control.hpp"
-#include "transport/http_stage_client.hpp"
+#include "transport/stage_transport_factory.hpp"
 
 #include <cstdint>
 #include <cctype>
@@ -290,11 +290,40 @@ protocol::StageResponse stage_error_response(
     return response;
 }
 
+const InferenceEngineFactory& require_engine_factory(
+    const std::shared_ptr<const InferenceEngineFactory>& factory
+) {
+    if (!factory) {
+        throw std::invalid_argument("runtime service requires an inference engine factory");
+    }
+    return *factory;
+}
+
 } // namespace
 
 RuntimeService::RuntimeService(Config config)
+    : RuntimeService(
+          config,
+          make_default_inference_engine_factory(),
+          transport::make_default_stage_transport_factory()->create_transport(config)
+      ) {}
+
+RuntimeService::RuntimeService(
+    Config config,
+    std::shared_ptr<const InferenceEngineFactory> engine_factory,
+    std::shared_ptr<const transport::StageTransport> stage_transport
+)
     : config_(std::move(config)),
-      model_manager_(config_) {}
+      engine_factory_(std::move(engine_factory)),
+      stage_transport_(std::move(stage_transport)),
+      model_manager_(config_, require_engine_factory(engine_factory_)) {
+    if (!stage_transport_) {
+        throw std::invalid_argument("runtime service requires a stage transport");
+    }
+    if (!engine_factory_->supports(config_.engine)) {
+        throw std::invalid_argument("unsupported inference engine: " + config_.engine);
+    }
+}
 
 std::string RuntimeService::runtime_name() const {
     return "jetsonfabric-runtime-worker";
@@ -355,8 +384,8 @@ RuntimeResponse RuntimeService::load_deployment(const std::string& request_body)
         deployment_config.node_name,
         request.identity,
         deployment_config.stage_assignment,
-        [deployment_config]() {
-            return build_inference_engine_parts(deployment_config);
+        [this, deployment_config]() {
+            return engine_factory_->create_engine(deployment_config);
         }
     );
     if (!result.ok) {
@@ -453,93 +482,13 @@ RuntimeResponse RuntimeService::generate(
             protocol::encode_generation_error_event("invalid_generation_request", error.what()),
         };
     }
-    if (config_.mode != ExecutionMode::PipelineParallel) {
-        return RuntimeResponse{
-            "200 OK",
-            protocol::kGenerationContentType,
-            protocol::encode_generation_error_event(
-                "invalid_execution_mode",
-                "runtime-owned generation requires pipeline_parallel mode"
-            ),
-        };
-    }
-
-    const deployment::DeploymentIdentity* active = request.deployment.has_value()
-        ? model_manager_.executable_deployment_identity(*request.deployment)
-        : model_manager_.active_deployment_identity();
-    if (active == nullptr) {
-        const bool identity_mismatch = request.deployment.has_value() &&
-            model_manager_.has_active_deployment();
-        return RuntimeResponse{
-            "200 OK",
-            protocol::kGenerationContentType,
-            protocol::encode_generation_error_event(
-                identity_mismatch ? "deployment_mismatch" : "no_active_deployment",
-                identity_mismatch
-                    ? "generation deployment identity does not match an executable runtime epoch"
-                    : "runtime has no executable deployment for the requested epoch"
-            ),
-        };
-    }
-    if (active->model_id != request.model_id) {
-        return RuntimeResponse{
-            "200 OK",
-            protocol::kGenerationContentType,
-            protocol::encode_generation_error_event(
-                "deployment_mismatch",
-                "generation model does not match the selected deployment"
-            ),
-        };
-    }
-    if (active->epoch > 0 && !request.deployment.has_value()) {
-        return RuntimeResponse{
-            "200 OK",
-            protocol::kGenerationContentType,
-            protocol::encode_generation_error_event(
-                "deployment_identity_required",
-                "managed runtime generation requires deployment identity"
-            ),
-        };
-    }
-    if (request.deployment.has_value() && *request.deployment != *active) {
-        return RuntimeResponse{
-            "200 OK",
-            protocol::kGenerationContentType,
-            protocol::encode_generation_error_event(
-                "deployment_mismatch",
-                "generation deployment identity does not match an executable runtime epoch"
-            ),
-        };
-    }
-    if (request.stages.front().stage_index != 0 ||
-        request.stages.front().node_name != config_.node_name) {
-        return RuntimeResponse{
-            "200 OK",
-            protocol::kGenerationContentType,
-            protocol::encode_generation_error_event(
-                "invalid_pipeline_leader",
-                "generation must be sent to the runtime assigned stage zero"
-            ),
-        };
-    }
-
-    transport::HTTPStageClient peer_client(config_.cluster_token);
-    pipeline_parallel::GenerationRunner runner([
-        this,
-        &peer_client
-    ](
-        const protocol::GenerationStage& stage,
-        const protocol::StageRequest& stage_request,
-        pipeline_parallel::StageOperation operation
-    ) {
-        if (stage.stage_index == 0) {
-            return operation == pipeline_parallel::StageOperation::CloseSession
-                ? model_manager_.close_session(stage_request)
-                : model_manager_.run_stage(stage_request);
-        }
-        return peer_client.invoke(stage, stage_request, operation);
-    });
-    const pipeline_parallel::GenerationResult result = runner.run(
+    const GenerationService generation_service(
+        config_.node_name,
+        config_.mode,
+        model_manager_,
+        *stage_transport_
+    );
+    const pipeline_parallel::GenerationResult result = generation_service.generate(
         request,
         [&sink](const pipeline_parallel::GenerationToken& token) {
             return sink && sink(protocol::encode_generation_token_event(

@@ -57,6 +57,7 @@ func runtimeArgs(cfg Config, listen string) []string {
 		"--listen", listen,
 		"--node-name", cfg.NodeName,
 		"--engine", string(cfg.Engine),
+		"--stage-transport", cfg.RuntimeStageTransport,
 		"--compute-backend", cfg.RuntimeComputeBackend,
 		"--model", cfg.Model,
 		"--model-path", cfg.ModelPath,

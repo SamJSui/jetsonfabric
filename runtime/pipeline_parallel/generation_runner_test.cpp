@@ -90,6 +90,7 @@ struct InvocationHarness {
     int stop_on_decode_step = -1;
     bool mismatch_cleanup_identity = false;
     std::vector<std::string> execute_request_ids;
+    std::vector<std::string> token_texts;
 
     runtime::pipeline_parallel::StageRunResult invoke(
         const runtime::protocol::GenerationStage& stage,
@@ -141,7 +142,9 @@ struct InvocationHarness {
             if (request.decode_step == stop_on_decode_step) {
                 result.response.completion_tokens = 0;
             } else {
-                result.response.message = request.decode_step == 0 ? "hello" : " world";
+                result.response.message = token_texts.empty()
+                    ? (request.decode_step == 0 ? "hello" : " world")
+                    : token_texts.at(static_cast<std::size_t>(request.decode_step));
                 result.response.completion_tokens = 1;
             }
         }
@@ -195,6 +198,34 @@ void test_sink_cancellation_closes_every_stage() {
     );
     expect(!result.ok && result.error_code == "generation_canceled", "sink cancellation was not reported");
     expect(harness.execute_calls == 2 && harness.close_calls == 2, "cancellation did not close every stage");
+}
+
+void test_generation_coalesces_split_utf8_token_bytes() {
+    InvocationHarness harness;
+    harness.token_texts = {
+        std::string("prefix ") + static_cast<char>(0xe4),
+        std::string(1, static_cast<char>(0xbd)),
+        std::string(1, static_cast<char>(0xa0)),
+    };
+    runtime::pipeline_parallel::GenerationRunner runner([
+        &harness
+    ](const auto& stage, const auto& request, auto operation) {
+        return harness.invoke(stage, request, operation);
+    });
+    std::vector<runtime::pipeline_parallel::GenerationToken> emitted;
+    const runtime::pipeline_parallel::GenerationResult result = runner.run(
+        generation_request(3),
+        [&emitted](const auto& token) {
+            emitted.push_back(token);
+            return true;
+        }
+    );
+
+    expect(result.ok, "generation rejected a split UTF-8 token");
+    expect(emitted.size() == 3, "split UTF-8 changed token event accounting");
+    expect(emitted[0].text == "prefix ", "complete UTF-8 prefix was not emitted");
+    expect(emitted[1].text.empty(), "incomplete UTF-8 continuation was emitted");
+    expect(emitted[2].text == "\xe4\xbd\xa0", "split UTF-8 bytes were not coalesced exactly");
 }
 
 void test_natural_stop_excludes_eos_and_accounts_for_its_pass() {
@@ -342,10 +373,12 @@ void test_generation_protocol_and_stagewire_round_trip() {
 
     runtime::protocol::StageResponse response = response_for(request_round_trip);
     set_u32_payload(response, 73);
+    response.message = std::string(1, static_cast<char>(0x9e));
     const runtime::protocol::StageResponse response_round_trip = runtime::protocol::decode_stage_response(
         runtime::protocol::encode_stage_response(response)
     );
     expect(response_round_trip.payload == response.payload, "stage response payload changed during round trip");
+    expect(response_round_trip.message == response.message, "stage response token bytes changed during round trip");
     expect(
         response_round_trip.deployment_id == request.deployment_id &&
             response_round_trip.deployment_epoch == request.deployment_epoch &&
@@ -374,18 +407,40 @@ void test_generation_protocol_rejects_inconsistent_plan() {
     expect(rejected, "inconsistent generation plan was accepted");
 }
 
+void test_generation_protocol_rejects_empty_prompt() {
+    const std::string body = R"({
+        "request_id":"request-a",
+        "session_id":"session-a",
+        "model_id":"model-a",
+        "prompt":"",
+        "max_tokens":2,
+        "stages":[
+          {"stage_index":0,"stage_count":1,"node_id":"node-a","node_name":"dopey","api_url":"http://node-a:8080","layer_start":0,"layer_end":8}
+        ]
+    })";
+    bool rejected = false;
+    try {
+        (void) runtime::protocol::decode_generation_request(body);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    expect(rejected, "empty generation prompt was accepted");
+}
+
 } // namespace
 
 int main() {
     try {
         test_generation_owns_both_loops_and_cleanup();
         test_sink_cancellation_closes_every_stage();
+        test_generation_coalesces_split_utf8_token_bytes();
         test_natural_stop_excludes_eos_and_accounts_for_its_pass();
         test_stage_failure_closes_every_stage();
         test_generation_propagates_managed_deployment_identity();
         test_cleanup_rejects_mismatched_success_identity();
         test_generation_protocol_and_stagewire_round_trip();
         test_generation_protocol_rejects_inconsistent_plan();
+        test_generation_protocol_rejects_empty_prompt();
         std::cout << "generation runner tests passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -65,6 +65,8 @@ public:
             },
             .prompt_tokens = 2,
             .completion_tokens = 1,
+            .token_text = "",
+            .end_of_generation = false,
         });
     }
 
@@ -122,6 +124,10 @@ runtime::protocol::StageRequest valid_request() {
         .layer_end = 4,
         .payload_kind = "text",
         .encoding = "utf-8",
+        .dtype = "",
+        .shape = {},
+        .byte_order = "",
+        .layout = "",
         .payload = {'h', 'i'},
         .max_tokens = 1,
     };

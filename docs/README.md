@@ -34,6 +34,8 @@ validation procedures.
   hardware gates.
 - [Physical two-Jetson CUDA validation](physical-jetson-validation.md) - hardware
   acceptance gate for distributed CUDA execution.
+- [Two-Orin Nano benchmark](benchmarks/2026-07-27-two-orin-nano.md) - physical
+  correctness, capacity, performance, power, and HumanEval results.
 
 Real-model local integration commands are documented in
 [Local development](local-development.md). The source repository does not keep

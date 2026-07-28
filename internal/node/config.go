@@ -22,6 +22,7 @@ const (
 	AutoRuntimeURL                 = "auto"
 	DefaultRuntimeBin              = "dist/jetsonfabric-runtime-worker"
 	DefaultRuntimeListen           = "127.0.0.1:0"
+	DefaultRuntimeStageTransport   = cluster.StageTransportHTTPBinaryV1
 	DefaultRuntimeComputeBackend   = "cuda"
 	DefaultRuntimeMode             = "pipeline_parallel"
 	DefaultRuntimeCtxSize          = 4096
@@ -53,6 +54,7 @@ type Config struct {
 	Model                   string
 	ModelPath               string
 	RuntimeListen           string
+	RuntimeStageTransport   string
 	RuntimeComputeBackend   string
 	RuntimeMode             string
 	RuntimeCtxSize          int
@@ -96,6 +98,7 @@ func DefaultConfigValue() Config {
 		Model:                   "qwen2.5-coder-1.5b-q4",
 		ModelPath:               "",
 		RuntimeListen:           DefaultRuntimeListen,
+		RuntimeStageTransport:   DefaultRuntimeStageTransport,
 		RuntimeComputeBackend:   DefaultRuntimeComputeBackend,
 		RuntimeMode:             DefaultRuntimeMode,
 		RuntimeCtxSize:          DefaultRuntimeCtxSize,
@@ -151,6 +154,7 @@ func normalizeStringsInConfig(cfg Config) Config {
 	cfg.Model = strings.TrimSpace(cfg.Model)
 	cfg.ModelPath = strings.TrimSpace(cfg.ModelPath)
 	cfg.RuntimeListen = strings.TrimSpace(cfg.RuntimeListen)
+	cfg.RuntimeStageTransport = strings.TrimSpace(cfg.RuntimeStageTransport)
 	cfg.RuntimeComputeBackend = strings.TrimSpace(cfg.RuntimeComputeBackend)
 	cfg.RuntimeMode = strings.TrimSpace(cfg.RuntimeMode)
 	cfg.RuntimeRevision = strings.TrimSpace(cfg.RuntimeRevision)
@@ -173,6 +177,9 @@ func normalizeRuntimeConfig(cfg Config) Config {
 	}
 	if cfg.Engine == "" {
 		cfg.Engine = cluster.EngineLlamaCPP
+	}
+	if cfg.RuntimeStageTransport == "" {
+		cfg.RuntimeStageTransport = DefaultRuntimeStageTransport
 	}
 	if cfg.RuntimeComputeBackend == "" {
 		cfg.RuntimeComputeBackend = DefaultRuntimeComputeBackend
@@ -236,6 +243,9 @@ func ValidateConfig(cfg Config) error {
 	if cfg.Engine == "" {
 		return fmt.Errorf("--engine is required")
 	}
+	if cfg.RuntimeStageTransport == "" {
+		return fmt.Errorf("--runtime-stage-transport is required")
+	}
 	if cfg.RuntimeRevision == "" {
 		return fmt.Errorf("--runtime-revision is required")
 	}
@@ -246,8 +256,8 @@ func ValidateConfig(cfg Config) error {
 		if cfg.RuntimeBin == "" {
 			return fmt.Errorf("--runtime-bin is required when --runtime-url=auto")
 		}
-		if !cfg.RuntimeStartIdle && cfg.ModelPath == "" {
-			return fmt.Errorf("--model-path is required when --runtime-url=auto unless --runtime-idle is set")
+		if cfg.Engine == cluster.EngineLlamaCPP && !cfg.RuntimeStartIdle && cfg.ModelPath == "" {
+			return fmt.Errorf("--model-path is required for llama.cpp when --runtime-url=auto unless --runtime-idle is set")
 		}
 	}
 	if err := validateDiscoveryModes(cfg.DiscoveryModes); err != nil {

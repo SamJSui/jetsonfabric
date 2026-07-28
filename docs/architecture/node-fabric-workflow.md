@@ -185,16 +185,19 @@ internal/facade/router.go
   exposes public node API, cluster views, leader proxying, and local stage route
 
 internal/coordinator/*
-  handles leader-only planning/routing APIs, epoch admission, deployment
-  lifecycle, and automatic reconciliation
+  HTTP handlers translate requests; DeploymentController owns epoch admission,
+  deployment lifecycle, and reconciliation; GenerationController owns
+  admission pinning, route selection, and runtime generation startup
 
 internal/runtimebridge/*
   proxies local deployment, generation, and stage requests between the node API
   and node-local runtime
 
 runtime/
-  C++ runtime process; owns epoch-keyed model residency, generation, and real
-  model/layer execution
+  C++ runtime process; RuntimeService owns HTTP translation, GenerationService
+  owns the generation use case, ModelManager owns epoch-keyed residency,
+  InferenceEngineFactory selects execution adapters, and StageTransportFactory
+  selects peer-stage transport
 ```
 
 ## What stays out of this source repo

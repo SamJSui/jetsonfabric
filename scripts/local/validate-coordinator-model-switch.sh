@@ -21,6 +21,7 @@ RUNTIME_BIN="${RUNTIME_BIN:-$ROOT_DIR/dist/jetsonfabric-runtime-worker-switch-cp
 NODE_BIN="${NODE_BIN:-$ROOT_DIR/dist/jetsonfabric-node}"
 LLAMA_CPP_COMMIT="${LLAMA_CPP_COMMIT:-unknown}"
 RUNTIME_REVISION="${JF_RUNTIME_REVISION:-milestone-6-ci}"
+RUNTIME_STAGE_TRANSPORT="${JF_RUNTIME_STAGE_TRANSPORT:-http_binary_v1}"
 CLUSTER_TOKEN="${JF_CLUSTER_TOKEN:-jetsonfabric-integration-token}"
 WORK_DIR="$(mktemp -d)"
 LOG_DIR="$WORK_DIR/logs"
@@ -150,6 +151,7 @@ start_node() {
     --runtime-bin "$RUNTIME_BIN" \
     --runtime-listen "127.0.0.1:$runtime_port" \
     --runtime-idle \
+    --runtime-stage-transport "$RUNTIME_STAGE_TRANSPORT" \
     --runtime-compute-backend cpu \
     --runtime-mode pipeline_parallel \
     --runtime-ctx-size 256 \
@@ -197,6 +199,10 @@ wait_for_url "$NODE1_URL/healthz"
 wait_for_url "$NODE0_URL/v1/runtime/deployment"
 wait_for_url "$NODE1_URL/v1/runtime/deployment"
 wait_for_members
+curl -fsS "$NODE0_URL/v1/cluster/members" | jq -e \
+  --arg stage_transport "$RUNTIME_STAGE_TRANSPORT" \
+  '(.members | length) == 2 and
+   all(.members[]; .capabilities.runtime_stage_transport == $stage_transport)' >/dev/null
 COORDINATOR_NODE_ID="$(curl -fsS "$NODE0_URL/healthz" | jq -r '.node_id')"
 [[ -n "$COORDINATOR_NODE_ID" && "$COORDINATOR_NODE_ID" != "null" ]] || {
   echo "coordinator node ID is unavailable" >&2
@@ -229,7 +235,14 @@ switch_model() {
     --data-binary "$(jq -nc --arg deployment "$deployment" --arg model "$model" '{deployment_id:$deployment,model:$model,allow_colocated_stages:true,ctx_size:256,threads:2,n_gpu_layers:0}')")"
   [[ "$code" == "200" ]] || { echo "switch to $model returned HTTP $code" >&2; cat "$output" >&2; exit 1; }
   jq -e --arg deployment "$deployment" --arg model "$model" --argjson epoch "$expected_epoch" \
-    '.phase == "active" and .active.deployment_id == $deployment and .active.epoch == $epoch and .active.model.model_id == $model and (.active.stages | length) == 2' "$output" >/dev/null
+    --arg stage_transport "$RUNTIME_STAGE_TRANSPORT" \
+    '.phase == "active" and
+     .active.deployment_id == $deployment and
+     .active.epoch == $epoch and
+     .active.model.model_id == $model and
+     .active.model.stage_transport == $stage_transport and
+     .compatibility.stage_transport == $stage_transport and
+     (.active.stages | length) == 2' "$output" >/dev/null
 }
 
 run_model() {

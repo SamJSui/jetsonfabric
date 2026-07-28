@@ -41,9 +41,9 @@ PREVIEW="$WORK_DIR/preview.json"
 RESPONSE="$WORK_DIR/response.json"
 
 jq -n '{members: [
-  {node_id:"node-a",node_name:"node-a",hostname:"host-a",capabilities:{compute_backends:["cuda"],runtime_compute_backend:"cuda",runtime_cuda_active:true}},
-  {node_id:"node-b",node_name:"node-b",hostname:"host-b",capabilities:{compute_backends:["cuda"],runtime_compute_backend:"cuda",runtime_cuda_active:true}},
-  {node_id:"node-c",node_name:"node-c",hostname:"host-c",capabilities:{compute_backends:["cuda"],runtime_compute_backend:"cuda",runtime_cuda_active:true}}
+  {node_id:"node-a",node_name:"node-a",hostname:"host-a",capabilities:{compute_backends:["cuda"],runtime_compute_backend:"cuda",runtime_cuda_active:true,runtime_engine:"llama.cpp",runtime_model_id:"ci-model",runtime_model_sha256:"ci-sha",runtime_stage_transport:"http_binary_v1"}},
+  {node_id:"node-b",node_name:"node-b",hostname:"host-b",capabilities:{compute_backends:["cuda"],runtime_compute_backend:"cuda",runtime_cuda_active:true,runtime_engine:"llama.cpp",runtime_model_id:"ci-model",runtime_model_sha256:"ci-sha",runtime_stage_transport:"http_binary_v1"}},
+  {node_id:"node-c",node_name:"node-c",hostname:"host-c",capabilities:{compute_backends:["cuda"],runtime_compute_backend:"cuda",runtime_cuda_active:true,runtime_engine:"llama.cpp",runtime_model_id:"ci-model",runtime_model_sha256:"ci-sha",runtime_stage_transport:"http_binary_v1"}}
 ]}' >"$MEMBERS"
 
 jq -n '{
@@ -56,6 +56,7 @@ jq -n '{
 
 jq -n '{
   inter_stage_payload_kind:"activation",
+  runtime_identity:{engine:"llama.cpp",model_id:"ci-model",model_sha256:"ci-sha",execution_mode:"pipeline_parallel",stage_transport:"http_binary_v1"},
   plan:{topology:"distributed",physical_host_count:2,stage_count:2,stages:[
     {stage_index:0,node_id:"node-a",node_name:"node-a",layer_start:0,layer_end:3},
     {stage_index:1,node_id:"node-b",node_name:"node-b",layer_start:3,layer_end:6}
@@ -93,6 +94,20 @@ WRONG_SELECTED_MEMBERS="$WORK_DIR/wrong-selected-members.json"
 jq '(.members[] | select(.node_id == "node-b") | .capabilities.runtime_cuda_active) = false' "$MEMBERS" >"$WRONG_SELECTED_MEMBERS"
 if run_harness "$WRONG_SELECTED_MEMBERS" "$PREVIEW" "$RESPONSE" 2>/dev/null; then
   echo "CUDA harness accepted a selected runtime without active CUDA" >&2
+  exit 1
+fi
+
+WRONG_TRANSPORT_MEMBERS="$WORK_DIR/wrong-transport-members.json"
+jq '(.members[] | select(.node_id == "node-b") | .capabilities.runtime_stage_transport) = "other"' "$MEMBERS" >"$WRONG_TRANSPORT_MEMBERS"
+if run_harness "$WRONG_TRANSPORT_MEMBERS" "$PREVIEW" "$RESPONSE" 2>/dev/null; then
+  echo "CUDA harness accepted mismatched stage transports" >&2
+  exit 1
+fi
+
+WRONG_IDENTITY_RESPONSE="$WORK_DIR/wrong-identity-response.json"
+jq '.runtime_identity.model_sha256 = "other-sha"' "$RESPONSE" >"$WRONG_IDENTITY_RESPONSE"
+if run_harness "$MEMBERS" "$PREVIEW" "$WRONG_IDENTITY_RESPONSE" 2>/dev/null; then
+  echo "CUDA harness accepted a runtime identity that disagrees with selected members" >&2
   exit 1
 fi
 

@@ -16,8 +16,9 @@ jetsonfabric-node
   -> authenticated generation routing to stage 0
   -> node-local jetsonfabric-runtime-worker
       -> ModelManager
+      -> GenerationService
       -> GenerationRunner
-      -> HTTPStageClient
+      -> StageTransport
       -> StageWorker
       -> inference-engine LayerExecutor
       -> llama.cpp or synthetic adapter
@@ -50,9 +51,10 @@ client
   -> elected coordinator
   -> stage-0 node /v1/runtime/generate
   -> node-local runtime /v1/generate
+  -> GenerationService
   -> GenerationRunner
       -> local ModelManager for stage 0
-      -> HTTPStageClient -> authenticated peer node facade -> peer runtime
+      -> HTTPStageTransport -> authenticated peer node facade -> peer runtime
   -> NDJSON token and done events
   -> buffered OpenAI response or incremental SSE
 ```
@@ -80,9 +82,10 @@ RuntimeService
           -> InferenceEngineParts
           -> StageWorker
               -> LayerExecutor
-  -> GenerationRunner
-      -> local ModelManager stage invocation
-      -> HTTPStageClient for peer stages
+  -> GenerationService
+      -> GenerationRunner
+          -> local ModelManager stage invocation
+          -> StageTransport for peer stages
 ```
 
 `ModelManager` is the ownership boundary for model execution state. A runtime can
@@ -91,6 +94,25 @@ can reach `ready` without evicting the active partition. The coordinator
 activates every replacement stage, atomically changes admission to that epoch,
 marks the previous epoch `draining`, and unloads it only after its admission
 count reaches zero.
+
+## Runtime extension points
+
+Engine and transport selection are composition concerns:
+
+- `InferenceEngineFactory` maps an engine name to an `InferenceEngineParts`
+  builder. Built-in registrations live in `builtin_inference_engines.cpp`.
+- `StageTransportFactory` maps a transport name to a `StageTransport` builder.
+  Built-in registrations live in `builtin_stage_transports.cpp`.
+- `GenerationService` depends only on `ModelManager` and `StageTransport`; it
+  does not contain protocol-specific branching.
+
+A new engine implements `LayerExecutor` and registers one builder. A new peer
+transport implements `StageTransport` and registers one builder. A new wire
+protocol also needs its matching inbound gateway and advertised endpoint, but
+does not require editing the generation loop. Nodes advertise the selected
+stage transport, and deployment planning only groups runtimes with matching
+transport contracts. The selected transport is retained in the immutable
+deployment model identity so admission and reconciliation use the same contract.
 
 ## Stage and session contract
 

@@ -2,13 +2,10 @@ package coordinator
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
-
-	"github.com/SamJSui/jetsonfabric/internal/cluster"
-	"github.com/SamJSui/jetsonfabric/internal/clusterplan"
-	"github.com/SamJSui/jetsonfabric/internal/runtimebridge"
 )
 
 type chatCompletionRequest struct {
@@ -81,103 +78,46 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "model_required", &param, "model is required")
 		return
 	}
-	model, ok := s.registry.Find(modelID)
-	if !ok {
-		param := "model"
-		writeOpenAIError(w, http.StatusNotFound, "invalid_request_error", "model_not_found", &param, fmt.Sprintf("model %q is not in the JetsonFabric registry", modelID))
-		return
-	}
 	prompt := renderChatPrompt(request.Messages)
 	if prompt == "" {
 		param := "messages"
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "messages_required", &param, "at least one non-empty message is required")
 		return
 	}
-	if s.memberSource == nil {
-		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "membership_unavailable", nil, "membership source is required for pipeline chat completion")
-		return
-	}
-
-	admission, err := s.deployments.admit(modelID)
-	if err != nil {
-		writeInferenceAdmissionError(w, err, true)
-		return
-	}
-	defer admission.Release()
-
-	var plan clusterplan.RoutePreview
-	var identity pipelineRuntimeIdentity
-	if admission.Plan != nil {
-		plan = admission.Plan.RoutePreview()
-		identity = runtimeIdentityForDeployment(*admission.Plan)
-	} else {
-		policy := s.routePreviewPolicy(r)
-		if request.JetsonFabric != nil {
-			if request.JetsonFabric.StageCount > 0 {
-				policy.StageCount = request.JetsonFabric.StageCount
-			}
-			if request.JetsonFabric.AllowColocatedStages {
-				policy.AllowColocatedStages = true
-			}
+	policy := s.routePreviewPolicy(r)
+	if request.JetsonFabric != nil {
+		if request.JetsonFabric.StageCount > 0 {
+			policy.StageCount = request.JetsonFabric.StageCount
 		}
-		requiredStages := policy.StageCount
-		if requiredStages <= 0 {
-			requiredStages = 1
-			policy.StageCount = requiredStages
+		if request.JetsonFabric.AllowColocatedStages {
+			policy.AllowColocatedStages = true
 		}
-		members, legacyIdentity, err := selectPipelineRuntimeMembers(
-			model,
-			s.memberSource.List(),
-			s.now(),
-			s.memberStaleAfter,
-			requiredStages,
-		)
-		if err != nil {
-			writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "runtime_identity_unavailable", nil, err.Error())
-			return
-		}
-		identity = legacyIdentity
-		plan = clusterplan.PreviewPipeline(clusterplan.Request{
-			Model: model, Members: members, Now: s.now(),
-			StaleAfter: s.memberStaleAfter, Policy: policy,
-		})
 	}
-	if !plan.Valid || plan.Mode != cluster.ExecutionModePipelineParallel || plan.StageCount < 1 {
-		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", "pipeline_route_unavailable", nil, fmt.Sprintf("no valid pipeline route for model %q: %s", modelID, plan.Reason))
-		return
-	}
-
-	requestID := fmt.Sprintf("chatcmpl-%d", s.now().UnixNano())
-	sessionID := fmt.Sprintf("session-%d", s.now().UnixNano())
-	generationRequest := runtimebridge.GenerationRequest{
-		RequestID: requestID,
-		SessionID: sessionID,
-		ModelID:   model.ID,
+	session, err := s.generations.Start(r.Context(), generationSpec{
+		ModelID:   modelID,
 		Prompt:    prompt,
 		MaxTokens: chatMaxTokens(request),
-		Stages:    plan.Stages,
-	}
-	if identity.DeploymentID != "" {
-		generationRequest.Deployment = &runtimebridge.DeploymentIdentity{
-			DeploymentID: identity.DeploymentID,
-			Epoch:        identity.Epoch,
-			ModelID:      identity.ModelID,
-			ModelSHA256:  identity.ModelSHA256,
-		}
-	}
-	stream, err := s.generationClient.Start(r.Context(), plan.Stages[0].APIURL, generationRequest)
+		Policy:    policy,
+	})
 	if err != nil {
-		writeOpenAIError(w, http.StatusBadGateway, "server_error", "runtime_generation_failed", nil, err.Error())
+		writeGenerationStartError(w, err)
 		return
 	}
-	defer stream.Body.Close()
+	defer session.Close()
 
-	setGenerationHeaders(w, sessionID, plan, identity)
+	setGenerationHeaders(w, session.SessionID, session.Plan, session.Identity)
 	if request.Stream {
-		s.streamChatCompletion(w, r, requestID, model.ID, len(plan.Stages), stream.Body)
+		s.streamChatCompletion(
+			w,
+			r,
+			session.RequestID,
+			session.Model.ID,
+			len(session.Plan.Stages),
+			session.Body,
+		)
 		return
 	}
-	result, err := consumeGenerationEvents(stream.Body, len(plan.Stages), nil)
+	result, err := consumeGenerationEvents(session.Body, len(session.Plan.Stages), nil)
 	if err != nil {
 		writeOpenAIError(w, http.StatusBadGateway, "server_error", "runtime_generation_failed", nil, err.Error())
 		return
@@ -185,10 +125,10 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-JetsonFabric-Stage-Calls", fmt.Sprintf("%d", result.StageCalls))
 	w.Header().Set("X-JetsonFabric-Remote-Stage-Calls", fmt.Sprintf("%d", result.RemoteStageCalls))
 	writeJSON(w, http.StatusOK, chatCompletionResponse{
-		ID:      requestID,
+		ID:      session.RequestID,
 		Object:  "chat.completion",
 		Created: s.now().Unix(),
-		Model:   model.ID,
+		Model:   session.Model.ID,
 		Choices: []chatCompletionChoice{{
 			Index: 0,
 			Message: chatCompletionMessage{
@@ -203,6 +143,23 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			TotalTokens:      result.PromptTokens + result.CompletionTokens,
 		},
 	})
+}
+
+func writeGenerationStartError(w http.ResponseWriter, err error) {
+	var startError *generationStartError
+	if !errors.As(err, &startError) {
+		writeInferenceAdmissionError(w, err, true)
+		return
+	}
+	switch startError.kind {
+	case generationUnknownModel:
+		param := "model"
+		writeOpenAIError(w, http.StatusNotFound, "invalid_request_error", "model_not_found", &param, err.Error())
+	case generationRuntimeUnavailable:
+		writeOpenAIError(w, http.StatusBadGateway, "server_error", string(startError.kind), nil, err.Error())
+	default:
+		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error", string(startError.kind), nil, err.Error())
+	}
 }
 
 func chatMaxTokens(request chatCompletionRequest) int {

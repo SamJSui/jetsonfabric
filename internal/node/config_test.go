@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SamJSui/jetsonfabric/internal/cluster"
 	"github.com/SamJSui/jetsonfabric/internal/discovery"
 )
 
@@ -50,5 +51,46 @@ func TestValidateConfigRejectsUnsupportedDiscoveryMode(t *testing.T) {
 
 	if err := ValidateConfig(cfg); err == nil {
 		t.Fatal("expected unsupported discovery mode error")
+	}
+}
+
+func TestNormalizeConfigDefaultsRuntimeStageTransport(t *testing.T) {
+	cfg := DefaultConfigValue()
+	cfg.RuntimeStageTransport = ""
+
+	normalized := NormalizeConfig(cfg)
+
+	if normalized.RuntimeStageTransport != DefaultRuntimeStageTransport {
+		t.Fatalf(
+			"runtime stage transport = %q, want %q",
+			normalized.RuntimeStageTransport,
+			DefaultRuntimeStageTransport,
+		)
+	}
+}
+
+func TestRuntimeArgsPassConfiguredStageTransport(t *testing.T) {
+	cfg := NormalizeConfig(DefaultConfigValue())
+	cfg.RuntimeStageTransport = "test_transport"
+
+	args := runtimeArgs(cfg, "127.0.0.1:9090")
+
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == "--stage-transport" && args[index+1] == "test_transport" {
+			return
+		}
+	}
+	t.Fatalf("runtime args do not contain configured stage transport: %v", args)
+}
+
+func TestValidateConfigDoesNotRequireGGUFForCustomEngine(t *testing.T) {
+	cfg := NormalizeConfig(DefaultConfigValue())
+	cfg.NodeName = "node-a"
+	cfg.DataDir = t.TempDir()
+	cfg.Engine = cluster.Engine("custom")
+	cfg.ModelPath = ""
+
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("custom engine was coupled to llama.cpp model path: %v", err)
 	}
 }

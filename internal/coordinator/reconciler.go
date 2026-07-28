@@ -11,32 +11,40 @@ import (
 // retries periodically so a transient runtime or network failure can recover
 // without another topology change.
 func (s *Server) NotifyMembershipChanged() {
+	s.deployments.notifyMembershipChanged()
+}
+
+func (c *DeploymentController) notifyMembershipChanged() {
 	select {
-	case s.reconcileCh <- struct{}{}:
+	case c.reconcileCh <- struct{}{}:
 	default:
 	}
 }
 
 func (s *Server) RunReconciler(ctx context.Context) {
-	ticker := time.NewTicker(s.reconcileInterval)
+	s.deployments.runReconciler(ctx)
+}
+
+func (c *DeploymentController) runReconciler(ctx context.Context) {
+	ticker := time.NewTicker(c.reconcileInterval)
 	defer ticker.Stop()
-	s.NotifyMembershipChanged()
+	c.notifyMembershipChanged()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-s.reconcileCh:
-			s.runReconcileAttempt(ctx)
+		case <-c.reconcileCh:
+			c.runReconcileAttempt(ctx)
 		case <-ticker.C:
-			s.runReconcileAttempt(ctx)
+			c.runReconcileAttempt(ctx)
 		}
 	}
 }
 
-func (s *Server) runReconcileAttempt(parent context.Context) {
-	ctx, cancel := context.WithTimeout(parent, s.transitionTimeout)
+func (c *DeploymentController) runReconcileAttempt(parent context.Context) {
+	ctx, cancel := context.WithTimeout(parent, c.transitionTimeout)
 	defer cancel()
-	if err := s.Reconcile(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	if err := c.reconcile(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("deployment reconciliation pending: %v", err)
 	}
 }
@@ -44,39 +52,43 @@ func (s *Server) runReconcileAttempt(parent context.Context) {
 // Reconcile computes a desired epoch from the last successful deployment
 // intent and the current membership snapshot.
 func (s *Server) Reconcile(ctx context.Context) error {
-	s.reconcileMu.Lock()
-	defer s.reconcileMu.Unlock()
-	if s.isLeader != nil && !s.isLeader(s.now()) {
+	return s.deployments.reconcile(ctx)
+}
+
+func (c *DeploymentController) reconcile(ctx context.Context) error {
+	c.reconcileMu.Lock()
+	defer c.reconcileMu.Unlock()
+	if c.isLeader != nil && !c.isLeader(c.now()) {
 		return nil
 	}
-	pendingCleanupErr := s.retryDraining(ctx)
-	intent, ok := s.deployments.activeIntent()
+	pendingCleanupErr := c.retryDraining(ctx)
+	intent, ok := c.state.activeIntent()
 	if !ok {
 		return pendingCleanupErr
 	}
-	_, cleanupErr, err := s.switchDeployment(ctx, intent.switchRequest(), false)
+	_, cleanupErr, err := c.switchDeploymentLocked(ctx, intent.spec(), false)
 	if err == nil {
 		result := errors.Join(pendingCleanupErr, cleanupErr)
-		s.deployments.recordReconcileError(result, true)
+		c.state.recordReconcileError(result, true)
 		return result
 	}
-	snapshot := s.deployments.snapshot()
+	snapshot := c.state.snapshot()
 	healthy := snapshot.Active != nil && activePlanHealthy(
 		*snapshot.Active,
-		s.memberSource.List(),
-		s.now(),
-		s.memberStaleAfter,
+		c.members(),
+		c.now(),
+		c.memberStaleAfter,
 	)
 	result := errors.Join(pendingCleanupErr, err)
-	s.deployments.recordReconcileError(result, healthy)
+	c.state.recordReconcileError(result, healthy)
 	return result
 }
 
-func (s *Server) retryDraining(ctx context.Context) error {
-	snapshot := s.deployments.snapshot()
+func (c *DeploymentController) retryDraining(ctx context.Context) error {
+	snapshot := c.state.snapshot()
 	var failures []error
 	for _, plan := range snapshot.Draining {
-		if err := s.retirePlan(ctx, plan); err != nil {
+		if err := c.retirePlan(ctx, plan); err != nil {
 			failures = append(failures, err)
 		}
 	}

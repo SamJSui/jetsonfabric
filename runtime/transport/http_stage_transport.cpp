@@ -1,4 +1,4 @@
-#include "transport/http_stage_client.hpp"
+#include "transport/http_stage_transport.hpp"
 
 #include "protocol/stage.hpp"
 #include "protocol/stage_control.hpp"
@@ -278,7 +278,7 @@ pipeline_parallel::StageRunResult stage_error(
 
 } // namespace
 
-pipeline_parallel::StageRunResult HTTPStageClient::invoke(
+pipeline_parallel::StageRunResult HTTPStageTransport::invoke(
     const protocol::GenerationStage& stage,
     const protocol::StageRequest& request,
     pipeline_parallel::StageOperation operation

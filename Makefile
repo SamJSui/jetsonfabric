@@ -45,6 +45,7 @@ JETSONFABRIC_CLUSTER_TOKEN ?= jetsonfabric-local-dev-token
 # Runtime defaults used by supervised run-node and run-runtime.
 RUNTIME_LISTEN ?= 127.0.0.1:0
 RUNTIME_ENGINE ?= llama.cpp
+RUNTIME_STAGE_TRANSPORT ?= http_binary_v1
 RUNTIME_COMPUTE_BACKEND ?= cuda
 RUNTIME_MODE ?= pipeline_parallel
 RUNTIME_CTX_SIZE ?= 4096
@@ -101,6 +102,7 @@ help:
 	@printf '  make clean                       Remove generated build artifacts\n\n'
 	@printf 'Common knobs:\n'
 	@printf '  MODEL_PATH=models/model.gguf\n'
+	@printf '  RUNTIME_STAGE_TRANSPORT=http_binary_v1\n'
 	@printf '  RUNTIME_BUILD_JOBS=1             Safer on Jetson; try 2 or 4 if memory allows\n'
 	@printf '  RUNTIME_CUDA_ARCH=87             Jetson Orin default\n'
 	@printf '  JF_NODE0_PORT=19180              Fixed local node port\n'
@@ -213,6 +215,7 @@ run-node:
 		--runtime-url "$(NODE_RUNTIME_URL)" \
 		--runtime-bin "$(RUNTIME_BIN)" \
 		--runtime-listen "$(RUNTIME_LISTEN)" \
+		--runtime-stage-transport "$(RUNTIME_STAGE_TRANSPORT)" \
 		--runtime-compute-backend "$(RUNTIME_COMPUTE_BACKEND)" \
 		--runtime-mode "$(RUNTIME_MODE)" \
 		--runtime-ctx-size "$(RUNTIME_CTX_SIZE)" \
@@ -253,6 +256,7 @@ run-runtime:
 		--listen "$(RUNTIME_LISTEN)" \
 		--node-name "$(NODE_NAME)" \
 		--engine "$(RUNTIME_ENGINE)" \
+		--stage-transport "$(RUNTIME_STAGE_TRANSPORT)" \
 		--compute-backend "$(RUNTIME_COMPUTE_BACKEND)" \
 		--model "$(MODEL)" \
 		--model-path "$(MODEL_PATH)" \

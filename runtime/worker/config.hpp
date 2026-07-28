@@ -16,6 +16,7 @@ struct Config {
     std::string cluster_token;
 
     std::string engine = "llama.cpp";
+    std::string stage_transport = "http_binary_v1";
     std::string compute_backend = "cuda";
     std::string model_path;
     int ctx_size = 4096;

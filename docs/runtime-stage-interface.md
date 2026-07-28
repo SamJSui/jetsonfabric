@@ -19,10 +19,11 @@ Stagewire frame
 
 `runtime/protocol` owns serialized metadata. `runtime/inference` owns typed execution semantics. `StageWorker` adapts between them. `ModelManager` owns the active model execution components used by `RuntimeService`.
 
-For a complete chat request, `RuntimeService::generate` creates a
-`GenerationRunner`. It invokes stage 0 through the local `ModelManager` and
-later stages through `HTTPStageClient`, using this same stage boundary for every
-prefill, decode, and cleanup operation.
+For a complete chat request, `RuntimeService::generate` delegates to
+`GenerationService`. That service runs `GenerationRunner`, invokes stage 0
+through the local `ModelManager`, and sends later stages through the configured
+`StageTransport`. `HTTPStageTransport` is the current implementation. Every
+prefill, decode, and cleanup operation uses this same boundary.
 
 ## Identity and lifecycle
 
@@ -60,6 +61,11 @@ decode final:         activation    -> sampled_token
 
 For a one-stage pipeline, the same stage is first and final and produces a sampled token directly. Activations are little-endian row-major F32 tensors. Sampled tokens contain one 32-bit token ID. Logits and KV state remain engine-local.
 
+Tokenizer pieces are arbitrary byte fragments and can split a UTF-8 code point.
+Stagewire serializes valid token text in `message` and non-UTF-8 fragments as a
+numeric `message_bytes` array. `GenerationRunner` joins those bytes and emits
+only complete UTF-8 prefixes at the client response boundary.
+
 ## Current executors
 
 The synthetic executor validates the same transitions without loading a model.
@@ -87,4 +93,5 @@ The llama.cpp stage executor:
 - Inter-stage activations are F32.
 - Llama and Qwen2 runtimes load only the model tensors assigned to their stage;
   context/KV and allocator overhead are accounted separately.
-- Physical multi-Jetson CUDA proof remains incomplete.
+- Physical multi-Jetson CUDA execution is proven; stage-restart recovery remains
+  an open acceptance issue.

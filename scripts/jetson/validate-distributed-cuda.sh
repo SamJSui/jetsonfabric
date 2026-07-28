@@ -8,6 +8,8 @@ MAX_TOKENS="${JF_MAX_TOKENS:-2}"
 PROMPT="${JF_PROMPT:-Once upon a time}"
 EXPECTED_TOKENS="${JF_EXPECTED_TOKENS:-}"
 ALLOW_COLOCATED="${JF_ALLOW_COLOCATED_STAGES:-false}"
+EXPECTED_ENGINE="${JF_EXPECTED_ENGINE:-llama.cpp}"
+EXPECTED_STAGE_TRANSPORT="${JF_EXPECTED_STAGE_TRANSPORT:-http_binary_v1}"
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -57,7 +59,11 @@ jq -e --argjson count "$STAGE_COUNT" '
   (.stages | length) == $count
 ' <<<"$preview_json" >/dev/null
 
-jq -e --argjson preview "$preview_json" '
+jq -e \
+  --argjson preview "$preview_json" \
+  --arg model "$MODEL_ID" \
+  --arg engine "$EXPECTED_ENGINE" \
+  --arg stage_transport "$EXPECTED_STAGE_TRANSPORT" '
   .members as $members |
   all($preview.stages[];
     .node_id as $node_id |
@@ -65,7 +71,11 @@ jq -e --argjson preview "$preview_json" '
       .node_id == $node_id and
       ((.capabilities.compute_backends // []) | index("cuda")) and
       .capabilities.runtime_compute_backend == "cuda" and
-      .capabilities.runtime_cuda_active == true))
+      .capabilities.runtime_cuda_active == true and
+      .capabilities.runtime_engine == $engine and
+      .capabilities.runtime_model_id == $model and
+      (.capabilities.runtime_model_sha256 // "") != "" and
+      .capabilities.runtime_stage_transport == $stage_transport))
 ' <<<"$members_json" >/dev/null
 
 request_file="$(mktemp)"
@@ -100,9 +110,17 @@ if [[ "$http_code" != "200" ]]; then
   exit 1
 fi
 
-jq -e --argjson count "$STAGE_COUNT" '
+jq -e \
+  --argjson count "$STAGE_COUNT" \
+  --arg model "$MODEL_ID" \
+  --arg engine "$EXPECTED_ENGINE" \
+  --arg stage_transport "$EXPECTED_STAGE_TRANSPORT" '
   .result.stages as $traces |
   (.result.sampled_tokens | length) as $generated |
+  .runtime_identity.engine == $engine and
+  .runtime_identity.model_id == $model and
+  (.runtime_identity.model_sha256 // "") != "" and
+  .runtime_identity.stage_transport == $stage_transport and
   .inter_stage_payload_kind == "activation" and
   .plan.topology == "distributed" and
   .plan.physical_host_count >= 2 and
@@ -131,13 +149,18 @@ jq -e --argjson count "$STAGE_COUNT" '
 ' "$response_file" >/dev/null
 
 jq -e --argjson members "$members_json" '
+  .runtime_identity as $identity |
   all(.plan.stages[];
     .node_id as $node_id |
     any($members.members[];
       .node_id == $node_id and
       ((.capabilities.compute_backends // []) | index("cuda")) and
       .capabilities.runtime_compute_backend == "cuda" and
-      .capabilities.runtime_cuda_active == true))
+      .capabilities.runtime_cuda_active == true and
+      .capabilities.runtime_engine == $identity.engine and
+      .capabilities.runtime_model_id == $identity.model_id and
+      .capabilities.runtime_model_sha256 == $identity.model_sha256 and
+      .capabilities.runtime_stage_transport == $identity.stage_transport))
 ' "$response_file" >/dev/null
 
 if [[ -n "$EXPECTED_TOKENS" ]]; then
