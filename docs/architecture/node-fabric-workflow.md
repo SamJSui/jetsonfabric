@@ -181,8 +181,10 @@ internal/discovery/*
 internal/election/*
   explains candidates, ranks leader-capable members, and tracks local lease/epoch
 
-internal/facade/router.go
-  exposes public node API, cluster views, leader proxying, and local stage route
+internal/facade/*
+  router.go composes the public node API; category handlers expose cluster
+  views, authorize runtime gateways, and proxy coordinator requests to the
+  elected leader
 
 internal/coordinator/*
   HTTP handlers translate requests; DeploymentController owns epoch admission,

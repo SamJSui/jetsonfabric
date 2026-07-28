@@ -11,6 +11,11 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/runtimebridge"
 )
 
+const (
+	deploymentSwitchTimeout  = 30 * time.Minute
+	deploymentCleanupTimeout = 10 * time.Minute
+)
+
 type deploymentControllerConfig struct {
 	registry          modelregistry.Registry
 	memberSource      MemberSource
