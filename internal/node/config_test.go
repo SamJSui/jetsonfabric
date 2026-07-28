@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SamJSui/jetsonfabric/internal/cluster"
 	"github.com/SamJSui/jetsonfabric/internal/discovery"
 )
 
@@ -50,5 +51,65 @@ func TestValidateConfigRejectsUnsupportedDiscoveryMode(t *testing.T) {
 
 	if err := ValidateConfig(cfg); err == nil {
 		t.Fatal("expected unsupported discovery mode error")
+	}
+}
+
+func TestNormalizeConfigDefaultsRuntimeStageTransport(t *testing.T) {
+	cfg := DefaultConfigValue()
+	cfg.RuntimeStageTransport = ""
+
+	normalized := NormalizeConfig(cfg)
+
+	if normalized.RuntimeStageTransport != DefaultRuntimeStageTransport {
+		t.Fatalf(
+			"runtime stage transport = %q, want %q",
+			normalized.RuntimeStageTransport,
+			DefaultRuntimeStageTransport,
+		)
+	}
+}
+
+func TestRuntimeArgsPassConfiguredTransportAndHTTPWorkers(t *testing.T) {
+	cfg := NormalizeConfig(DefaultConfigValue())
+	cfg.RuntimeStageTransport = "test_transport"
+	cfg.RuntimeHTTPWorkers = 3
+
+	args := runtimeArgs(cfg, "127.0.0.1:9090")
+
+	hasTransport := false
+	hasHTTPWorkers := false
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == "--stage-transport" && args[index+1] == "test_transport" {
+			hasTransport = true
+		}
+		if args[index] == "--http-workers" && args[index+1] == "3" {
+			hasHTTPWorkers = true
+		}
+	}
+	if !hasTransport || !hasHTTPWorkers {
+		t.Fatalf("runtime args omitted transport or HTTP workers: %v", args)
+	}
+}
+
+func TestValidateConfigRejectsInvalidRuntimeHTTPWorkers(t *testing.T) {
+	for _, workers := range []int{-1, MaxRuntimeHTTPWorkers + 1} {
+		cfg := NormalizeConfig(DefaultConfigValue())
+		cfg.RuntimeHTTPWorkers = workers
+
+		if err := ValidateConfig(cfg); err == nil {
+			t.Fatalf("ValidateConfig accepted %d runtime HTTP workers", workers)
+		}
+	}
+}
+
+func TestValidateConfigDoesNotRequireGGUFForCustomEngine(t *testing.T) {
+	cfg := NormalizeConfig(DefaultConfigValue())
+	cfg.NodeName = "node-a"
+	cfg.DataDir = t.TempDir()
+	cfg.Engine = cluster.Engine("custom")
+	cfg.ModelPath = ""
+
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("custom engine was coupled to llama.cpp model path: %v", err)
 	}
 }

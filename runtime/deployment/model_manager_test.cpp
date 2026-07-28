@@ -1,12 +1,16 @@
 #include "deployment/model_manager.hpp"
 
+#include <atomic>
 #include <array>
+#include <condition_variable>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 namespace runtime = jetsonfabric::runtime;
@@ -65,6 +69,8 @@ public:
             },
             .prompt_tokens = 2,
             .completion_tokens = 1,
+            .token_text = "",
+            .end_of_generation = false,
         });
     }
 
@@ -80,6 +86,64 @@ public:
 
 private:
     int* destruction_count_;
+};
+
+class BlockingExecutor final : public runtime::pipeline_parallel::LayerExecutor {
+public:
+    explicit BlockingExecutor(std::atomic_int& destruction_count)
+        : destruction_count_(destruction_count) {}
+
+    ~BlockingExecutor() override {
+        ++destruction_count_;
+    }
+
+    runtime::inference::ExecutionResult execute(
+        const runtime::inference::StageInput&
+    ) const override {
+        std::unique_lock lock(mutex_);
+        started_ = true;
+        changed_.notify_all();
+        changed_.wait(lock, [this]() { return released_; });
+        return runtime::inference::ExecutionResult::success(
+            runtime::inference::StageOutput{
+                .payload = runtime::inference::Payload{
+                    .kind = runtime::inference::PayloadKind::SampledToken,
+                    .encoding = "",
+                    .tensor = runtime::inference::TensorDescriptor{
+                        .dtype = "u32",
+                        .shape = {1},
+                        .byte_order = "little",
+                        .layout = "row_major",
+                    },
+                    .bytes = {42, 0, 0, 0},
+                },
+                .prompt_tokens = 2,
+                .completion_tokens = 1,
+                .token_text = "",
+                .end_of_generation = false,
+            }
+        );
+    }
+
+    void close_session(const std::string&) const override {}
+
+    void wait_until_started() const {
+        std::unique_lock lock(mutex_);
+        changed_.wait(lock, [this]() { return started_; });
+    }
+
+    void release() const {
+        const std::lock_guard lock(mutex_);
+        released_ = true;
+        changed_.notify_all();
+    }
+
+private:
+    std::atomic_int& destruction_count_;
+    mutable std::mutex mutex_;
+    mutable std::condition_variable changed_;
+    mutable bool started_ = false;
+    mutable bool released_ = false;
 };
 
 runtime::pipeline_parallel::StageAssignment assignment() {
@@ -122,6 +186,10 @@ runtime::protocol::StageRequest valid_request() {
         .layer_end = 4,
         .payload_kind = "text",
         .encoding = "utf-8",
+        .dtype = "",
+        .shape = {},
+        .byte_order = "",
+        .layout = "",
         .payload = {'h', 'i'},
         .max_tokens = 1,
     };
@@ -204,14 +272,14 @@ void test_idle_manager() {
     expect(!manager.has_resident_deployment(), "empty manager reported a resident deployment");
     expect(!manager.has_active_deployment(), "empty manager reported an active deployment");
     expect(
-        manager.resident_deployment_identity() == nullptr,
+        !manager.resident_deployment_identity().has_value(),
         "empty manager exposed a resident deployment identity"
     );
     expect(
         !manager.resident_deployment_state().has_value(),
         "empty manager exposed a resident deployment state"
     );
-    expect(manager.active_deployment_identity() == nullptr, "empty manager exposed an active identity");
+    expect(!manager.active_deployment_identity().has_value(), "empty manager exposed an active identity");
     expect(manager.active_deployment_id().empty(), "empty manager reported an active deployment ID");
     expect(manager.active_model_id().empty(), "empty manager reported an active model identity");
 
@@ -254,9 +322,9 @@ void test_loaded_manager() {
     expect(manager.has_resident_deployment(), "configured manager did not report a resident deployment");
     expect(manager.has_active_deployment(), "configured manager did not report an active deployment");
 
-    const runtime::deployment::DeploymentIdentity* resident_identity =
+    const std::optional<runtime::deployment::DeploymentIdentity> resident_identity =
         manager.resident_deployment_identity();
-    expect(resident_identity != nullptr, "configured manager did not expose its resident identity");
+    expect(resident_identity.has_value(), "configured manager did not expose its resident identity");
     expect(resident_identity->deployment_id == "deployment-a", "resident deployment ID was not retained");
     expect(resident_identity->model_id == "model-a", "resident deployment model ID was not retained");
     expect(
@@ -272,9 +340,9 @@ void test_loaded_manager() {
     expect(status.identity->deployment_id == "deployment-a", "status reported the wrong deployment ID");
     expect(status.identity->model_id == "model-a", "status reported the wrong model ID");
 
-    const runtime::deployment::DeploymentIdentity* active_identity =
+    const std::optional<runtime::deployment::DeploymentIdentity> active_identity =
         manager.active_deployment_identity();
-    expect(active_identity != nullptr, "configured manager did not expose its active identity");
+    expect(active_identity.has_value(), "configured manager did not expose its active identity");
     expect(active_identity->deployment_id == "deployment-a", "active deployment ID was not retained");
     expect(active_identity->model_id == "model-a", "active deployment model ID was not retained");
     expect(manager.active_deployment_id() == "deployment-a", "active deployment ID query was incorrect");
@@ -381,6 +449,48 @@ void test_guarded_unload() {
     expect(destruction_count == 1, "repeated unload destroyed resources twice");
 }
 
+void test_in_flight_execution_survives_unload() {
+    std::atomic_int destruction_count{0};
+    auto executor = std::make_unique<BlockingExecutor>(destruction_count);
+    BlockingExecutor* blocking = executor.get();
+    runtime::deployment::ModelManager manager(
+        "node-a",
+        managed_identity(),
+        assignment(),
+        runtime::InferenceEngineParts{
+            .layer_executor = std::move(executor),
+            .model_residency = std::nullopt,
+        }
+    );
+
+    runtime::pipeline_parallel::StageRunResult run_result;
+    std::thread request([&]() {
+        run_result = manager.run_stage(valid_request());
+    });
+    blocking->wait_until_started();
+
+    expect(
+        manager.drain_resident_deployment(managed_identity()).ok,
+        "in-flight deployment did not enter draining"
+    );
+    expect(
+        manager.unload_resident_deployment(managed_identity()).ok,
+        "in-flight deployment did not unload"
+    );
+    expect(
+        destruction_count.load() == 0,
+        "unload destroyed an executor that still owned an in-flight request"
+    );
+
+    blocking->release();
+    request.join();
+    expect(run_result.ok, "in-flight stage request failed during unload");
+    expect(
+        destruction_count.load() == 1,
+        "completed in-flight request did not release its executor"
+    );
+}
+
 void test_invalid_identity_rejected() {
     const auto rejected = [](runtime::deployment::DeploymentIdentity identity) {
         try {
@@ -434,6 +544,7 @@ int main() {
     test_idle_manager();
     test_loaded_manager();
     test_guarded_unload();
+    test_in_flight_execution_survives_unload();
     test_invalid_identity_rejected();
     test_missing_executor_rejected();
 

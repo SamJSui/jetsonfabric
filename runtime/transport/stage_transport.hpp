@@ -2,24 +2,19 @@
 
 #include "pipeline_parallel/generation_runner.hpp"
 
-#include <string>
-#include <utility>
-
 namespace jetsonfabric::runtime::transport {
 
-class HTTPStageClient {
+// Carries one stage operation to a runtime on another node.
+// Planning and local execution remain outside this boundary.
+class StageTransport {
 public:
-    explicit HTTPStageClient(std::string cluster_token)
-        : cluster_token_(std::move(cluster_token)) {}
+    virtual ~StageTransport() = default;
 
-    pipeline_parallel::StageRunResult invoke(
+    virtual pipeline_parallel::StageRunResult invoke(
         const protocol::GenerationStage& stage,
         const protocol::StageRequest& request,
         pipeline_parallel::StageOperation operation
-    ) const;
-
-private:
-    std::string cluster_token_;
+    ) const = 0;
 };
 
 } // namespace jetsonfabric::runtime::transport

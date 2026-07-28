@@ -35,8 +35,13 @@ func TestBuildDeploymentPlanUsesOneFreshCompatibleSnapshot(t *testing.T) {
 	if result.Plan.StageCount() != 2 || !result.Preview.Valid {
 		t.Fatalf("unexpected route: %+v", result.Preview)
 	}
-	if result.Compatibility.Architecture != "arm64" || result.Compatibility.RuntimeRevision != "runtime-a" {
+	if result.Compatibility.Architecture != "arm64" ||
+		result.Compatibility.RuntimeRevision != "runtime-a" ||
+		result.Compatibility.StageTransport != cluster.StageTransportHTTPBinaryV1 {
 		t.Fatalf("unexpected compatibility: %+v", result.Compatibility)
+	}
+	if result.Plan.Model().StageTransport != cluster.StageTransportHTTPBinaryV1 {
+		t.Fatalf("deployment plan lost stage transport: %+v", result.Plan.Model())
 	}
 
 	members[0].NodeName = "mutated"
@@ -60,6 +65,27 @@ func TestBuildDeploymentPlanRejectsRevisionMismatch(t *testing.T) {
 		Policy:     Policy{StageCount: 2, AllowColocatedStages: true},
 	})
 	if err == nil || !strings.Contains(err.Error(), "matching architecture") {
+		t.Fatalf("BuildDeploymentPlan() error = %v", err)
+	}
+}
+
+func TestBuildDeploymentPlanRejectsStageTransportMismatch(t *testing.T) {
+	now := time.Now().UTC()
+	members := []membership.Member{
+		deploymentMember("node-a", "dopey", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now),
+		deploymentMember("node-b", "sleepy", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now),
+	}
+	members[1].Capabilities[cluster.CapabilityRuntimeStageTransport] = "other_transport"
+
+	_, err := BuildDeploymentPlan(DeploymentBuildRequest{
+		Identity:   DeploymentIdentity{DeploymentID: "deployment-a", Epoch: 1},
+		Model:      deployableModel(nil),
+		Members:    members,
+		Now:        now,
+		StaleAfter: time.Minute,
+		Policy:     Policy{StageCount: 2, AllowColocatedStages: true},
+	})
+	if err == nil || !strings.Contains(err.Error(), "stage transport") {
 		t.Fatalf("BuildDeploymentPlan() error = %v", err)
 	}
 }
@@ -156,6 +182,7 @@ func deploymentMember(
 			cluster.CapabilityRuntimeEngine:           string(cluster.EngineLlamaCPP),
 			cluster.CapabilityRuntimeComputeBackend:   string(backend),
 			cluster.CapabilityRuntimeExecutionMode:    string(cluster.ExecutionModePipelineParallel),
+			cluster.CapabilityRuntimeStageTransport:   cluster.StageTransportHTTPBinaryV1,
 			cluster.CapabilityRuntimeRevision:         runtimeRevision,
 			cluster.CapabilityRuntimeLlamaCPPRevision: llamaRevision,
 			cluster.CapabilityRuntimeCUDAActive:       cudaActive,

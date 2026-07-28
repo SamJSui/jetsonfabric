@@ -37,6 +37,7 @@ public:
         return runtime::inference::ExecutionResult::success(runtime::inference::StageOutput{
             .payload = runtime::inference::Payload{
                 .kind = runtime::inference::PayloadKind::SampledToken,
+                .encoding = "",
                 .tensor = runtime::inference::TensorDescriptor{
                     .dtype = "u32",
                     .shape = {1},
@@ -45,7 +46,10 @@ public:
                 },
                 .bytes = {42, 0, 0, 0},
             },
+            .prompt_tokens = 0,
             .completion_tokens = 1,
+            .token_text = "",
+            .end_of_generation = false,
         });
     }
 
@@ -110,6 +114,10 @@ runtime::protocol::StageRequest request(
         .layer_end = 4,
         .payload_kind = "text",
         .encoding = "utf-8",
+        .dtype = "",
+        .shape = {},
+        .byte_order = "",
+        .layout = "",
         .payload = {'h', 'i'},
         .max_tokens = 1,
     };
@@ -305,11 +313,36 @@ void test_failed_load_is_visible_and_recoverable_by_unload() {
     expect(!manager.has_resident_deployment(), "failed deployment cleanup did not return idle");
 }
 
+void test_invalid_engine_config_is_a_client_error() {
+    runtime::deployment::ModelManager manager;
+    const auto invalid_identity =
+        identity("deployment-invalid", 3, "model-invalid", 'a');
+
+    const runtime::deployment::LoadDeploymentResult failed =
+        manager.load_resident_deployment(
+            "node-a",
+            invalid_identity,
+            assignment(),
+            []() -> runtime::InferenceEngineParts {
+                throw std::invalid_argument("engine option is invalid");
+            }
+        );
+
+    expect(!failed.ok, "invalid engine configuration unexpectedly loaded");
+    expect(failed.status == "400 Bad Request", "invalid engine config was not a client error");
+    expect(failed.error_code == "invalid_engine_config", "invalid engine config used the wrong error");
+    expect(
+        manager.unload_resident_deployment(invalid_identity).ok,
+        "invalid engine deployment could not be cleaned up"
+    );
+}
+
 } // namespace
 
 int main() {
     test_prepare_activate_drain_handoff();
     test_failed_load_is_visible_and_recoverable_by_unload();
+    test_invalid_engine_config_is_a_client_error();
 
     std::cout << "runtime deployment lifecycle tests passed\n";
     return 0;

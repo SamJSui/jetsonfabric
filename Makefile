@@ -45,11 +45,13 @@ JETSONFABRIC_CLUSTER_TOKEN ?= jetsonfabric-local-dev-token
 # Runtime defaults used by supervised run-node and run-runtime.
 RUNTIME_LISTEN ?= 127.0.0.1:0
 RUNTIME_ENGINE ?= llama.cpp
+RUNTIME_STAGE_TRANSPORT ?= http_binary_v1
 RUNTIME_COMPUTE_BACKEND ?= cuda
 RUNTIME_MODE ?= pipeline_parallel
 RUNTIME_CTX_SIZE ?= 4096
 RUNTIME_N_GPU_LAYERS ?= 999
 RUNTIME_THREADS ?= 0
+RUNTIME_HTTP_WORKERS ?= 2
 
 STAGE_INDEX ?= 0
 STAGE_COUNT ?= 1
@@ -101,6 +103,7 @@ help:
 	@printf '  make clean                       Remove generated build artifacts\n\n'
 	@printf 'Common knobs:\n'
 	@printf '  MODEL_PATH=models/model.gguf\n'
+	@printf '  RUNTIME_STAGE_TRANSPORT=http_binary_v1\n'
 	@printf '  RUNTIME_BUILD_JOBS=1             Safer on Jetson; try 2 or 4 if memory allows\n'
 	@printf '  RUNTIME_CUDA_ARCH=87             Jetson Orin default\n'
 	@printf '  JF_NODE0_PORT=19180              Fixed local node port\n'
@@ -213,11 +216,13 @@ run-node:
 		--runtime-url "$(NODE_RUNTIME_URL)" \
 		--runtime-bin "$(RUNTIME_BIN)" \
 		--runtime-listen "$(RUNTIME_LISTEN)" \
+		--runtime-stage-transport "$(RUNTIME_STAGE_TRANSPORT)" \
 		--runtime-compute-backend "$(RUNTIME_COMPUTE_BACKEND)" \
 		--runtime-mode "$(RUNTIME_MODE)" \
 		--runtime-ctx-size "$(RUNTIME_CTX_SIZE)" \
 		--runtime-n-gpu-layers "$(RUNTIME_N_GPU_LAYERS)" \
 		--runtime-threads "$(RUNTIME_THREADS)" \
+		--runtime-http-workers "$(RUNTIME_HTTP_WORKERS)" \
 		--engine "$(NODE_ENGINE)" \
 		--model "$(MODEL)" \
 		--model-path "$(MODEL_PATH)" \
@@ -253,12 +258,14 @@ run-runtime:
 		--listen "$(RUNTIME_LISTEN)" \
 		--node-name "$(NODE_NAME)" \
 		--engine "$(RUNTIME_ENGINE)" \
+		--stage-transport "$(RUNTIME_STAGE_TRANSPORT)" \
 		--compute-backend "$(RUNTIME_COMPUTE_BACKEND)" \
 		--model "$(MODEL)" \
 		--model-path "$(MODEL_PATH)" \
 		--ctx-size "$(RUNTIME_CTX_SIZE)" \
 		--n-gpu-layers "$(RUNTIME_N_GPU_LAYERS)" \
 		--threads "$(RUNTIME_THREADS)" \
+		--http-workers "$(RUNTIME_HTTP_WORKERS)" \
 		--mode "$(RUNTIME_MODE)" \
 		--stage-index "$(STAGE_INDEX)" \
 		--stage-count "$(STAGE_COUNT)" \
@@ -280,6 +287,7 @@ dev-up:
 	RUNTIME_CTX_SIZE="$(RUNTIME_CTX_SIZE)" \
 	RUNTIME_N_GPU_LAYERS="$(RUNTIME_N_GPU_LAYERS)" \
 	RUNTIME_THREADS="$(RUNTIME_THREADS)" \
+	RUNTIME_HTTP_WORKERS="$(RUNTIME_HTTP_WORKERS)" \
 	NODE_CLUSTER_ID="$(NODE_CLUSTER_ID)" \
 	NODE_ENGINE="$(NODE_ENGINE)" \
 	JF_CLUSTER_TOKEN="$(JETSONFABRIC_CLUSTER_TOKEN)" \

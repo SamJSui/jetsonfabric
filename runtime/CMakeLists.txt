@@ -97,10 +97,13 @@ set(JF_RUNTIME_SOURCES
 
   inference/stage.cpp
 
+  deployment/model_manager.cpp
+
   protocol/execution_mode.cpp
   protocol/generation.cpp
   protocol/stage.cpp
   protocol/stage_control.cpp
+  protocol/utf8.cpp
 
   adapters/llama_cpp_model.cpp
   adapters/llama_cpp_adapter.cpp
@@ -114,10 +117,14 @@ set(JF_RUNTIME_SOURCES
   pipeline_parallel/synthetic_activation_executor.cpp
 
   engine/runtime_service.cpp
+  engine/generation_service.cpp
   engine/inference_engine_factory.cpp
+  engine/builtin_inference_engines.cpp
 
   transport/media_type.cpp
-  transport/http_stage_client.cpp
+  transport/http_stage_transport.cpp
+  transport/stage_transport_factory.cpp
+  transport/builtin_stage_transports.cpp
 )
 
 add_executable(jetsonfabric-runtime-worker
@@ -164,6 +171,8 @@ if(BUILD_TESTING)
 
   add_executable(jetsonfabric-model-manager-test
     inference/stage.cpp
+    deployment/model_manager.cpp
+    engine/inference_engine_factory.cpp
     pipeline_parallel/stage_assignment.cpp
     pipeline_parallel/stage_worker.cpp
     deployment/model_manager_test.cpp
@@ -183,6 +192,8 @@ if(BUILD_TESTING)
 
   add_executable(jetsonfabric-deployment-lifecycle-test
     inference/stage.cpp
+    deployment/model_manager.cpp
+    engine/inference_engine_factory.cpp
     pipeline_parallel/stage_assignment.cpp
     pipeline_parallel/stage_worker.cpp
     deployment/lifecycle_test.cpp
@@ -205,6 +216,7 @@ if(BUILD_TESTING)
     protocol/generation.cpp
     protocol/stage.cpp
     protocol/stage_control.cpp
+    protocol/utf8.cpp
     pipeline_parallel/generation_runner.cpp
     pipeline_parallel/generation_runner_test.cpp
   )
@@ -239,6 +251,143 @@ if(BUILD_TESTING)
   add_test(
     NAME http-media-type
     COMMAND jetsonfabric-http-media-type-test
+  )
+
+  add_executable(jetsonfabric-http-server-test
+    api/http_response.cpp
+    api/http_server.cpp
+    protocol/execution_mode.cpp
+    api/http_server_test.cpp
+  )
+  target_include_directories(jetsonfabric-http-server-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-http-server-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME http-server-concurrency
+    COMMAND jetsonfabric-http-server-test
+  )
+
+  add_executable(jetsonfabric-inference-engine-factory-test
+    engine/inference_engine_factory.cpp
+    engine/inference_engine_factory_test.cpp
+  )
+  target_include_directories(jetsonfabric-inference-engine-factory-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-inference-engine-factory-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME inference-engine-factory
+    COMMAND jetsonfabric-inference-engine-factory-test
+  )
+
+  add_executable(jetsonfabric-stage-transport-test
+    transport/stage_transport_test.cpp
+  )
+  target_include_directories(jetsonfabric-stage-transport-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-stage-transport-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME stage-transport
+    COMMAND jetsonfabric-stage-transport-test
+  )
+
+  add_executable(jetsonfabric-http-stage-transport-test
+    protocol/stage.cpp
+    protocol/stage_control.cpp
+    protocol/utf8.cpp
+    transport/media_type.cpp
+    transport/http_stage_transport.cpp
+    transport/http_stage_transport_test.cpp
+  )
+  target_include_directories(jetsonfabric-http-stage-transport-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-http-stage-transport-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  target_link_libraries(jetsonfabric-http-stage-transport-test PRIVATE
+    nlohmann_json::nlohmann_json
+  )
+  add_test(
+    NAME http-stage-transport
+    COMMAND jetsonfabric-http-stage-transport-test
+  )
+
+  add_executable(jetsonfabric-stage-transport-factory-test
+    transport/stage_transport_factory.cpp
+    transport/stage_transport_factory_test.cpp
+  )
+  target_include_directories(jetsonfabric-stage-transport-factory-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-stage-transport-factory-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME stage-transport-factory
+    COMMAND jetsonfabric-stage-transport-factory-test
+  )
+
+  add_executable(jetsonfabric-generation-service-test
+    inference/stage.cpp
+    deployment/model_manager.cpp
+    engine/inference_engine_factory.cpp
+    pipeline_parallel/stage_assignment.cpp
+    pipeline_parallel/stage_worker.cpp
+    pipeline_parallel/generation_runner.cpp
+    protocol/utf8.cpp
+    engine/generation_service.cpp
+    engine/generation_service_test.cpp
+  )
+  target_include_directories(jetsonfabric-generation-service-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-generation-service-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME generation-service
+    COMMAND jetsonfabric-generation-service-test
+  )
+
+  add_test(
+    NAME runtime-rejects-unknown-engine
+    COMMAND ${CMAKE_COMMAND}
+      -DRUNTIME_BIN=$<TARGET_FILE:jetsonfabric-runtime-worker>
+      -DOPTION=--engine
+      -DVALUE=missing-engine
+      "-DEXPECTED=unsupported inference engine: missing-engine"
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/worker/startup_rejection_test.cmake
+  )
+
+  add_test(
+    NAME runtime-rejects-unknown-stage-transport
+    COMMAND ${CMAKE_COMMAND}
+      -DRUNTIME_BIN=$<TARGET_FILE:jetsonfabric-runtime-worker>
+      -DOPTION=--stage-transport
+      -DVALUE=missing-transport
+      "-DEXPECTED=unsupported stage transport: missing-transport"
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/worker/startup_rejection_test.cmake
   )
 
   add_executable(jetsonfabric-llama-stage-test

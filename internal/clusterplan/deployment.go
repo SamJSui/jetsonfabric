@@ -16,11 +16,12 @@ type DeploymentIdentity struct {
 
 // DeploymentModelIdentity records correctness-critical facts shared by all stages.
 type DeploymentModelIdentity struct {
-	ModelID       string                `json:"model_id"`
-	ModelSHA256   string                `json:"model_sha256"`
-	Engine        cluster.Engine        `json:"engine"`
-	ExecutionMode cluster.ExecutionMode `json:"execution_mode"`
-	LayerCount    int                   `json:"layer_count"`
+	ModelID        string                `json:"model_id"`
+	ModelSHA256    string                `json:"model_sha256"`
+	Engine         cluster.Engine        `json:"engine"`
+	ExecutionMode  cluster.ExecutionMode `json:"execution_mode"`
+	StageTransport string                `json:"stage_transport"`
+	LayerCount     int                   `json:"layer_count"`
 }
 
 // DeploymentPlanSpec is mutable constructor input.
@@ -43,11 +44,12 @@ func NewDeploymentPlan(spec DeploymentPlanSpec) (DeploymentPlan, error) {
 		Epoch:        spec.Identity.Epoch,
 	}
 	model := DeploymentModelIdentity{
-		ModelID:       strings.TrimSpace(spec.Model.ModelID),
-		ModelSHA256:   strings.ToLower(strings.TrimSpace(spec.Model.ModelSHA256)),
-		Engine:        cluster.Engine(strings.TrimSpace(string(spec.Model.Engine))),
-		ExecutionMode: spec.Model.ExecutionMode,
-		LayerCount:    spec.Model.LayerCount,
+		ModelID:        strings.TrimSpace(spec.Model.ModelID),
+		ModelSHA256:    strings.ToLower(strings.TrimSpace(spec.Model.ModelSHA256)),
+		Engine:         cluster.Engine(strings.TrimSpace(string(spec.Model.Engine))),
+		ExecutionMode:  spec.Model.ExecutionMode,
+		StageTransport: strings.TrimSpace(spec.Model.StageTransport),
+		LayerCount:     spec.Model.LayerCount,
 	}
 	stages := append([]Stage(nil), spec.Stages...)
 
@@ -105,6 +107,9 @@ func validateDeploymentPlan(
 	}
 	if model.Engine == "" {
 		return fmt.Errorf("engine is required")
+	}
+	if model.StageTransport == "" {
+		return fmt.Errorf("stage_transport is required")
 	}
 	if model.LayerCount <= 0 {
 		return fmt.Errorf("layer_count must be positive")

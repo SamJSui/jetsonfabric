@@ -38,7 +38,7 @@
   <text x="795" y="371" class="small">emit token events synchronously</text>
   <text x="795" y="394" class="small">close all sessions on success, error, or cancellation</text>
   <rect x="770" y="465" width="460" height="102" class="runtime"/>
-  <text x="1000" y="492" text-anchor="middle" class="code">ModelManager + HTTPStageClient</text>
+  <text x="1000" y="492" text-anchor="middle" class="code">GenerationService + StageTransport</text>
   <text x="795" y="518" class="small">stage 0 executes locally</text>
   <text x="795" y="541" class="small">later stages receive binary Stagewire through peer nodes</text>
   <rect x="770" y="620" width="460" height="48" class="runtime"/>

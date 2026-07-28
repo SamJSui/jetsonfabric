@@ -54,7 +54,8 @@ const (
 )
 
 const (
-	DefaultEngineInstanceID = "default"
+	DefaultEngineInstanceID    = "default"
+	StageTransportHTTPBinaryV1 = "http_binary_v1"
 )
 
 const (
@@ -75,6 +76,7 @@ const (
 	CapabilityRuntimeModelSHA256      = "runtime_model_sha256"
 	CapabilityRuntimeComputeBackend   = "runtime_compute_backend"
 	CapabilityRuntimeExecutionMode    = "runtime_execution_mode"
+	CapabilityRuntimeStageTransport   = "runtime_stage_transport"
 	CapabilityRuntimeRevision         = "runtime_revision"
 	CapabilityRuntimeLlamaCPPRevision = "runtime_llama_cpp_revision"
 	CapabilityRuntimeCUDAActive       = "runtime_cuda_active"

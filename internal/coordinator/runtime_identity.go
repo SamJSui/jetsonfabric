@@ -15,12 +15,13 @@ import (
 // part of this identity: CPU and CUDA are placement/telemetry concerns as long
 // as both runtimes implement the same execution and activation contract.
 type pipelineRuntimeIdentity struct {
-	Engine        cluster.Engine        `json:"engine"`
-	ModelID       string                `json:"model_id"`
-	ModelSHA256   string                `json:"model_sha256"`
-	ExecutionMode cluster.ExecutionMode `json:"execution_mode"`
-	DeploymentID  string                `json:"deployment_id,omitempty"`
-	Epoch         uint64                `json:"epoch,omitempty"`
+	Engine         cluster.Engine        `json:"engine"`
+	ModelID        string                `json:"model_id"`
+	ModelSHA256    string                `json:"model_sha256"`
+	ExecutionMode  cluster.ExecutionMode `json:"execution_mode"`
+	StageTransport string                `json:"stage_transport,omitempty"`
+	DeploymentID   string                `json:"deployment_id,omitempty"`
+	Epoch          uint64                `json:"epoch,omitempty"`
 }
 
 func (i pipelineRuntimeIdentity) key() string {
@@ -29,6 +30,7 @@ func (i pipelineRuntimeIdentity) key() string {
 		i.ModelID,
 		i.ModelSHA256,
 		string(i.ExecutionMode),
+		i.StageTransport,
 	}, "|")
 }
 
@@ -76,7 +78,7 @@ func selectPipelineRuntimeMembers(
 	}
 	if selectedKey == "" {
 		return nil, pipelineRuntimeIdentity{}, fmt.Errorf(
-			"need %d fresh pipeline runtimes with matching engine, model artifact, and execution mode",
+			"need %d fresh pipeline runtimes with matching engine, model artifact, execution mode, and stage transport",
 			requiredStages,
 		)
 	}
@@ -86,15 +88,19 @@ func selectPipelineRuntimeMembers(
 func runtimeIdentityForModel(member membership.Member, model cluster.ModelProfile) (pipelineRuntimeIdentity, bool) {
 	caps := member.Capabilities
 	identity := pipelineRuntimeIdentity{
-		Engine:        cluster.Engine(capabilityString(caps, cluster.CapabilityRuntimeEngine)),
-		ModelID:       capabilityString(caps, cluster.CapabilityRuntimeModelID),
-		ModelSHA256:   strings.ToLower(capabilityString(caps, cluster.CapabilityRuntimeModelSHA256)),
-		ExecutionMode: cluster.ExecutionMode(capabilityString(caps, cluster.CapabilityRuntimeExecutionMode)),
+		Engine:         cluster.Engine(capabilityString(caps, cluster.CapabilityRuntimeEngine)),
+		ModelID:        capabilityString(caps, cluster.CapabilityRuntimeModelID),
+		ModelSHA256:    strings.ToLower(capabilityString(caps, cluster.CapabilityRuntimeModelSHA256)),
+		ExecutionMode:  cluster.ExecutionMode(capabilityString(caps, cluster.CapabilityRuntimeExecutionMode)),
+		StageTransport: capabilityString(caps, cluster.CapabilityRuntimeStageTransport),
 	}
 	if identity.ModelID != model.ID || identity.ModelSHA256 == "" {
 		return pipelineRuntimeIdentity{}, false
 	}
 	if identity.ExecutionMode != cluster.ExecutionModePipelineParallel {
+		return pipelineRuntimeIdentity{}, false
+	}
+	if identity.StageTransport == "" {
 		return pipelineRuntimeIdentity{}, false
 	}
 	if !modelSupportsEngine(model, identity.Engine) {

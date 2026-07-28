@@ -1,4 +1,5 @@
 #include "protocol/stage.hpp"
+#include "protocol/utf8.hpp"
 
 #include <algorithm>
 #include <array>
@@ -130,6 +131,26 @@ std::string extract_string(const nlohmann::json& body, const char* field, const 
         throw std::invalid_argument(std::string(field) + " must be a string");
     }
     return value->get<std::string>();
+}
+
+std::string extract_byte_string(const nlohmann::json& body, const char* field) {
+    const nlohmann::json* value = optional_field(body, field);
+    if (value == nullptr) {
+        return {};
+    }
+    if (!value->is_array()) {
+        throw std::invalid_argument(std::string(field) + " must be a byte array");
+    }
+    std::string result;
+    result.reserve(value->size());
+    for (const auto& item : *value) {
+        const std::int64_t byte = json_int64_value(item, field);
+        if (byte < 0 || byte > 255) {
+            throw std::invalid_argument(std::string(field) + " contains a value outside byte range");
+        }
+        result.push_back(static_cast<char>(byte));
+    }
+    return result;
 }
 
 void validate_deployment_identity(
@@ -447,7 +468,10 @@ StageResponse decode_stage_response(const std::string& frame) {
     response.completion_tokens = extract_int(body, "completion_tokens");
     response.latency_ms = extract_int(body, "latency_ms");
     response.error = extract_string(body, "error");
-    response.message = extract_string(body, "message");
+    response.message = extract_byte_string(body, "message_bytes");
+    if (response.message.empty()) {
+        response.message = extract_string(body, "message");
+    }
     if (response.error.empty()) {
         validate_tensor_metadata(response.payload_kind, response.encoding, response.dtype, response.shape,
                                  response.byte_order, response.layout, response.payload.size());
@@ -502,7 +526,16 @@ std::string encode_stage_response(StageResponse response) {
     if (response.completion_tokens != 0) body["completion_tokens"] = response.completion_tokens;
     if (response.latency_ms != 0) body["latency_ms"] = response.latency_ms;
     if (!response.error.empty()) body["error"] = response.error;
-    if (!response.message.empty()) body["message"] = response.message;
+    if (!response.message.empty()) {
+        if (is_valid_utf8(response.message)) {
+            body["message"] = response.message;
+        } else {
+            body["message_bytes"] = std::vector<std::uint8_t>(
+                response.message.begin(),
+                response.message.end()
+            );
+        }
+    }
     return encode_frame(std::move(body), response.payload);
 }
 

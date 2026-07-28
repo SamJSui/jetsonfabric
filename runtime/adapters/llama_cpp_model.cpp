@@ -126,11 +126,11 @@ std::uint64_t LlamaCppModel::resident_tensor_count() const {
 }
 
 std::vector<std::int32_t> LlamaCppModel::tokenize(std::string_view text, bool add_special) const {
-    const std::string normalized = text.empty() ? "Hello" : std::string(text);
+    const std::string input(text);
     int32_t count = llama_tokenize(
         impl_->vocab,
-        normalized.data(),
-        static_cast<int32_t>(normalized.size()),
+        input.data(),
+        static_cast<int32_t>(input.size()),
         nullptr,
         0,
         add_special,
@@ -145,8 +145,8 @@ std::vector<std::int32_t> LlamaCppModel::tokenize(std::string_view text, bool ad
     std::vector<llama_token> tokens(static_cast<std::size_t>(count));
     const int32_t actual = llama_tokenize(
         impl_->vocab,
-        normalized.data(),
-        static_cast<int32_t>(normalized.size()),
+        input.data(),
+        static_cast<int32_t>(input.size()),
         tokens.data(),
         static_cast<int32_t>(tokens.size()),
         add_special,

@@ -49,3 +49,25 @@ func TestSelectPipelineRuntimeMembersRejectsDifferentArtifacts(t *testing.T) {
 		t.Fatal("expected different model artifacts to be rejected")
 	}
 }
+
+func TestSelectPipelineRuntimeMembersRejectsDifferentStageTransports(t *testing.T) {
+	model, ok := coordinatorTestRegistry().Find("qwen2.5-coder-1.5b-q4")
+	if !ok {
+		t.Fatal("test model missing")
+	}
+	members := membershipMembersForRun{
+		{nodeID: "node-a", apiURL: "http://node-a"},
+		{nodeID: "node-b", apiURL: "http://node-b"},
+	}.members()
+	members[1].Capabilities[cluster.CapabilityRuntimeStageTransport] = "other_transport"
+
+	if _, _, err := selectPipelineRuntimeMembers(
+		model,
+		members,
+		coordinatorTestNow(),
+		time.Minute,
+		2,
+	); err == nil {
+		t.Fatal("expected different stage transports to be rejected")
+	}
+}

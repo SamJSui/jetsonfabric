@@ -2,7 +2,11 @@
 
 #include "deployment/model_manager.hpp"
 #include "engine/engine.hpp"
+#include "engine/inference_engine_factory.hpp"
+#include "transport/stage_transport.hpp"
 #include "worker/config.hpp"
+
+#include <memory>
 
 namespace jetsonfabric::runtime {
 
@@ -11,6 +15,11 @@ namespace jetsonfabric::runtime {
 class RuntimeService final : public RuntimeAPI {
 public:
     explicit RuntimeService(Config config);
+    RuntimeService(
+        Config config,
+        std::shared_ptr<const InferenceEngineFactory> engine_factory,
+        std::shared_ptr<const transport::StageTransport> stage_transport
+    );
 
     std::string runtime_name() const override;
     std::string engine_name() const override;
@@ -31,6 +40,8 @@ public:
 
 private:
     Config config_;
+    std::shared_ptr<const InferenceEngineFactory> engine_factory_;
+    std::shared_ptr<const transport::StageTransport> stage_transport_;
     deployment::ModelManager model_manager_;
 };
 

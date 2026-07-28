@@ -65,6 +65,7 @@ func TestNewDeploymentPlanRejectsInvalidMetadata(t *testing.T) {
 		{"missing model id", func(s *DeploymentPlanSpec) { s.Model.ModelID = "" }, "model_id"},
 		{"invalid artifact hash", func(s *DeploymentPlanSpec) { s.Model.ModelSHA256 = "bad" }, "model_sha256"},
 		{"missing engine", func(s *DeploymentPlanSpec) { s.Model.Engine = "" }, "engine"},
+		{"missing stage transport", func(s *DeploymentPlanSpec) { s.Model.StageTransport = "" }, "stage_transport"},
 		{"invalid layer count", func(s *DeploymentPlanSpec) { s.Model.LayerCount = 0 }, "layer_count"},
 		{"tensor parallel", func(s *DeploymentPlanSpec) { s.Model.ExecutionMode = cluster.ExecutionModeTensorParallel }, "unsupported execution mode"},
 	}
@@ -116,7 +117,7 @@ func validDeploymentPlanSpec() DeploymentPlanSpec {
 		Model: DeploymentModelIdentity{
 			ModelID: "model-a", ModelSHA256: strings.Repeat("a", 64),
 			Engine: cluster.EngineLlamaCPP, ExecutionMode: cluster.ExecutionModePipelineParallel,
-			LayerCount: 28,
+			StageTransport: cluster.StageTransportHTTPBinaryV1, LayerCount: 28,
 		},
 		Stages: []Stage{
 			{

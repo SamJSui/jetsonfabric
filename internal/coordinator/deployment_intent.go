@@ -11,23 +11,23 @@ type deploymentIntent struct {
 	NGPULayersSet bool
 }
 
-func intentFromSwitch(request deploymentSwitchRequest, policy clusterplan.Policy) deploymentIntent {
+func intentFromSpec(spec deploymentSpec, policy clusterplan.Policy) deploymentIntent {
 	intent := deploymentIntent{
-		ModelID:     request.Model,
+		ModelID:     spec.ModelID,
 		Policy:      policy,
-		ContextSize: request.ContextSize,
-		Threads:     request.Threads,
+		ContextSize: spec.ContextSize,
+		Threads:     spec.Threads,
 	}
-	if request.NGPULayers != nil {
-		intent.NGPULayers = *request.NGPULayers
+	if spec.NGPULayers != nil {
+		intent.NGPULayers = *spec.NGPULayers
 		intent.NGPULayersSet = true
 	}
 	return intent
 }
 
-func (intent deploymentIntent) switchRequest() deploymentSwitchRequest {
-	request := deploymentSwitchRequest{
-		Model:                intent.ModelID,
+func (intent deploymentIntent) spec() deploymentSpec {
+	spec := deploymentSpec{
+		ModelID:              intent.ModelID,
 		StageCount:           intent.Policy.StageCount,
 		AllowColocatedStages: intent.Policy.AllowColocatedStages,
 		ContextSize:          intent.ContextSize,
@@ -35,7 +35,7 @@ func (intent deploymentIntent) switchRequest() deploymentSwitchRequest {
 	}
 	if intent.NGPULayersSet {
 		value := intent.NGPULayers
-		request.NGPULayers = &value
+		spec.NGPULayers = &value
 	}
-	return request
+	return spec
 }

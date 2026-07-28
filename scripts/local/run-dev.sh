@@ -227,6 +227,7 @@ JETSONFABRIC_CLUSTER_TOKEN="$CLUSTER_TOKEN" setsid "$NODE_BIN" \
   --runtime-ctx-size "${RUNTIME_CTX_SIZE:-4096}" \
   --runtime-n-gpu-layers "${RUNTIME_N_GPU_LAYERS:-999}" \
   --runtime-threads "${RUNTIME_THREADS:-0}" \
+  --runtime-http-workers "${RUNTIME_HTTP_WORKERS:-2}" \
   --engine "${NODE_ENGINE:-llama.cpp}" \
   --model "$MODEL_ID" \
   --model-path "$MODEL_PATH" \

@@ -22,11 +22,14 @@ const (
 	AutoRuntimeURL                 = "auto"
 	DefaultRuntimeBin              = "dist/jetsonfabric-runtime-worker"
 	DefaultRuntimeListen           = "127.0.0.1:0"
+	DefaultRuntimeStageTransport   = cluster.StageTransportHTTPBinaryV1
 	DefaultRuntimeComputeBackend   = "cuda"
 	DefaultRuntimeMode             = "pipeline_parallel"
 	DefaultRuntimeCtxSize          = 4096
 	DefaultRuntimeNGPULayers       = 999
 	DefaultRuntimeThreads          = 0
+	DefaultRuntimeHTTPWorkers      = 2
+	MaxRuntimeHTTPWorkers          = 64
 	DefaultRuntimeRevision         = "dev"
 	DefaultRuntimeLlamaCPPRevision = "dev"
 
@@ -53,11 +56,13 @@ type Config struct {
 	Model                   string
 	ModelPath               string
 	RuntimeListen           string
+	RuntimeStageTransport   string
 	RuntimeComputeBackend   string
 	RuntimeMode             string
 	RuntimeCtxSize          int
 	RuntimeNGPULayers       int
 	RuntimeThreads          int
+	RuntimeHTTPWorkers      int
 	RuntimeStartIdle        bool
 	RuntimeRevision         string
 	RuntimeLlamaCPPRevision string
@@ -96,11 +101,13 @@ func DefaultConfigValue() Config {
 		Model:                   "qwen2.5-coder-1.5b-q4",
 		ModelPath:               "",
 		RuntimeListen:           DefaultRuntimeListen,
+		RuntimeStageTransport:   DefaultRuntimeStageTransport,
 		RuntimeComputeBackend:   DefaultRuntimeComputeBackend,
 		RuntimeMode:             DefaultRuntimeMode,
 		RuntimeCtxSize:          DefaultRuntimeCtxSize,
 		RuntimeNGPULayers:       DefaultRuntimeNGPULayers,
 		RuntimeThreads:          DefaultRuntimeThreads,
+		RuntimeHTTPWorkers:      DefaultRuntimeHTTPWorkers,
 		RuntimeRevision:         DefaultRuntimeRevision,
 		RuntimeLlamaCPPRevision: DefaultRuntimeLlamaCPPRevision,
 		StageIndex:              DefaultStageIndex,
@@ -151,6 +158,7 @@ func normalizeStringsInConfig(cfg Config) Config {
 	cfg.Model = strings.TrimSpace(cfg.Model)
 	cfg.ModelPath = strings.TrimSpace(cfg.ModelPath)
 	cfg.RuntimeListen = strings.TrimSpace(cfg.RuntimeListen)
+	cfg.RuntimeStageTransport = strings.TrimSpace(cfg.RuntimeStageTransport)
 	cfg.RuntimeComputeBackend = strings.TrimSpace(cfg.RuntimeComputeBackend)
 	cfg.RuntimeMode = strings.TrimSpace(cfg.RuntimeMode)
 	cfg.RuntimeRevision = strings.TrimSpace(cfg.RuntimeRevision)
@@ -174,6 +182,9 @@ func normalizeRuntimeConfig(cfg Config) Config {
 	if cfg.Engine == "" {
 		cfg.Engine = cluster.EngineLlamaCPP
 	}
+	if cfg.RuntimeStageTransport == "" {
+		cfg.RuntimeStageTransport = DefaultRuntimeStageTransport
+	}
 	if cfg.RuntimeComputeBackend == "" {
 		cfg.RuntimeComputeBackend = DefaultRuntimeComputeBackend
 	}
@@ -185,6 +196,9 @@ func normalizeRuntimeConfig(cfg Config) Config {
 	}
 	if cfg.RuntimeNGPULayers == 0 {
 		cfg.RuntimeNGPULayers = DefaultRuntimeNGPULayers
+	}
+	if cfg.RuntimeHTTPWorkers == 0 {
+		cfg.RuntimeHTTPWorkers = DefaultRuntimeHTTPWorkers
 	}
 	if cfg.RuntimeRevision == "" {
 		cfg.RuntimeRevision = DefaultRuntimeRevision
@@ -236,6 +250,12 @@ func ValidateConfig(cfg Config) error {
 	if cfg.Engine == "" {
 		return fmt.Errorf("--engine is required")
 	}
+	if cfg.RuntimeStageTransport == "" {
+		return fmt.Errorf("--runtime-stage-transport is required")
+	}
+	if cfg.RuntimeHTTPWorkers < 1 || cfg.RuntimeHTTPWorkers > MaxRuntimeHTTPWorkers {
+		return fmt.Errorf("--runtime-http-workers must be between 1 and %d", MaxRuntimeHTTPWorkers)
+	}
 	if cfg.RuntimeRevision == "" {
 		return fmt.Errorf("--runtime-revision is required")
 	}
@@ -246,8 +266,8 @@ func ValidateConfig(cfg Config) error {
 		if cfg.RuntimeBin == "" {
 			return fmt.Errorf("--runtime-bin is required when --runtime-url=auto")
 		}
-		if !cfg.RuntimeStartIdle && cfg.ModelPath == "" {
-			return fmt.Errorf("--model-path is required when --runtime-url=auto unless --runtime-idle is set")
+		if cfg.Engine == cluster.EngineLlamaCPP && !cfg.RuntimeStartIdle && cfg.ModelPath == "" {
+			return fmt.Errorf("--model-path is required for llama.cpp when --runtime-url=auto unless --runtime-idle is set")
 		}
 	}
 	if err := validateDiscoveryModes(cfg.DiscoveryModes); err != nil {

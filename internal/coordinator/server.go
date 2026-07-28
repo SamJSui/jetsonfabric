@@ -2,7 +2,6 @@ package coordinator
 
 import (
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/api"
@@ -18,146 +17,172 @@ type MemberSource interface {
 }
 
 type Server struct {
-	nodeID            string
 	clusterToken      string
 	registry          modelregistry.Registry
+	memberSource      MemberSource
+	memberStaleAfter  time.Duration
+	clusterPlanPolicy clusterplan.Policy
+	now               func() time.Time
+	deployments       *DeploymentController
+	generations       *GenerationController
+}
+
+type serverConfig struct {
+	nodeID            string
+	clusterToken      string
 	benchmarkRecorder benchmarks.Recorder
 	memberSource      MemberSource
 	memberStaleAfter  time.Duration
 	clusterPlanPolicy clusterplan.Policy
 	now               func() time.Time
-	deployments       *deploymentState
 	deploymentClient  runtimebridge.DeploymentClient
 	generationClient  runtimebridge.GenerationClient
 	transitionTimeout time.Duration
 	cleanupTimeout    time.Duration
 	reconcileInterval time.Duration
 	isLeader          func(time.Time) bool
-	reconcileMu       sync.Mutex
-	reconcileCh       chan struct{}
 }
 
-type Option func(*Server)
+type Option func(*serverConfig)
 
 func WithBenchmarkRecorder(recorder benchmarks.Recorder) Option {
-	return func(s *Server) {
-		s.benchmarkRecorder = recorder
+	return func(cfg *serverConfig) {
+		cfg.benchmarkRecorder = recorder
 	}
 }
 
 func WithMembershipSource(source MemberSource, staleAfter time.Duration) Option {
-	return func(s *Server) {
-		s.memberSource = source
-		s.memberStaleAfter = staleAfter
+	return func(cfg *serverConfig) {
+		cfg.memberSource = source
+		cfg.memberStaleAfter = staleAfter
 	}
 }
 
 func WithClusterPlanPolicy(policy clusterplan.Policy) Option {
-	return func(s *Server) {
-		s.clusterPlanPolicy = policy
+	return func(cfg *serverConfig) {
+		cfg.clusterPlanPolicy = policy
 	}
 }
 
 func WithClock(now func() time.Time) Option {
-	return func(s *Server) {
-		s.now = now
+	return func(cfg *serverConfig) {
+		cfg.now = now
 	}
 }
 
 func WithDeploymentClient(client runtimebridge.DeploymentClient) Option {
-	return func(s *Server) {
-		s.deploymentClient = client
+	return func(cfg *serverConfig) {
+		cfg.deploymentClient = client
 	}
 }
 
 func WithGenerationClient(client runtimebridge.GenerationClient) Option {
-	return func(s *Server) {
-		s.generationClient = client
+	return func(cfg *serverConfig) {
+		cfg.generationClient = client
 	}
 }
 
 func WithNodeID(nodeID string) Option {
-	return func(s *Server) {
-		s.nodeID = nodeID
+	return func(cfg *serverConfig) {
+		cfg.nodeID = nodeID
 	}
 }
 
 func WithLeadership(check func(time.Time) bool) Option {
-	return func(s *Server) {
-		s.isLeader = check
+	return func(cfg *serverConfig) {
+		cfg.isLeader = check
 	}
 }
 
 func WithDeploymentTimeouts(transition, cleanup time.Duration) Option {
-	return func(s *Server) {
-		s.transitionTimeout = transition
-		s.cleanupTimeout = cleanup
+	return func(cfg *serverConfig) {
+		cfg.transitionTimeout = transition
+		cfg.cleanupTimeout = cleanup
 	}
 }
 
 func WithReconcileInterval(interval time.Duration) Option {
-	return func(s *Server) {
-		s.reconcileInterval = interval
+	return func(cfg *serverConfig) {
+		cfg.reconcileInterval = interval
 	}
 }
 
 func WithClusterToken(token string) Option {
-	return func(s *Server) {
-		s.clusterToken = token
+	return func(cfg *serverConfig) {
+		cfg.clusterToken = token
 	}
 }
 
 func NewServer(registry modelregistry.Registry, opts ...Option) *Server {
-	server := &Server{
-		registry:          registry,
+	cfg := serverConfig{
 		benchmarkRecorder: benchmarks.NoopRecorder{},
 		now:               func() time.Time { return time.Now().UTC() },
-		deployments:       newDeploymentState(),
 		transitionTimeout: deploymentSwitchTimeout,
 		cleanupTimeout:    deploymentCleanupTimeout,
 		reconcileInterval: 5 * time.Second,
-		reconcileCh:       make(chan struct{}, 1),
 	}
 	for _, opt := range opts {
-		opt(server)
+		opt(&cfg)
 	}
-	server.applyDefaults()
+	cfg.applyDefaults()
+	server := &Server{
+		clusterToken:      cfg.clusterToken,
+		registry:          registry,
+		memberSource:      cfg.memberSource,
+		memberStaleAfter:  cfg.memberStaleAfter,
+		clusterPlanPolicy: cfg.clusterPlanPolicy,
+		now:               cfg.now,
+	}
+	server.deployments = newDeploymentController(deploymentControllerConfig{
+		registry:          server.registry,
+		memberSource:      server.memberSource,
+		memberStaleAfter:  server.memberStaleAfter,
+		planPolicy:        server.clusterPlanPolicy,
+		now:               server.now,
+		runtimeClient:     cfg.deploymentClient,
+		transitionTimeout: cfg.transitionTimeout,
+		cleanupTimeout:    cfg.cleanupTimeout,
+		reconcileInterval: cfg.reconcileInterval,
+		isLeader:          cfg.isLeader,
+	})
+	server.generations = newGenerationController(
+		server.registry,
+		server.memberSource,
+		server.memberStaleAfter,
+		server.now,
+		server.deployments,
+		cfg.generationClient,
+	)
 	return server
 }
 
-func (s *Server) applyDefaults() {
-	if s.benchmarkRecorder == nil {
-		s.benchmarkRecorder = benchmarks.NoopRecorder{}
+func (cfg *serverConfig) applyDefaults() {
+	if cfg.benchmarkRecorder == nil {
+		cfg.benchmarkRecorder = benchmarks.NoopRecorder{}
 	}
-	if s.now == nil {
-		s.now = func() time.Time { return time.Now().UTC() }
+	if cfg.now == nil {
+		cfg.now = func() time.Time { return time.Now().UTC() }
 	}
-	if s.deployments == nil {
-		s.deployments = newDeploymentState()
+	if cfg.transitionTimeout <= 0 {
+		cfg.transitionTimeout = deploymentSwitchTimeout
 	}
-	if s.transitionTimeout <= 0 {
-		s.transitionTimeout = deploymentSwitchTimeout
+	if cfg.cleanupTimeout <= 0 {
+		cfg.cleanupTimeout = deploymentCleanupTimeout
 	}
-	if s.cleanupTimeout <= 0 {
-		s.cleanupTimeout = deploymentCleanupTimeout
+	if cfg.reconcileInterval <= 0 {
+		cfg.reconcileInterval = 5 * time.Second
 	}
-	if s.reconcileInterval <= 0 {
-		s.reconcileInterval = 5 * time.Second
-	}
-	if s.reconcileCh == nil {
-		s.reconcileCh = make(chan struct{}, 1)
-	}
-	if s.deploymentClient == nil {
-		s.deploymentClient = runtimebridge.NewHTTPDeploymentClient(runtimebridge.HTTPDeploymentClientConfig{
+	if cfg.deploymentClient == nil {
+		cfg.deploymentClient = runtimebridge.NewHTTPDeploymentClient(runtimebridge.HTTPDeploymentClientConfig{
 			Timeout:           10 * time.Minute,
-			CoordinatorNodeID: s.nodeID,
-			ClusterToken:      s.clusterToken,
+			CoordinatorNodeID: cfg.nodeID,
+			ClusterToken:      cfg.clusterToken,
 		})
 	}
-	if s.generationClient == nil {
-		s.generationClient = runtimebridge.NewHTTPGenerationClient(runtimebridge.HTTPGenerationClientConfig{
-			CoordinatorNodeID: s.nodeID,
-			ClusterToken:      s.clusterToken,
+	if cfg.generationClient == nil {
+		cfg.generationClient = runtimebridge.NewHTTPGenerationClient(runtimebridge.HTTPGenerationClientConfig{
+			CoordinatorNodeID: cfg.nodeID,
+			ClusterToken:      cfg.clusterToken,
 		})
 	}
 }

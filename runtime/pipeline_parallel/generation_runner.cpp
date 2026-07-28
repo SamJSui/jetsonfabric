@@ -1,6 +1,7 @@
 #include "pipeline_parallel/generation_runner.hpp"
 
 #include "inference/stage.hpp"
+#include "protocol/utf8.hpp"
 
 #include <cstdint>
 #include <exception>
@@ -233,6 +234,7 @@ GenerationResult GenerationRunner::run(
     GenerationResult result;
     bool end_of_generation = false;
     std::uint32_t previous_token = 0;
+    std::string pending_text;
     for (int pass = 0; pass < request.max_tokens && !end_of_generation; ++pass) {
         const std::string phase = pass == 0 ? "prefill" : "decode";
         protocol::StageRequest stage_request = initial_request(request, phase, pass, previous_token);
@@ -258,7 +260,19 @@ GenerationResult GenerationRunner::run(
         previous_token = sampled_token;
         const int token_index = static_cast<int>(result.sampled_tokens.size());
         result.sampled_tokens.push_back(sampled_token);
-        if (!sink(GenerationToken{sampled_token, pass_result.final_response.message, token_index})) {
+        pending_text += pass_result.final_response.message;
+        std::string emitted_text;
+        try {
+            const std::size_t complete_bytes = protocol::complete_utf8_prefix(pending_text);
+            emitted_text = pending_text.substr(0, complete_bytes);
+            pending_text.erase(0, complete_bytes);
+        } catch (const std::invalid_argument& error) {
+            const std::string cleanup_error = close_sessions(request, invoke_stage_);
+            std::string message = error.what();
+            if (!cleanup_error.empty()) message += "; cleanup: " + cleanup_error;
+            return generation_error("502 Bad Gateway", "invalid_token_text", message);
+        }
+        if (!sink(GenerationToken{sampled_token, std::move(emitted_text), token_index})) {
             const std::string cleanup_error = close_sessions(request, invoke_stage_);
             std::string message = "generation token sink canceled the request";
             if (!cleanup_error.empty()) message += "; cleanup: " + cleanup_error;
