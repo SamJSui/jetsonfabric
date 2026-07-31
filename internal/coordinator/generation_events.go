@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/SamJSui/jetsonfabric/internal/chat"
 	"github.com/SamJSui/jetsonfabric/internal/runtimebridge"
 )
 
@@ -16,6 +17,9 @@ type runtimeGenerationResult struct {
 	CompletionTokens int
 	StageCalls       int
 	RemoteStageCalls int
+	BytesIn          int64
+	BytesOut         int64
+	StageTimings     []chat.StageTiming
 }
 
 type generationEventConsumer struct {
@@ -115,10 +119,23 @@ func (c *generationEventConsumer) accept(event runtimebridge.GenerationEvent) (b
 		c.result.CompletionTokens = event.CompletionTokens
 		c.result.StageCalls = event.StageCalls
 		c.result.RemoteStageCalls = event.RemoteStageCalls
+		c.result.BytesIn = event.BytesIn
+		c.result.BytesOut = event.BytesOut
+		c.result.StageTimings = append([]chat.StageTiming(nil), event.StageTimings...)
 		return true, nil
 	case "error":
 		return false, fmt.Errorf("%s: %s", event.Code, event.Message)
 	default:
 		return false, fmt.Errorf("runtime emitted unknown generation event type %q", event.Type)
+	}
+}
+
+func runtimeTrace(result runtimeGenerationResult) *chat.RuntimeTrace {
+	return &chat.RuntimeTrace{
+		StageCalls:       result.StageCalls,
+		RemoteStageCalls: result.RemoteStageCalls,
+		BytesIn:          result.BytesIn,
+		BytesOut:         result.BytesOut,
+		StageTimings:     append([]chat.StageTiming(nil), result.StageTimings...),
 	}
 }

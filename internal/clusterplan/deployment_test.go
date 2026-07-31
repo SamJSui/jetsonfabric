@@ -66,6 +66,8 @@ func TestNewDeploymentPlanRejectsInvalidMetadata(t *testing.T) {
 		{"invalid artifact hash", func(s *DeploymentPlanSpec) { s.Model.ModelSHA256 = "bad" }, "model_sha256"},
 		{"missing engine", func(s *DeploymentPlanSpec) { s.Model.Engine = "" }, "engine"},
 		{"missing stage transport", func(s *DeploymentPlanSpec) { s.Model.StageTransport = "" }, "stage_transport"},
+		{"missing activation encoding", func(s *DeploymentPlanSpec) { s.Model.ActivationEncoding = "" }, "activation_encoding"},
+		{"missing KV cache type", func(s *DeploymentPlanSpec) { s.Model.KVCacheType = "" }, "kv_cache_type"},
 		{"invalid layer count", func(s *DeploymentPlanSpec) { s.Model.LayerCount = 0 }, "layer_count"},
 		{"tensor parallel", func(s *DeploymentPlanSpec) { s.Model.ExecutionMode = cluster.ExecutionModeTensorParallel }, "unsupported execution mode"},
 	}
@@ -117,7 +119,10 @@ func validDeploymentPlanSpec() DeploymentPlanSpec {
 		Model: DeploymentModelIdentity{
 			ModelID: "model-a", ModelSHA256: strings.Repeat("a", 64),
 			Engine: cluster.EngineLlamaCPP, ExecutionMode: cluster.ExecutionModePipelineParallel,
-			StageTransport: cluster.StageTransportHTTPBinaryV1, LayerCount: 28,
+			StageTransport:     cluster.StageTransportHTTPBinaryV1,
+			ActivationEncoding: cluster.ActivationEncodingF32,
+			KVCacheType:        cluster.KVCacheTypeF16,
+			LayerCount:         28,
 		},
 		Stages: []Stage{
 			{

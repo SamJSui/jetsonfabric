@@ -240,7 +240,13 @@ jobs:
         run: CI_MODEL_PATH="$CI_QWEN_MODEL_PATH" "$CI_RUNTIME_BUILD_DIR/jetsonfabric-llama-stage-test"
 
       - name: Run two-node binary activation E2E
-        run: bash scripts/ci/smoke-binary-activation.sh
+        run: |
+          CI_ACTIVATION_ENCODING=f32 \
+            bash scripts/ci/smoke-binary-activation.sh
+          CI_ACTIVATION_ENCODING=f16 \
+            CI_ACTIVATION_NODE0_PORT=18282 \
+            CI_ACTIVATION_NODE1_PORT=18283 \
+            bash scripts/ci/smoke-binary-activation.sh
 
       - name: Upload CI diagnostics
         if: always()

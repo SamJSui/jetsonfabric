@@ -37,8 +37,9 @@ const (
 )
 
 type Policy struct {
-	AllowColocatedStages bool `json:"allow_colocated_stages"`
-	StageCount           int  `json:"stage_count,omitempty"`
+	AllowColocatedStages bool  `json:"allow_colocated_stages"`
+	StageCount           int   `json:"stage_count,omitempty"`
+	StageLayerCounts     []int `json:"stage_layer_counts,omitempty"`
 }
 
 type Request struct {
@@ -106,7 +107,16 @@ func Preview(req Request) RoutePreview {
 
 	placements, candidates := candidatePlacements(req.Model, req.Members, now, req.StaleAfter)
 	preview := RoutePreview{Model: req.Model.ID, Placements: placements}
-	if reason := validatePlanningRequest(req.Model.LayerCount, req.Policy.StageCount); reason != "" {
+	requestedStageCount := policyStageCount(req.Policy)
+	if reason := validatePlanningRequest(req.Model.LayerCount, requestedStageCount); reason != "" {
+		preview.Reason = reason
+		return preview
+	}
+	if reason := validateStageLayerCounts(
+		req.Model.LayerCount,
+		requestedStageCount,
+		req.Policy.StageLayerCounts,
+	); reason != "" {
 		preview.Reason = reason
 		return preview
 	}
@@ -131,7 +141,6 @@ func Preview(req Request) RoutePreview {
 		return preview
 	}
 
-	requestedStageCount := req.Policy.StageCount
 	if requestedStageCount == 0 {
 		requestedStageCount = min(len(candidates), req.Model.LayerCount)
 	}
@@ -166,7 +175,7 @@ func dataParallelPreview(preview RoutePreview, placement Placement, layerCount i
 
 func pipelinePreview(preview RoutePreview, placements []Placement, policy Policy, layerCount int) RoutePreview {
 	preview.Mode = cluster.ExecutionModePipelineParallel
-	preview.Stages = buildStages(placements, layerCount)
+	preview.Stages = buildStages(placements, layerCount, policy.StageLayerCounts)
 	if reason := validateStagePlan(preview.Stages, layerCount); reason != "" {
 		preview.Reason = reason
 		return finalizeTopology(preview)
@@ -426,8 +435,11 @@ func selectDistinctPhysicalHosts(candidates []Placement, count int) []Placement 
 	return selected
 }
 
-func buildStages(placements []Placement, layerCount int) []Stage {
+func buildStages(placements []Placement, layerCount int, stageLayerCounts ...[]int) []Stage {
 	ranges := AssignLayerRanges(layerCount, len(placements))
+	if len(stageLayerCounts) > 0 && len(stageLayerCounts[0]) > 0 {
+		ranges = AssignConfiguredLayerRanges(layerCount, stageLayerCounts[0])
+	}
 	if len(ranges) != len(placements) {
 		return nil
 	}
@@ -456,6 +468,20 @@ func buildStages(placements []Placement, layerCount int) []Stage {
 		})
 	}
 	return stages
+}
+
+func AssignConfiguredLayerRanges(layerCount int, stageLayerCounts []int) []LayerRange {
+	if validateStageLayerCounts(layerCount, len(stageLayerCounts), stageLayerCounts) != "" {
+		return nil
+	}
+	ranges := make([]LayerRange, 0, len(stageLayerCounts))
+	start := 0
+	for _, count := range stageLayerCounts {
+		end := start + count
+		ranges = append(ranges, LayerRange{Start: start, End: end})
+		start = end
+	}
+	return ranges
 }
 
 func AssignLayerRanges(layerCount int, stageCount int) []LayerRange {

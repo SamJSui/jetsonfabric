@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/api"
+	"github.com/SamJSui/jetsonfabric/internal/chat"
 	"github.com/SamJSui/jetsonfabric/internal/clusterplan"
 )
 
@@ -33,20 +34,21 @@ type GenerationRequest struct {
 }
 
 type GenerationEvent struct {
-	Type             string   `json:"type"`
-	Token            *uint32  `json:"token,omitempty"`
-	Text             string   `json:"text,omitempty"`
-	Index            int      `json:"index,omitempty"`
-	FinishReason     string   `json:"finish_reason,omitempty"`
-	PromptTokens     int      `json:"prompt_tokens,omitempty"`
-	CompletionTokens int      `json:"completion_tokens,omitempty"`
-	SampledTokens    []uint32 `json:"sampled_tokens,omitempty"`
-	StageCalls       int      `json:"stage_calls,omitempty"`
-	RemoteStageCalls int      `json:"remote_stage_calls,omitempty"`
-	BytesIn          int64    `json:"bytes_in,omitempty"`
-	BytesOut         int64    `json:"bytes_out,omitempty"`
-	Code             string   `json:"code,omitempty"`
-	Message          string   `json:"message,omitempty"`
+	Type             string             `json:"type"`
+	Token            *uint32            `json:"token,omitempty"`
+	Text             string             `json:"text,omitempty"`
+	Index            int                `json:"index,omitempty"`
+	FinishReason     string             `json:"finish_reason,omitempty"`
+	PromptTokens     int                `json:"prompt_tokens,omitempty"`
+	CompletionTokens int                `json:"completion_tokens,omitempty"`
+	SampledTokens    []uint32           `json:"sampled_tokens,omitempty"`
+	StageCalls       int                `json:"stage_calls,omitempty"`
+	RemoteStageCalls int                `json:"remote_stage_calls,omitempty"`
+	BytesIn          int64              `json:"bytes_in,omitempty"`
+	BytesOut         int64              `json:"bytes_out,omitempty"`
+	StageTimings     []chat.StageTiming `json:"stage_timings,omitempty"`
+	Code             string             `json:"code,omitempty"`
+	Message          string             `json:"message,omitempty"`
 }
 
 type GenerationStream struct {

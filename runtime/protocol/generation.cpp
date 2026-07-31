@@ -179,8 +179,27 @@ std::string encode_generation_done_event(
     int stage_calls,
     int remote_stage_calls,
     std::int64_t bytes_in,
-    std::int64_t bytes_out
+    std::int64_t bytes_out,
+    const std::vector<GenerationStageTiming>& stage_timings
 ) {
+    nlohmann::ordered_json timings = nlohmann::ordered_json::array();
+    for (const GenerationStageTiming& timing : stage_timings) {
+        timings.push_back({
+            {"phase", timing.phase},
+            {"stage_index", timing.stage_index},
+            {"node_name", timing.node_name},
+            {"remote", timing.remote},
+            {"calls", timing.calls},
+            {"execution_us", timing.execution_us},
+            {"activation_decode_us", timing.activation_decode_us},
+            {"activation_encode_us", timing.activation_encode_us},
+            {"stage_total_us", timing.stage_total_us},
+            {"remote_call_us", timing.remote_call_us},
+            {"remote_overhead_us", timing.remote_overhead_us},
+            {"bytes_in", timing.bytes_in},
+            {"bytes_out", timing.bytes_out},
+        });
+    }
     return nlohmann::ordered_json{
         {"type", "done"},
         {"finish_reason", finish_reason},
@@ -191,6 +210,7 @@ std::string encode_generation_done_event(
         {"remote_stage_calls", remote_stage_calls},
         {"bytes_in", bytes_in},
         {"bytes_out", bytes_out},
+        {"stage_timings", std::move(timings)},
     }.dump();
 }
 

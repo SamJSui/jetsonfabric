@@ -20,11 +20,25 @@ namespace jetsonfabric::runtime::adapters {
 namespace {
 
 void free_context(llama_context* context) {
+    if (context == nullptr) {
+        return;
+    }
+    llama_synchronize(context);
     llama_free(context);
 }
 
 using ContextPtr = std::unique_ptr<llama_context, decltype(&free_context)>;
 using SessionClock = std::chrono::steady_clock;
+
+ggml_type llama_kv_cache_type(KVCacheType type) {
+    switch (type) {
+    case KVCacheType::F16:
+        return GGML_TYPE_F16;
+    case KVCacheType::Q8_0:
+        return GGML_TYPE_Q8_0;
+    }
+    return GGML_TYPE_F16;
+}
 
 struct BatchOwner {
     llama_batch batch{};
@@ -139,6 +153,9 @@ struct LlamaCppStageAdapter::Impl {
         if (!config.model) {
             throw std::invalid_argument("llama.cpp stage model is required");
         }
+        if (config.ubatch_size <= 0) {
+            throw std::invalid_argument("llama.cpp stage micro-batch size must be greater than zero");
+        }
         if (config.position.count <= 0 || config.position.index < 0 ||
             config.position.index >= config.position.count) {
             throw std::invalid_argument("invalid llama.cpp stage position");
@@ -174,14 +191,22 @@ struct LlamaCppStageAdapter::Impl {
         });
     }
 
-    ContextPtr create_context() const {
+    ContextPtr create_context(int prefill_tokens) const {
         llama_context_params params = llama_context_default_params();
         params.n_ctx = static_cast<std::uint32_t>(std::max(32, config.ctx_size));
-        params.n_batch = params.n_ctx;
-        params.n_ubatch = params.n_ctx;
-        params.n_outputs_max = params.n_ctx;
+        const std::uint32_t batch_size = static_cast<std::uint32_t>(
+            std::clamp(prefill_tokens, 1, static_cast<int>(params.n_ctx))
+        );
+        params.n_batch = batch_size;
+        params.n_ubatch = std::min(
+            batch_size,
+            static_cast<std::uint32_t>(config.ubatch_size)
+        );
+        params.n_outputs_max = config.position.is_last() ? 1U : batch_size;
         params.embeddings = !config.position.is_last();
         params.no_perf = true;
+        params.type_k = llama_kv_cache_type(config.kv_cache_type);
+        params.type_v = llama_kv_cache_type(config.kv_cache_type);
         if (config.threads > 0) {
             params.n_threads = config.threads;
             params.n_threads_batch = config.threads;
@@ -247,11 +272,19 @@ struct LlamaCppStageAdapter::Impl {
             std::memcpy(batch->batch.embd, input.payload.bytes.data(), input.payload.bytes.size());
         }
 
-        if (session.next_position + n_tokens > config.ctx_size) {
+        const int requested_decode_positions =
+            input.phase == inference::Phase::Prefill
+                ? std::max(0, input.max_tokens - 1)
+                : 0;
+        if (session.next_position + n_tokens + requested_decode_positions >
+            config.ctx_size) {
             return inference::ExecutionResult::invalid_input(
                 "stage_context_exhausted",
-                "llama.cpp stage context size would be exceeded"
+                "prompt and requested completion exceed the llama.cpp stage context size"
             );
+        }
+        if (!session.context) {
+            session.context = create_context(n_tokens);
         }
         initialize_batch_common(batch->batch, n_tokens, session.next_position, final_stage);
 
@@ -344,7 +377,6 @@ struct LlamaCppStageAdapter::Impl {
                     );
                 }
                 Session session;
-                session.context = create_context();
                 inference::ExecutionResult result = run(session, input, true);
                 if (result.ok) {
                     session.last_used = SessionClock::now();

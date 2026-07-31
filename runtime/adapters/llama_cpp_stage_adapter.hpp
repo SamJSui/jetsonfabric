@@ -2,6 +2,7 @@
 
 #include "adapters/llama_cpp_model.hpp"
 #include "inference/stage.hpp"
+#include "protocol/kv_cache_type.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -13,6 +14,8 @@ namespace jetsonfabric::runtime::adapters {
 struct LlamaCppStageConfig {
     std::shared_ptr<LlamaCppModel> model;
     int ctx_size = 4096;
+    int ubatch_size = 512;
+    KVCacheType kv_cache_type = KVCacheType::F16;
     int threads = 0;
     inference::StagePosition position;
     inference::LayerRange layers;

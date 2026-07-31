@@ -41,7 +41,13 @@ public:
         const Config& config
     )
         : model_(std::move(model)),
-          adapter_(model_, config.ctx_size, config.threads),
+          adapter_(
+              model_,
+              config.ctx_size,
+              config.threads,
+              config.kv_cache_type,
+              config.ubatch_size
+          ),
           executor_(adapter_) {}
 
     inference::ExecutionResult execute(const inference::StageInput& input) const override {
@@ -69,6 +75,8 @@ InferenceEngineParts create_llama_cpp_engine(const Config& config) {
                 adapters::LlamaCppStageConfig{
                     .model = std::move(model),
                     .ctx_size = config.ctx_size,
+                    .ubatch_size = config.ubatch_size,
+                    .kv_cache_type = config.kv_cache_type,
                     .threads = config.threads,
                     .position = inference::StagePosition{
                         .index = config.stage_assignment.stage_index,

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "activation/activation_codec.hpp"
 #include "deployment/deployment.hpp"
 #include "engine/inference_engine_factory.hpp"
 #include "pipeline_parallel/stage_assignment.hpp"
@@ -24,6 +25,11 @@ public:
 
     ModelManager();
     ModelManager(const Config& config, const InferenceEngineFactory& engine_factory);
+    ModelManager(
+        const Config& config,
+        const InferenceEngineFactory& engine_factory,
+        std::shared_ptr<const activation::ActivationCodec> activation_codec
+    );
     ModelManager(
         std::string node_name,
         DeploymentIdentity identity,

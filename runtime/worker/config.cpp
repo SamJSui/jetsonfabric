@@ -51,11 +51,17 @@ void validate_engine_config(const Config& cfg) {
     if (cfg.stage_transport.empty()) {
         throw std::invalid_argument("--stage-transport must not be empty");
     }
+    if (cfg.activation_encoding.empty()) {
+        throw std::invalid_argument("--activation-encoding must not be empty");
+    }
     if (cfg.compute_backend.empty()) {
         throw std::invalid_argument("--compute-backend must not be empty");
     }
     if (cfg.ctx_size <= 0) {
         throw std::invalid_argument("--ctx-size must be greater than zero");
+    }
+    if (cfg.ubatch_size <= 0) {
+        throw std::invalid_argument("--ubatch-size must be greater than zero");
     }
     if (cfg.n_gpu_layers < 0) {
         throw std::invalid_argument("--n-gpu-layers must be zero or greater");
@@ -125,9 +131,12 @@ void print_help() {
         << "  --layer-end n            transformer layer end, exclusive\n"
         << "  --engine engine          registered inference engine name\n"
         << "  --stage-transport name   registered peer-stage transport name\n"
+        << "  --activation-encoding n  inter-stage activation encoding: f32 or f16\n"
         << "  --compute-backend name   compute backend passed to the engine\n"
         << "  --model-path path        GGUF model path for llama.cpp\n"
         << "  --ctx-size n             context size, default 4096\n"
+        << "  --ubatch-size n          llama.cpp physical micro-batch size, default 512\n"
+        << "  --kv-cache-type type     llama.cpp KV cache type: f16 or q8_0\n"
         << "  --n-gpu-layers n         llama.cpp GPU layers, default 999\n"
         << "  --threads n              CPU threads, default 0\n"
         << "  --http-workers n         bounded HTTP worker count, default 2\n";
@@ -167,12 +176,23 @@ Config parse_args(int argc, char** argv) {
             cfg.engine = require_value(i, argc, argv, arg);
         } else if (arg == "--stage-transport") {
             cfg.stage_transport = require_value(i, argc, argv, arg);
+        } else if (arg == "--activation-encoding") {
+            cfg.activation_encoding = require_value(i, argc, argv, arg);
         } else if (arg == "--compute-backend") {
             cfg.compute_backend = require_value(i, argc, argv, arg);
         } else if (arg == "--model-path") {
             cfg.model_path = require_value(i, argc, argv, arg);
         } else if (arg == "--ctx-size") {
             cfg.ctx_size = parse_int(require_value(i, argc, argv, arg), arg);
+        } else if (arg == "--ubatch-size") {
+            cfg.ubatch_size = parse_int(require_value(i, argc, argv, arg), arg);
+        } else if (arg == "--kv-cache-type") {
+            const std::string value = require_value(i, argc, argv, arg);
+            try {
+                cfg.kv_cache_type = parse_kv_cache_type(value);
+            } catch (const std::invalid_argument& err) {
+                fail(err.what());
+            }
         } else if (arg == "--n-gpu-layers") {
             cfg.n_gpu_layers = parse_int(require_value(i, argc, argv, arg), arg);
         } else if (arg == "--threads") {
@@ -197,9 +217,12 @@ Config parse_args(int argc, char** argv) {
         << "runtime configuration: state=" << (cfg.start_idle ? "idle" : "active")
         << " engine=" << cfg.engine
         << " stage_transport=" << cfg.stage_transport
+        << " activation_encoding=" << cfg.activation_encoding
         << " compute_backend=" << cfg.compute_backend
         << " n_gpu_layers=" << cfg.n_gpu_layers
         << " ctx_size=" << cfg.ctx_size
+        << " ubatch_size=" << cfg.ubatch_size
+        << " kv_cache_type=" << kv_cache_type_string(cfg.kv_cache_type)
         << " http_workers=" << cfg.http_workers;
     if (!cfg.start_idle) {
         std::cerr

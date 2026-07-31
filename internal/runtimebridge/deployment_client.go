@@ -49,21 +49,23 @@ type DeploymentOperationResponse struct {
 }
 
 type LoadDeploymentRequest struct {
-	DeploymentID   string `json:"deployment_id"`
-	Epoch          uint64 `json:"epoch"`
-	ModelID        string `json:"model_id"`
-	ModelSHA256    string `json:"model_sha256"`
-	Engine         string `json:"engine"`
-	ComputeBackend string `json:"compute_backend"`
-	ModelPath      string `json:"model_path"`
-	CtxSize        int    `json:"ctx_size"`
-	NGPULayers     int    `json:"n_gpu_layers"`
-	Threads        int    `json:"threads"`
-	Mode           string `json:"mode"`
-	StageIndex     int    `json:"stage_index"`
-	StageCount     int    `json:"stage_count"`
-	LayerStart     int    `json:"layer_start"`
-	LayerEnd       int    `json:"layer_end"`
+	DeploymentID       string `json:"deployment_id"`
+	Epoch              uint64 `json:"epoch"`
+	ModelID            string `json:"model_id"`
+	ModelSHA256        string `json:"model_sha256"`
+	Engine             string `json:"engine"`
+	ComputeBackend     string `json:"compute_backend"`
+	ActivationEncoding string `json:"activation_encoding"`
+	KVCacheType        string `json:"kv_cache_type"`
+	ModelPath          string `json:"model_path"`
+	CtxSize            int    `json:"ctx_size"`
+	NGPULayers         int    `json:"n_gpu_layers"`
+	Threads            int    `json:"threads"`
+	Mode               string `json:"mode"`
+	StageIndex         int    `json:"stage_index"`
+	StageCount         int    `json:"stage_count"`
+	LayerStart         int    `json:"layer_start"`
+	LayerEnd           int    `json:"layer_end"`
 }
 
 type DeploymentClient interface {

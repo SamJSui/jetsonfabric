@@ -3,10 +3,16 @@
 #include "protocol/stage.hpp"
 #include "protocol/stage_control.hpp"
 
+#include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <future>
 #include <iostream>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -18,10 +24,13 @@ void expect(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
 
-runtime::protocol::GenerationRequest generation_request(int max_tokens = 2) {
+runtime::protocol::GenerationRequest generation_request(
+    int max_tokens = 2,
+    const std::string& suffix = "a"
+) {
     return runtime::protocol::GenerationRequest{
-        .request_id = "request-a",
-        .session_id = "session-a",
+        .request_id = "request-" + suffix,
+        .session_id = "session-" + suffix,
         .model_id = "model-a",
         .prompt = "hello",
         .max_tokens = max_tokens,
@@ -65,6 +74,8 @@ runtime::protocol::StageResponse response_for(const runtime::protocol::StageRequ
     response.layer_start = request.layer_start;
     response.layer_end = request.layer_end;
     response.bytes_in = static_cast<std::int64_t>(request.payload.size());
+    response.execution_us = 100;
+    response.stage_total_us = 130;
     return response;
 }
 
@@ -127,6 +138,7 @@ struct InvocationHarness {
         result.ok = true;
         result.status = "200 OK";
         result.response = response_for(request);
+        if (stage.stage_index != 0) result.remote_call_us = 200;
         if (stage.stage_index == 0) {
             result.response.payload_kind = "activation";
             result.response.encoding.clear();
@@ -152,6 +164,50 @@ struct InvocationHarness {
     }
 };
 
+struct ConcurrentInvocationHarness {
+    runtime::pipeline_parallel::StageRunResult invoke(
+        const runtime::protocol::GenerationStage& stage,
+        const runtime::protocol::StageRequest& request,
+        runtime::pipeline_parallel::StageOperation operation
+    ) {
+        runtime::pipeline_parallel::StageRunResult result;
+        result.ok = true;
+        result.status = "200 OK";
+        result.response = response_for(request);
+        if (operation == runtime::pipeline_parallel::StageOperation::CloseSession) {
+            result.response.payload_kind = "text";
+            result.response.encoding = "utf-8";
+            return result;
+        }
+
+        const std::size_t stage_index = static_cast<std::size_t>(stage.stage_index);
+        std::lock_guard stage_lock(stage_mutex.at(stage_index));
+        active.at(stage_index).store(true);
+        if (active.at(1U - stage_index).load()) overlap_observed.store(true);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        active.at(stage_index).store(false);
+
+        if (stage.stage_index == 0) {
+            result.response.payload_kind = "activation";
+            result.response.dtype = "f32";
+            result.response.shape = {1};
+            result.response.byte_order = "little";
+            result.response.layout = "row_major";
+            result.response.payload = {1, 2, 3, 4};
+            if (request.phase == "prefill") result.response.prompt_tokens = 1;
+        } else {
+            set_u32_payload(result.response, static_cast<std::uint32_t>(41 + request.decode_step));
+            result.response.message = "x";
+            result.response.completion_tokens = 1;
+        }
+        return result;
+    }
+
+    std::array<std::mutex, 2> stage_mutex;
+    std::array<std::atomic_bool, 2> active{false, false};
+    std::atomic_bool overlap_observed{false};
+};
+
 void test_generation_owns_both_loops_and_cleanup() {
     InvocationHarness harness;
     runtime::pipeline_parallel::GenerationRunner runner([
@@ -172,6 +228,21 @@ void test_generation_owns_both_loops_and_cleanup() {
     expect(result.sampled_tokens == std::vector<std::uint32_t>({41, 42}), "sampled tokens changed");
     expect(result.prompt_tokens == 5 && result.completion_tokens == 2, "usage accounting changed");
     expect(result.stage_calls == 4 && result.remote_stage_calls == 2, "stage call accounting changed");
+    expect(result.stage_timings.size() == 4, "stage timings were not aggregated by phase and stage");
+    expect(
+        result.stage_timings[0].phase == "prefill" &&
+            result.stage_timings[0].stage_index == 0 &&
+            result.stage_timings[0].execution_us == 100 &&
+            result.stage_timings[0].remote_call_us == 0,
+        "local prefill timing changed"
+    );
+    expect(
+        result.stage_timings[1].phase == "prefill" &&
+            result.stage_timings[1].stage_index == 1 &&
+            result.stage_timings[1].remote_call_us == 200 &&
+            result.stage_timings[1].remote_overhead_us == 70,
+        "remote prefill timing changed"
+    );
     expect(harness.execute_calls == 4 && harness.close_calls == 2, "runner did not execute and close every stage");
     expect(
         harness.execute_request_ids == std::vector<std::string>({
@@ -183,6 +254,37 @@ void test_generation_owns_both_loops_and_cleanup() {
         "stage request IDs were not independently derived from the pass request"
     );
     expect(emitted.size() == 2 && emitted[0].text == "hello" && emitted[1].text == " world", "token stream changed");
+}
+
+void test_independent_generations_overlap_pipeline_stages() {
+    ConcurrentInvocationHarness harness;
+    std::promise<void> start_signal;
+    const std::shared_future<void> start = start_signal.get_future().share();
+    auto run = [&harness, start](const std::string& suffix) {
+        return std::async(std::launch::async, [&harness, start, suffix]() {
+            start.wait();
+            runtime::pipeline_parallel::GenerationRunner runner([
+                &harness
+            ](const auto& stage, const auto& request, auto operation) {
+                return harness.invoke(stage, request, operation);
+            });
+            return runner.run(generation_request(3, suffix), [](const auto&) {
+                return true;
+            });
+        });
+    };
+
+    std::future<runtime::pipeline_parallel::GenerationResult> first = run("a");
+    std::future<runtime::pipeline_parallel::GenerationResult> second = run("b");
+    start_signal.set_value();
+    const runtime::pipeline_parallel::GenerationResult first_result = first.get();
+    const runtime::pipeline_parallel::GenerationResult second_result = second.get();
+
+    expect(first_result.ok && second_result.ok, "concurrent generation failed");
+    expect(
+        harness.overlap_observed.load(),
+        "independent generations did not overlap work on separate pipeline stages"
+    );
 }
 
 void test_sink_cancellation_closes_every_stage() {
@@ -373,12 +475,21 @@ void test_generation_protocol_and_stagewire_round_trip() {
 
     runtime::protocol::StageResponse response = response_for(request_round_trip);
     set_u32_payload(response, 73);
+    response.activation_decode_us = 11;
+    response.activation_encode_us = 12;
     response.message = std::string(1, static_cast<char>(0x9e));
     const runtime::protocol::StageResponse response_round_trip = runtime::protocol::decode_stage_response(
         runtime::protocol::encode_stage_response(response)
     );
     expect(response_round_trip.payload == response.payload, "stage response payload changed during round trip");
     expect(response_round_trip.message == response.message, "stage response token bytes changed during round trip");
+    expect(
+        response_round_trip.execution_us == response.execution_us &&
+            response_round_trip.activation_decode_us == response.activation_decode_us &&
+            response_round_trip.activation_encode_us == response.activation_encode_us &&
+            response_round_trip.stage_total_us == response.stage_total_us,
+        "stage response timings changed during round trip"
+    );
     expect(
         response_round_trip.deployment_id == request.deployment_id &&
             response_round_trip.deployment_epoch == request.deployment_epoch &&
@@ -432,6 +543,7 @@ void test_generation_protocol_rejects_empty_prompt() {
 int main() {
     try {
         test_generation_owns_both_loops_and_cleanup();
+        test_independent_generations_overlap_pipeline_stages();
         test_sink_cancellation_closes_every_stage();
         test_generation_coalesces_split_utf8_token_bytes();
         test_natural_stop_excludes_eos_and_accounts_for_its_pass();

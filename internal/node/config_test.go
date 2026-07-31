@@ -69,25 +69,79 @@ func TestNormalizeConfigDefaultsRuntimeStageTransport(t *testing.T) {
 	}
 }
 
-func TestRuntimeArgsPassConfiguredTransportAndHTTPWorkers(t *testing.T) {
+func TestNormalizeConfigDefaultsRuntimeActivationEncoding(t *testing.T) {
+	cfg := DefaultConfigValue()
+	cfg.RuntimeActivationEncoding = ""
+
+	normalized := NormalizeConfig(cfg)
+
+	if normalized.RuntimeActivationEncoding != DefaultRuntimeActivationEncoding {
+		t.Fatalf(
+			"runtime activation encoding = %q, want %q",
+			normalized.RuntimeActivationEncoding,
+			DefaultRuntimeActivationEncoding,
+		)
+	}
+}
+
+func TestNormalizeConfigDefaultsRuntimeKVCacheType(t *testing.T) {
+	cfg := DefaultConfigValue()
+	cfg.RuntimeKVCacheType = ""
+
+	normalized := NormalizeConfig(cfg)
+
+	if normalized.RuntimeKVCacheType != DefaultRuntimeKVCacheType {
+		t.Fatalf(
+			"runtime KV cache type = %q, want %q",
+			normalized.RuntimeKVCacheType,
+			DefaultRuntimeKVCacheType,
+		)
+	}
+}
+
+func TestRuntimeArgsPassConfiguredStrategiesAndWorkerLimits(t *testing.T) {
 	cfg := NormalizeConfig(DefaultConfigValue())
 	cfg.RuntimeStageTransport = "test_transport"
+	cfg.RuntimeActivationEncoding = cluster.ActivationEncodingF16
+	cfg.RuntimeKVCacheType = cluster.KVCacheTypeQ8_0
+	cfg.RuntimeUBatchSize = 128
 	cfg.RuntimeHTTPWorkers = 3
 
 	args := runtimeArgs(cfg, "127.0.0.1:9090")
 
 	hasTransport := false
+	hasActivationEncoding := false
+	hasKVCacheType := false
+	hasUBatchSize := false
 	hasHTTPWorkers := false
 	for index := 0; index+1 < len(args); index++ {
 		if args[index] == "--stage-transport" && args[index+1] == "test_transport" {
 			hasTransport = true
 		}
+		if args[index] == "--activation-encoding" && args[index+1] == cluster.ActivationEncodingF16 {
+			hasActivationEncoding = true
+		}
+		if args[index] == "--kv-cache-type" && args[index+1] == cluster.KVCacheTypeQ8_0 {
+			hasKVCacheType = true
+		}
+		if args[index] == "--ubatch-size" && args[index+1] == "128" {
+			hasUBatchSize = true
+		}
 		if args[index] == "--http-workers" && args[index+1] == "3" {
 			hasHTTPWorkers = true
 		}
 	}
-	if !hasTransport || !hasHTTPWorkers {
-		t.Fatalf("runtime args omitted transport or HTTP workers: %v", args)
+	if !hasTransport || !hasActivationEncoding || !hasKVCacheType || !hasUBatchSize || !hasHTTPWorkers {
+		t.Fatalf("runtime args omitted strategy or worker-limit configuration: %v", args)
+	}
+}
+
+func TestValidateConfigRejectsInvalidRuntimeKVCacheType(t *testing.T) {
+	cfg := NormalizeConfig(DefaultConfigValue())
+	cfg.RuntimeKVCacheType = "q2_k"
+
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatal("ValidateConfig accepted an unsupported runtime KV cache type")
 	}
 }
 
@@ -99,6 +153,15 @@ func TestValidateConfigRejectsInvalidRuntimeHTTPWorkers(t *testing.T) {
 		if err := ValidateConfig(cfg); err == nil {
 			t.Fatalf("ValidateConfig accepted %d runtime HTTP workers", workers)
 		}
+	}
+}
+
+func TestValidateConfigRejectsInvalidRuntimeUBatchSize(t *testing.T) {
+	cfg := NormalizeConfig(DefaultConfigValue())
+	cfg.RuntimeUBatchSize = -1
+
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatal("ValidateConfig accepted a negative runtime micro-batch size")
 	}
 }
 

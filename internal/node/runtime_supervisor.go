@@ -2,7 +2,9 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -14,6 +16,17 @@ import (
 )
 
 const runtimeHealthTimeout = 45 * time.Second
+const maxRuntimeHealthBody = 64 << 10
+
+type runtimeHealth struct {
+	Status             string `json:"status"`
+	Engine             string `json:"engine"`
+	Mode               string `json:"mode"`
+	StageTransport     string `json:"stage_transport"`
+	ActivationEncoding string `json:"activation_encoding"`
+	KVCacheType        string `json:"kv_cache_type"`
+	UBatchSize         int    `json:"ubatch_size"`
+}
 
 type RuntimeSupervisor struct {
 	cmd *exec.Cmd
@@ -22,7 +35,13 @@ type RuntimeSupervisor struct {
 
 func StartRuntimeSupervisor(ctx context.Context, cfg Config) (*RuntimeSupervisor, string, error) {
 	if !cfg.RuntimeAuto() {
-		return nil, cfg.RuntimeURL, nil
+		err := waitForRuntimeHealth(
+			ctx,
+			strings.TrimRight(cfg.RuntimeURL, "/")+"/healthz",
+			runtimeHealthTimeout,
+			cfg,
+		)
+		return nil, cfg.RuntimeURL, err
 	}
 
 	listen, runtimeURL, err := resolveRuntimeListen(cfg.RuntimeListen)
@@ -44,7 +63,7 @@ func StartRuntimeSupervisor(ctx context.Context, cfg Config) (*RuntimeSupervisor
 		URL: runtimeURL,
 	}
 
-	if err := waitForRuntimeHealth(ctx, runtimeURL+"/healthz", runtimeHealthTimeout); err != nil {
+	if err := waitForRuntimeHealth(ctx, runtimeURL+"/healthz", runtimeHealthTimeout, cfg); err != nil {
 		_ = supervisor.Stop(context.Background())
 		return nil, "", err
 	}
@@ -58,10 +77,13 @@ func runtimeArgs(cfg Config, listen string) []string {
 		"--node-name", cfg.NodeName,
 		"--engine", string(cfg.Engine),
 		"--stage-transport", cfg.RuntimeStageTransport,
+		"--activation-encoding", cfg.RuntimeActivationEncoding,
+		"--kv-cache-type", cfg.RuntimeKVCacheType,
 		"--compute-backend", cfg.RuntimeComputeBackend,
 		"--model", cfg.Model,
 		"--model-path", cfg.ModelPath,
 		"--ctx-size", strconv.Itoa(cfg.RuntimeCtxSize),
+		"--ubatch-size", strconv.Itoa(cfg.RuntimeUBatchSize),
 		"--n-gpu-layers", strconv.Itoa(cfg.RuntimeNGPULayers),
 		"--threads", strconv.Itoa(cfg.RuntimeThreads),
 		"--http-workers", strconv.Itoa(cfg.RuntimeHTTPWorkers),
@@ -149,7 +171,12 @@ func runtimeURLFromListen(listen string) string {
 	return "http://" + net.JoinHostPort(host, port)
 }
 
-func waitForRuntimeHealth(ctx context.Context, healthURL string, timeout time.Duration) error {
+func waitForRuntimeHealth(
+	ctx context.Context,
+	healthURL string,
+	timeout time.Duration,
+	cfg Config,
+) error {
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -167,10 +194,18 @@ func waitForRuntimeHealth(ctx context.Context, healthURL string, timeout time.Du
 
 		resp, err := client.Do(req)
 		if err == nil {
-			_ = resp.Body.Close()
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				health, decodeErr := decodeRuntimeHealth(resp.Body)
+				_ = resp.Body.Close()
+				if decodeErr != nil {
+					return fmt.Errorf("decode runtime health at %s: %w", healthURL, decodeErr)
+				}
+				if err := validateRuntimeHealth(health, cfg); err != nil {
+					return fmt.Errorf("runtime compatibility check at %s: %w", healthURL, err)
+				}
 				return nil
 			}
+			_ = resp.Body.Close()
 			lastErr = fmt.Errorf("runtime health returned %s", resp.Status)
 		} else {
 			lastErr = err
@@ -185,4 +220,35 @@ func waitForRuntimeHealth(ctx context.Context, healthURL string, timeout time.Du
 		case <-ticker.C:
 		}
 	}
+}
+
+func decodeRuntimeHealth(reader io.Reader) (runtimeHealth, error) {
+	var health runtimeHealth
+	decoder := json.NewDecoder(io.LimitReader(reader, maxRuntimeHealthBody))
+	if err := decoder.Decode(&health); err != nil {
+		return runtimeHealth{}, err
+	}
+	return health, nil
+}
+
+func validateRuntimeHealth(health runtimeHealth, cfg Config) error {
+	expected := map[string][2]string{
+		"engine":              {health.Engine, string(cfg.Engine)},
+		"mode":                {health.Mode, cfg.RuntimeMode},
+		"stage_transport":     {health.StageTransport, cfg.RuntimeStageTransport},
+		"activation_encoding": {health.ActivationEncoding, cfg.RuntimeActivationEncoding},
+		"kv_cache_type":       {health.KVCacheType, cfg.RuntimeKVCacheType},
+	}
+	for field, values := range expected {
+		if values[0] != values[1] {
+			return fmt.Errorf("%s=%q, want %q", field, values[0], values[1])
+		}
+	}
+	if health.Status != "ok" {
+		return fmt.Errorf("status=%q, want %q", health.Status, "ok")
+	}
+	if health.UBatchSize != cfg.RuntimeUBatchSize {
+		return fmt.Errorf("ubatch_size=%d, want %d", health.UBatchSize, cfg.RuntimeUBatchSize)
+	}
+	return nil
 }

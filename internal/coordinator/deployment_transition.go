@@ -70,6 +70,12 @@ func deploymentPolicy(base clusterplan.Policy, spec deploymentSpec) clusterplan.
 	if spec.StageCount > 0 {
 		policy.StageCount = spec.StageCount
 	}
+	if len(spec.StageLayerCounts) > 0 {
+		policy.StageLayerCounts = append([]int(nil), spec.StageLayerCounts...)
+		if spec.StageCount == 0 {
+			policy.StageCount = len(spec.StageLayerCounts)
+		}
+	}
 	if spec.AllowColocatedStages {
 		policy.AllowColocatedStages = true
 	}
@@ -128,7 +134,7 @@ func (c *DeploymentController) rollbackPreparedPlan(
 	if cleanupErr != nil {
 		cause = fmt.Errorf("%w; rollback cleanup: %v", cause, cleanupErr)
 	}
-	c.state.rollback(cause, healthy)
+	c.state.rollback(plan, cause, healthy, cleanupErr != nil)
 	return cause
 }
 

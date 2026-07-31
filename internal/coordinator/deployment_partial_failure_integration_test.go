@@ -144,6 +144,55 @@ func TestCoordinatorPrepareTimeoutRollsBackToActiveEpoch(t *testing.T) {
 	}
 }
 
+func TestCoordinatorRetriesFailedPreparedEpochCleanup(t *testing.T) {
+	now := time.Date(2026, 7, 21, 5, 50, 0, 0, time.UTC)
+	member := deploymentSwitchMember("http://node-a", now)
+	client := newMultiDeploymentClient()
+	server := NewServer(
+		deploymentSwitchRegistry(),
+		WithMembershipSource(staticMemberSource{members: []membership.Member{member}}, time.Minute),
+		WithClusterPlanPolicy(clusterplan.Policy{StageCount: 1}),
+		WithClock(func() time.Time { return now }),
+		WithDeploymentClient(client),
+	)
+	assertSwitchStatus(
+		t,
+		server,
+		`{"deployment_id":"deployment-a","model":"model-a","stage_count":1}`,
+		http.StatusOK,
+		"model-a",
+		1,
+	)
+
+	client.failActivateURL = member.APIURL
+	client.failUnload = true
+	failed := performSwitch(
+		server,
+		`{"deployment_id":"deployment-b","model":"model-b","stage_count":1}`,
+	)
+	assertErrorCode(t, failed, http.StatusBadGateway, string(errorDeploymentSwitchFailed))
+	status := readDeploymentStatus(t, server)
+	if status.Phase != deploymentPhaseDraining ||
+		status.Active == nil ||
+		status.Active.Epoch != 1 ||
+		len(status.Draining) != 1 ||
+		status.Draining[0].Epoch != 2 {
+		t.Fatalf("failed prepared epoch cleanup was not retained: %+v", status)
+	}
+
+	client.clearFailures()
+	if err := server.Reconcile(context.Background()); err != nil {
+		t.Fatalf("retry failed prepared epoch cleanup: %v", err)
+	}
+	status = readDeploymentStatus(t, server)
+	if status.Phase != deploymentPhaseActive ||
+		status.Active == nil ||
+		status.Active.Epoch != 1 ||
+		len(status.Draining) != 0 {
+		t.Fatalf("failed prepared epoch cleanup did not converge: %+v", status)
+	}
+}
+
 func partialFailureMember(nodeID, hostname, apiURL string, now time.Time) membership.Member {
 	member := deploymentSwitchMember(apiURL, now)
 	member.NodeID = nodeID

@@ -467,6 +467,10 @@ StageResponse decode_stage_response(const std::string& frame) {
     response.prompt_tokens = extract_int(body, "prompt_tokens");
     response.completion_tokens = extract_int(body, "completion_tokens");
     response.latency_ms = extract_int(body, "latency_ms");
+    response.execution_us = extract_int64(body, "execution_us");
+    response.activation_decode_us = extract_int64(body, "activation_decode_us");
+    response.activation_encode_us = extract_int64(body, "activation_encode_us");
+    response.stage_total_us = extract_int64(body, "stage_total_us");
     response.error = extract_string(body, "error");
     response.message = extract_byte_string(body, "message_bytes");
     if (response.message.empty()) {
@@ -525,6 +529,14 @@ std::string encode_stage_response(StageResponse response) {
     if (response.prompt_tokens != 0) body["prompt_tokens"] = response.prompt_tokens;
     if (response.completion_tokens != 0) body["completion_tokens"] = response.completion_tokens;
     if (response.latency_ms != 0) body["latency_ms"] = response.latency_ms;
+    if (response.execution_us != 0) body["execution_us"] = response.execution_us;
+    if (response.activation_decode_us != 0) {
+        body["activation_decode_us"] = response.activation_decode_us;
+    }
+    if (response.activation_encode_us != 0) {
+        body["activation_encode_us"] = response.activation_encode_us;
+    }
+    if (response.stage_total_us != 0) body["stage_total_us"] = response.stage_total_us;
     if (!response.error.empty()) body["error"] = response.error;
     if (!response.message.empty()) {
         if (is_valid_utf8(response.message)) {

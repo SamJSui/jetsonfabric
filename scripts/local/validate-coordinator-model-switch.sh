@@ -22,6 +22,7 @@ NODE_BIN="${NODE_BIN:-$ROOT_DIR/dist/jetsonfabric-node}"
 LLAMA_CPP_COMMIT="${LLAMA_CPP_COMMIT:-unknown}"
 RUNTIME_REVISION="${JF_RUNTIME_REVISION:-milestone-6-ci}"
 RUNTIME_STAGE_TRANSPORT="${JF_RUNTIME_STAGE_TRANSPORT:-http_binary_v1}"
+RUNTIME_ACTIVATION_ENCODING="${JF_RUNTIME_ACTIVATION_ENCODING:-${RUNTIME_ACTIVATION_ENCODING:-f32}}"
 CLUSTER_TOKEN="${JF_CLUSTER_TOKEN:-jetsonfabric-integration-token}"
 WORK_DIR="$(mktemp -d)"
 LOG_DIR="$WORK_DIR/logs"
@@ -152,6 +153,7 @@ start_node() {
     --runtime-listen "127.0.0.1:$runtime_port" \
     --runtime-idle \
     --runtime-stage-transport "$RUNTIME_STAGE_TRANSPORT" \
+    --runtime-activation-encoding "$RUNTIME_ACTIVATION_ENCODING" \
     --runtime-compute-backend cpu \
     --runtime-mode pipeline_parallel \
     --runtime-ctx-size 256 \

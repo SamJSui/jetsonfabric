@@ -85,6 +85,10 @@ struct StageResponse {
     int prompt_tokens = 0;
     int completion_tokens = 0;
     int latency_ms = 0;
+    std::int64_t execution_us = 0;
+    std::int64_t activation_decode_us = 0;
+    std::int64_t activation_encode_us = 0;
+    std::int64_t stage_total_us = 0;
 
     std::string error;
     std::string message;

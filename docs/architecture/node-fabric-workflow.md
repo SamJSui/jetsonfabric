@@ -199,7 +199,8 @@ runtime/
   C++ runtime process; RuntimeService owns HTTP translation, GenerationService
   owns the generation use case, ModelManager owns epoch-keyed residency,
   InferenceEngineFactory selects execution adapters, and StageTransportFactory
-  selects peer-stage transport
+  selects peer-stage transport. ActivationCodecFactory independently selects
+  the conversion between engine-native f32 activations and inter-stage payloads
 ```
 
 ## What stays out of this source repo

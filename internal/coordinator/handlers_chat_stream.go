@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/SamJSui/jetsonfabric/internal/chat"
 	"github.com/SamJSui/jetsonfabric/internal/clusterplan"
 	"github.com/SamJSui/jetsonfabric/internal/runtimebridge"
 )
@@ -16,6 +17,8 @@ type chatCompletionChunk struct {
 	Created int64                       `json:"created"`
 	Model   string                      `json:"model"`
 	Choices []chatCompletionChunkChoice `json:"choices"`
+	Usage   *chat.Usage                 `json:"usage,omitempty"`
+	Trace   *chat.RuntimeTrace          `json:"jetsonfabric,omitempty"`
 }
 
 type chatCompletionChunkChoice struct {
@@ -73,9 +76,11 @@ func (s *Server) streamChatCompletion(w http.ResponseWriter, r *http.Request, re
 			return r.Context().Err()
 		default:
 		}
+		tokenIndex := event.Index
 		return writeChatChunk(w, flusher, chatCompletionChunk{
 			ID: requestID, Object: "chat.completion.chunk", Created: s.now().Unix(), Model: modelID,
 			Choices: []chatCompletionChunkChoice{{Index: 0, Delta: chatCompletionDelta{Content: event.Text}}},
+			Trace:   &chat.RuntimeTrace{TokenIndex: &tokenIndex},
 		})
 	}
 	if first.Type == "token" {
@@ -101,6 +106,12 @@ func (s *Server) streamChatCompletion(w http.ResponseWriter, r *http.Request, re
 	_ = writeChatChunk(w, flusher, chatCompletionChunk{
 		ID: requestID, Object: "chat.completion.chunk", Created: s.now().Unix(), Model: modelID,
 		Choices: []chatCompletionChunkChoice{{Index: 0, FinishReason: &finishReason}},
+		Usage: &chat.Usage{
+			PromptTokens:     result.PromptTokens,
+			CompletionTokens: result.CompletionTokens,
+			TotalTokens:      result.PromptTokens + result.CompletionTokens,
+		},
+		Trace: runtimeTrace(result),
 	})
 	_, _ = io.WriteString(w, "data: [DONE]\n\n")
 	if flusher != nil {

@@ -42,6 +42,13 @@ func TestRunBenchmarkRecordsSuccessfulRequests(t *testing.T) {
 				EngineInstanceID: cluster.DefaultEngineInstanceID,
 				LatencyMS:        3,
 			},
+			Trace: &chat.RuntimeTrace{
+				StageCalls: 1,
+				StageTimings: []chat.StageTiming{{
+					Phase: "decode", StageIndex: 0, NodeName: "desktop-agent-1",
+					Calls: 2, ExecutionUS: 400, StageTotalUS: 500,
+				}},
+			},
 		})
 	}))
 	defer server.Close()
@@ -68,8 +75,60 @@ func TestRunBenchmarkRecordsSuccessfulRequests(t *testing.T) {
 	if summary.OutputTokens != 6 {
 		t.Fatalf("unexpected output tokens: %d", summary.OutputTokens)
 	}
+	if summary.MeanOutputTokens != 2 ||
+		summary.RequestThroughput <= 0 ||
+		summary.OutputThroughput <= 0 ||
+		summary.TokensPerSecond != summary.OutputThroughput {
+		t.Fatalf("unexpected serving throughput: %+v", summary)
+	}
 	if summary.Results[0].Route == nil || summary.Results[0].Route.NodeName != "desktop-agent-1" {
 		t.Fatalf("expected route metadata, got %+v", summary.Results[0])
+	}
+	if summary.Runtime.StageCalls != 3 || len(summary.Runtime.StageTimings) != 1 ||
+		summary.Runtime.StageTimings[0].Calls != 6 ||
+		summary.Runtime.StageTimings[0].Execution.AvgUS != 200 {
+		t.Fatalf("runtime timings were not summarized: %+v", summary.Runtime)
+	}
+}
+
+func TestRunBenchmarkEndpointsDistributesReplicaRequests(t *testing.T) {
+	counts := make([]int, 2)
+	servers := make([]*httptest.Server, 2)
+	for index := range servers {
+		serverIndex := index
+		servers[index] = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			counts[serverIndex]++
+			writeJSON(w, http.StatusOK, chat.CompletionResponse{
+				Model: "model-a",
+				Usage: &chat.Usage{CompletionTokens: 1},
+			})
+		}))
+		defer servers[index].Close()
+	}
+	endpoints := []string{
+		servers[0].URL + api.PathChatCompletions,
+		servers[1].URL + api.PathChatCompletions,
+	}
+	summary, err := runBenchmarkEndpoints(
+		t.Context(),
+		http.DefaultClient,
+		endpoints,
+		benchmarkRequest{Body: []byte(`{"model":"model-a","messages":[{"role":"user","content":"hi"}]}`)},
+		4,
+		2,
+		1,
+		time.Second,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts[0] != 3 || counts[1] != 3 {
+		t.Fatalf("requests were not evenly distributed: %v", counts)
+	}
+	if summary.Endpoint != "" || len(summary.Endpoints) != 2 ||
+		summary.Results[0].Endpoint != endpoints[0] ||
+		summary.Results[1].Endpoint != endpoints[1] {
+		t.Fatalf("replica endpoints were not recorded: %+v", summary)
 	}
 }
 
@@ -102,17 +161,19 @@ func TestEnableStreamingPreservesRequestFields(t *testing.T) {
 	}
 }
 
-func TestConsumeSSEMeasuresFirstContentAndInterTokenLatency(t *testing.T) {
+func TestConsumeSSEMeasuresRuntimeTokensIncludingEmptyText(t *testing.T) {
 	body := strings.NewReader(
 		"data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n" +
-			"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n" +
-			"data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n" +
-			"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n" +
+			"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}],\"jetsonfabric\":{\"token_index\":0}}\n\n" +
+			"data: {\"choices\":[{\"delta\":{}}],\"jetsonfabric\":{\"token_index\":1}}\n\n" +
+			"data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}],\"jetsonfabric\":{\"token_index\":2}}\n\n" +
+			"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}],\"usage\":{\"completion_tokens\":3},\"jetsonfabric\":{\"stage_calls\":3,\"stage_timings\":[{\"phase\":\"decode\",\"stage_index\":0,\"node_name\":\"node-a\",\"calls\":3,\"execution_us\":30,\"stage_total_us\":36}]}}\n\n" +
 			"data: [DONE]\n\n",
 	)
 	startedAt := time.Unix(100, 0)
 	times := []time.Time{
 		startedAt.Add(10 * time.Millisecond),
+		startedAt.Add(17 * time.Millisecond),
 		startedAt.Add(25 * time.Millisecond),
 	}
 	next := 0
@@ -124,15 +185,21 @@ func TestConsumeSSEMeasuresFirstContentAndInterTokenLatency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metrics.TTFTMS != 10 || metrics.OutputTokens != 2 ||
-		len(metrics.InterTokenLatencyMS) != 1 || metrics.InterTokenLatencyMS[0] != 15 {
+	if metrics.TTFTMS != 10 || metrics.OutputTokens != 3 ||
+		len(metrics.InterTokenLatencyMS) != 2 ||
+		metrics.InterTokenLatencyMS[0] != 7 ||
+		metrics.InterTokenLatencyMS[1] != 8 {
 		t.Fatalf("unexpected stream metrics: %+v", metrics)
+	}
+	if metrics.Trace == nil || metrics.Trace.StageCalls != 3 ||
+		len(metrics.Trace.StageTimings) != 1 {
+		t.Fatalf("runtime trace was not captured: %+v", metrics.Trace)
 	}
 }
 
 func TestConsumeSSERetainsPartialMetricsOnStreamError(t *testing.T) {
 	body := strings.NewReader(
-		"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}],\"jetsonfabric\":{\"token_index\":0}}\n\n" +
 			"data: {\"error\":{\"code\":\"runtime_stage_unreachable\",\"message\":\"stage 1 failed\"}}\n\n",
 	)
 	startedAt := time.Unix(100, 0)
@@ -150,7 +217,8 @@ func TestConsumeSSERetainsPartialMetricsOnStreamError(t *testing.T) {
 func TestSummarizeLatenciesUsesNearestRankPercentiles(t *testing.T) {
 	summary := summarizeLatencies([]int64{5, 1, 3, 4, 2})
 	if summary.MinMS != 1 || summary.MaxMS != 5 || summary.AvgMS != 3 ||
-		summary.P50MS != 3 || summary.P95MS != 5 {
+		summary.P50MS != 3 || summary.P90MS != 5 ||
+		summary.P95MS != 5 || summary.P99MS != 5 {
 		t.Fatalf("unexpected latency summary: %+v", summary)
 	}
 }

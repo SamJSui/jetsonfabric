@@ -35,6 +35,7 @@ struct GenerationResult {
     int remote_stage_calls = 0;
     std::int64_t bytes_in = 0;
     std::int64_t bytes_out = 0;
+    std::vector<protocol::GenerationStageTiming> stage_timings;
 };
 
 using StageInvoker = std::function<StageRunResult(

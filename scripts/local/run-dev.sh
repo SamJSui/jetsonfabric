@@ -16,6 +16,8 @@ fi
 MODEL_ID="${MODEL_ID:-${MODEL:-qwen2.5-coder-1.5b-q4}}"
 MODEL_PATH="${MODEL_PATH:?MODEL_PATH must point to a local GGUF file}"
 RUNTIME_COMPUTE_BACKEND="${RUNTIME_COMPUTE_BACKEND:-cuda}"
+RUNTIME_ACTIVATION_ENCODING="${RUNTIME_ACTIVATION_ENCODING:-f32}"
+RUNTIME_KV_CACHE_TYPE="${RUNTIME_KV_CACHE_TYPE:-f16}"
 RUNTIME_BUILD_DIR="${RUNTIME_BUILD_DIR:-runtime/build}"
 RUNTIME_BIN="${RUNTIME_BIN:-dist/jetsonfabric-runtime-worker}"
 NODE_BIN="${NODE_BIN:-dist/jetsonfabric-node}"
@@ -222,9 +224,12 @@ JETSONFABRIC_CLUSTER_TOKEN="$CLUSTER_TOKEN" setsid "$NODE_BIN" \
   --runtime-url auto \
   --runtime-bin "$RUNTIME_BIN" \
   --runtime-listen "127.0.0.1:$RUNTIME_PORT" \
+  --runtime-activation-encoding "$RUNTIME_ACTIVATION_ENCODING" \
+  --runtime-kv-cache-type "$RUNTIME_KV_CACHE_TYPE" \
   --runtime-compute-backend "$RUNTIME_COMPUTE_BACKEND" \
   --runtime-mode pipeline_parallel \
   --runtime-ctx-size "${RUNTIME_CTX_SIZE:-4096}" \
+  --runtime-ubatch-size "${RUNTIME_UBATCH_SIZE:-512}" \
   --runtime-n-gpu-layers "${RUNTIME_N_GPU_LAYERS:-999}" \
   --runtime-threads "${RUNTIME_THREADS:-0}" \
   --runtime-http-workers "${RUNTIME_HTTP_WORKERS:-2}" \

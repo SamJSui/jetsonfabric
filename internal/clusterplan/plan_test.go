@@ -97,6 +97,26 @@ func TestPlanSupportsRequestedStageCount(t *testing.T) {
 	}
 }
 
+func TestPlanUsesConfiguredStageLayerCounts(t *testing.T) {
+	preview := Preview(Request{
+		Model: clusterPlanTestModel(),
+		Members: []membership.Member{
+			clusterPlanTestMember("node-a", "dopey", "dopey", "http://dopey.local:52415"),
+			clusterPlanTestMember("node-b", "grumpy", "grumpy", "http://grumpy.local:52415"),
+		},
+		Now:        clusterPlanTestNow(),
+		StaleAfter: time.Minute,
+		Policy: Policy{
+			StageLayerCounts: []int{18, 10},
+		},
+	})
+	if !preview.Valid || preview.StageCount != 2 {
+		t.Fatalf("expected configured two-stage preview: %+v", preview)
+	}
+	assertRange(t, preview.Stages[0], 0, 18)
+	assertRange(t, preview.Stages[1], 18, 28)
+}
+
 func TestPlanUsesEveryEligibleNodeWhenStageCountIsAutomatic(t *testing.T) {
 	members := make([]membership.Member, 0, 3)
 	for i := 0; i < 3; i++ {

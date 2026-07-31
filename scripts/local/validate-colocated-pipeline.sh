@@ -20,6 +20,7 @@ RUNTIME_COMPUTE_BACKEND="${JF_RUNTIME_COMPUTE_BACKEND:-cpu}"
 RUNTIME_N_GPU_LAYERS="${JF_RUNTIME_N_GPU_LAYERS:-0}"
 RUNTIME_CUDA_ACTIVE="${JF_RUNTIME_CUDA_ACTIVE:-false}"
 RUNTIME_STAGE_TRANSPORT="${JF_RUNTIME_STAGE_TRANSPORT:-http_binary_v1}"
+RUNTIME_ACTIVATION_ENCODING="${JF_RUNTIME_ACTIVATION_ENCODING:-${RUNTIME_ACTIVATION_ENCODING:-f32}}"
 RUNTIME_BUILD_DIR="${RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build}"
 RUNTIME_BIN="${RUNTIME_BIN:-$ROOT_DIR/dist/jetsonfabric-runtime-worker}"
 NODE_BIN="${NODE_BIN:-$ROOT_DIR/dist/jetsonfabric-node}"
@@ -200,6 +201,7 @@ start_node() {
     --runtime-bin "$RUNTIME_BIN" \
     --runtime-listen "127.0.0.1:$runtime_port" \
     --runtime-stage-transport "$RUNTIME_STAGE_TRANSPORT" \
+    --runtime-activation-encoding "$RUNTIME_ACTIVATION_ENCODING" \
     --runtime-compute-backend "$RUNTIME_COMPUTE_BACKEND" \
     "${RUNTIME_CUDA_ACTIVE_ARGS[@]}" \
     --runtime-mode pipeline_parallel \

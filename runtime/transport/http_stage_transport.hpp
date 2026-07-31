@@ -12,6 +12,7 @@ public:
     explicit HTTPStageTransport(std::string cluster_token);
     ~HTTPStageTransport() override;
 
+    void shutdown() const override;
     pipeline_parallel::StageRunResult invoke(
         const protocol::GenerationStage& stage,
         const protocol::StageRequest& request,

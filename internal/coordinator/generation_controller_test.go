@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -85,5 +86,42 @@ func TestGenerationControllerReportsUnknownEngineModel(t *testing.T) {
 	var startError *generationStartError
 	if !errors.As(err, &startError) || startError.kind != generationUnknownModel {
 		t.Fatalf("unexpected unknown-model error: %v", err)
+	}
+}
+
+func TestGenerationControllerIDsRemainUniqueWithFixedClock(t *testing.T) {
+	controller := newGenerationController(
+		coordinatorTestRegistry(),
+		nil,
+		time.Minute,
+		func() time.Time { return coordinatorTestNow() },
+		nil,
+		nil,
+	)
+
+	const count = 256
+	ids := make(chan string, count*2)
+	var workers sync.WaitGroup
+	for range count {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			requestID, sessionID := controller.nextGenerationIDs()
+			ids <- requestID
+			ids <- sessionID
+		}()
+	}
+	workers.Wait()
+	close(ids)
+
+	seen := make(map[string]struct{}, count*2)
+	for id := range ids {
+		if _, exists := seen[id]; exists {
+			t.Fatalf("duplicate generation ID %q", id)
+		}
+		seen[id] = struct{}{}
+	}
+	if len(seen) != count*2 {
+		t.Fatalf("unique generation IDs=%d, want %d", len(seen), count*2)
 	}
 }

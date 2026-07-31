@@ -76,13 +76,17 @@ type Metadata struct {
 
 	MaxTokens int `json:"max_tokens,omitempty"`
 
-	BytesIn          int64  `json:"bytes_in,omitempty"`
-	BytesOut         int64  `json:"bytes_out,omitempty"`
-	PromptTokens     int    `json:"prompt_tokens,omitempty"`
-	CompletionTokens int    `json:"completion_tokens,omitempty"`
-	LatencyMS        int    `json:"latency_ms,omitempty"`
-	Error            string `json:"error,omitempty"`
-	Message          string `json:"message,omitempty"`
+	BytesIn            int64  `json:"bytes_in,omitempty"`
+	BytesOut           int64  `json:"bytes_out,omitempty"`
+	PromptTokens       int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens   int    `json:"completion_tokens,omitempty"`
+	LatencyMS          int    `json:"latency_ms,omitempty"`
+	ExecutionUS        int64  `json:"execution_us,omitempty"`
+	ActivationDecodeUS int64  `json:"activation_decode_us,omitempty"`
+	ActivationEncodeUS int64  `json:"activation_encode_us,omitempty"`
+	StageTotalUS       int64  `json:"stage_total_us,omitempty"`
+	Error              string `json:"error,omitempty"`
+	Message            string `json:"message,omitempty"`
 }
 
 func (m Metadata) Position() inference.StagePosition {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "adapters/llama_cpp_model.hpp"
+#include "protocol/kv_cache_type.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -12,6 +13,8 @@ namespace jetsonfabric::runtime::adapters {
 struct LlamaCppConfig {
     std::string model_path;
     int ctx_size = 4096;
+    int ubatch_size = 512;
+    KVCacheType kv_cache_type = KVCacheType::F16;
     int n_gpu_layers = 999;
     int threads = 0;
 };
@@ -31,7 +34,13 @@ struct GenerateResponse {
 class LlamaCppAdapter final {
 public:
     explicit LlamaCppAdapter(LlamaCppConfig config);
-    LlamaCppAdapter(std::shared_ptr<LlamaCppModel> model, int ctx_size, int threads);
+    LlamaCppAdapter(
+        std::shared_ptr<LlamaCppModel> model,
+        int ctx_size,
+        int threads,
+        KVCacheType kv_cache_type = KVCacheType::F16,
+        int ubatch_size = 512
+    );
     ~LlamaCppAdapter();
 
     LlamaCppAdapter(const LlamaCppAdapter&) = delete;

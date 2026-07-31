@@ -8,6 +8,7 @@ struct HttpResponse {
     std::string status;
     std::string content_type;
     std::string body;
+    bool close_connection = true;
 
     std::string serialize() const;
 };

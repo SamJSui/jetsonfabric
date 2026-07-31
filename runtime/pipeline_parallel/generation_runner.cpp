@@ -135,6 +135,42 @@ std::string validate_response(
     return "";
 }
 
+void record_stage_timing(
+    GenerationResult& result,
+    const protocol::GenerationStage& stage,
+    const StageRunResult& run
+) {
+    protocol::GenerationStageTiming* aggregate = nullptr;
+    for (protocol::GenerationStageTiming& timing : result.stage_timings) {
+        if (timing.phase == run.response.phase && timing.stage_index == stage.stage_index) {
+            aggregate = &timing;
+            break;
+        }
+    }
+    if (aggregate == nullptr) {
+        result.stage_timings.push_back(protocol::GenerationStageTiming{
+            .phase = run.response.phase,
+            .stage_index = stage.stage_index,
+            .node_name = stage.node_name,
+            .remote = stage.stage_index != 0,
+        });
+        aggregate = &result.stage_timings.back();
+    }
+
+    const std::int64_t overhead = run.remote_call_us > run.response.stage_total_us
+        ? run.remote_call_us - run.response.stage_total_us
+        : 0;
+    ++aggregate->calls;
+    aggregate->execution_us += run.response.execution_us;
+    aggregate->activation_decode_us += run.response.activation_decode_us;
+    aggregate->activation_encode_us += run.response.activation_encode_us;
+    aggregate->stage_total_us += run.response.stage_total_us;
+    aggregate->remote_call_us += run.remote_call_us;
+    aggregate->remote_overhead_us += overhead;
+    aggregate->bytes_in += run.response.bytes_in;
+    aggregate->bytes_out += run.response.bytes_out;
+}
+
 struct PassResult {
     bool ok = false;
     GenerationResult error;
@@ -170,6 +206,7 @@ PassResult run_pass(
                 "502 Bad Gateway", "invalid_stage_response", response_error
             ), {}};
         }
+        record_stage_timing(result, stage, stage_result);
         result.prompt_tokens += stage_result.response.prompt_tokens;
         result.completion_tokens += stage_result.response.completion_tokens;
         result.bytes_in += stage_result.response.bytes_in;

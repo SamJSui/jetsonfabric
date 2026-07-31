@@ -84,23 +84,19 @@ func (a *App) configureHTTPServer() error {
 	if err != nil {
 		return err
 	}
-	stageRunner, err := a.stageRunner()
+	stageRunner, err := runtimebridge.NewStageProxy(a.cfg.RuntimeURL)
 	if err != nil {
 		return err
 	}
-	runtimeDeployment, err := a.runtimeDeploymentGateway()
+	runtimeDeployment, err := runtimebridge.NewDeploymentProxy(a.cfg.RuntimeURL)
 	if err != nil {
 		return err
 	}
-	runtimeGeneration, err := a.runtimeGenerationGateway()
+	runtimeGeneration, err := runtimebridge.NewGenerationProxy(a.cfg.RuntimeURL)
 	if err != nil {
 		return err
 	}
-	publicRouter, err := a.publicRouter(coordinatorRouter)
-	if err != nil {
-		return err
-	}
-	a.server = a.httpServer(publicRouter, stageRunner, runtimeDeployment, runtimeGeneration)
+	a.server = a.httpServer(coordinatorRouter, stageRunner, runtimeDeployment, runtimeGeneration)
 	return nil
 }
 
@@ -123,24 +119,6 @@ func (a *App) coordinatorRouter() (http.Handler, error) {
 	)
 	a.coordinatorServer = server
 	return server.Router(), nil
-}
-
-func (a *App) stageRunner() (http.Handler, error) {
-	return runtimebridge.NewStageProxy(a.cfg.RuntimeURL)
-}
-
-func (a *App) runtimeDeploymentGateway() (http.Handler, error) {
-	return runtimebridge.NewDeploymentProxy(a.cfg.RuntimeURL)
-}
-
-func (a *App) runtimeGenerationGateway() (http.Handler, error) {
-	return runtimebridge.NewGenerationProxy(a.cfg.RuntimeURL)
-}
-
-func (a *App) publicRouter(coordinatorRouter http.Handler) (http.Handler, error) {
-	// All public APIs, including /v1/chat/completions, are coordinator-owned.
-	// Followers proxy them to the elected leader through the facade router.
-	return coordinatorRouter, nil
 }
 
 func (a *App) configureDiscovery() {

@@ -3,6 +3,8 @@
 This page describes the current implementation. Current and target diagrams,
 plus physical-hardware acceptance work, are documented in
 [Architecture diagrams](architecture-diagrams.md) and the repository roadmap.
+For a source-by-source ownership map, see the
+[codebase catalog](architecture/codebase-catalog.md).
 
 ## Product shape
 
@@ -163,7 +165,8 @@ Topology describes physical placement:
 - Safe rebalance needs temporary memory for old and new partitions on reused
   nodes; insufficient overlap capacity causes rollback to the old epoch.
 - Reconciliation state is not replicated across coordinator failover yet.
-- Inter-stage activations are F32.
+- Inter-stage activation encoding is limited to F32 and F16; integer
+  quantization and adaptive per-link encoding are not implemented.
 - Runtime peer calls reuse one ordered HTTP/1.1 connection per node facade;
   request multiplexing and overlapped microbatches are not implemented.
 - Runtime HTTP serving uses a bounded worker pool, while each stage adapter

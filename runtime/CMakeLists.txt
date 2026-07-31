@@ -52,6 +52,18 @@ if(JF_LLAMA_RESIDENCY_API EQUAL -1)
   )
 endif()
 
+file(READ "${JF_LLAMA_CPP_SOURCE_DIR}/src/llama-model.cpp" JF_LLAMA_MODEL_SOURCE)
+string(FIND
+  "${JF_LLAMA_MODEL_SOURCE}"
+  "architecture_filter = std::move(architecture_filter)"
+  JF_LLAMA_STAGE_KV_FILTER
+)
+if(JF_LLAMA_STAGE_KV_FILTER EQUAL -1)
+  message(FATAL_ERROR
+    "llama.cpp checkout is missing the JetsonFabric stage-local KV patch; run runtime/patches/apply-llama-cpp-patches.sh"
+  )
+endif()
+
 include(FetchContent)
 
 set(JSON_BuildTests OFF CACHE INTERNAL "")
@@ -91,6 +103,9 @@ endif()
 set(JF_RUNTIME_SOURCES
   worker/main.cpp
   worker/config.cpp
+
+  activation/activation_codec_factory.cpp
+  activation/builtin_activation_codecs.cpp
 
   api/http_response.cpp
   api/http_server.cpp
@@ -170,6 +185,8 @@ if(BUILD_TESTING)
   )
 
   add_executable(jetsonfabric-model-manager-test
+    activation/activation_codec_factory.cpp
+    activation/builtin_activation_codecs.cpp
     inference/stage.cpp
     deployment/model_manager.cpp
     engine/inference_engine_factory.cpp
@@ -191,6 +208,8 @@ if(BUILD_TESTING)
   )
 
   add_executable(jetsonfabric-deployment-lifecycle-test
+    activation/activation_codec_factory.cpp
+    activation/builtin_activation_codecs.cpp
     inference/stage.cpp
     deployment/model_manager.cpp
     engine/inference_engine_factory.cpp
@@ -251,6 +270,22 @@ if(BUILD_TESTING)
   add_test(
     NAME http-media-type
     COMMAND jetsonfabric-http-media-type-test
+  )
+
+  add_executable(jetsonfabric-kv-cache-type-test
+    protocol/kv_cache_type_test.cpp
+  )
+  target_include_directories(jetsonfabric-kv-cache-type-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-kv-cache-type-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME kv-cache-type
+    COMMAND jetsonfabric-kv-cache-type-test
   )
 
   add_executable(jetsonfabric-http-server-test
@@ -347,6 +382,8 @@ if(BUILD_TESTING)
   )
 
   add_executable(jetsonfabric-generation-service-test
+    activation/activation_codec_factory.cpp
+    activation/builtin_activation_codecs.cpp
     inference/stage.cpp
     deployment/model_manager.cpp
     engine/inference_engine_factory.cpp
@@ -370,6 +407,46 @@ if(BUILD_TESTING)
     COMMAND jetsonfabric-generation-service-test
   )
 
+  add_executable(jetsonfabric-activation-codec-test
+    activation/activation_codec_factory.cpp
+    activation/builtin_activation_codecs.cpp
+    inference/stage.cpp
+    activation/activation_codec_test.cpp
+  )
+  target_include_directories(jetsonfabric-activation-codec-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-activation-codec-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME activation-codec
+    COMMAND jetsonfabric-activation-codec-test
+  )
+
+  add_executable(jetsonfabric-stage-worker-codec-test
+    activation/activation_codec_factory.cpp
+    activation/builtin_activation_codecs.cpp
+    inference/stage.cpp
+    pipeline_parallel/stage_assignment.cpp
+    pipeline_parallel/stage_worker.cpp
+    pipeline_parallel/stage_worker_codec_test.cpp
+  )
+  target_include_directories(jetsonfabric-stage-worker-codec-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-stage-worker-codec-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME stage-worker-codec
+    COMMAND jetsonfabric-stage-worker-codec-test
+  )
+
   add_test(
     NAME runtime-rejects-unknown-engine
     COMMAND ${CMAKE_COMMAND}
@@ -387,6 +464,36 @@ if(BUILD_TESTING)
       -DOPTION=--stage-transport
       -DVALUE=missing-transport
       "-DEXPECTED=unsupported stage transport: missing-transport"
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/worker/startup_rejection_test.cmake
+  )
+
+  add_test(
+    NAME runtime-rejects-unknown-activation-encoding
+    COMMAND ${CMAKE_COMMAND}
+      -DRUNTIME_BIN=$<TARGET_FILE:jetsonfabric-runtime-worker>
+      -DOPTION=--activation-encoding
+      -DVALUE=missing-encoding
+      "-DEXPECTED=unsupported activation encoding: missing-encoding"
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/worker/startup_rejection_test.cmake
+  )
+
+  add_test(
+    NAME runtime-rejects-unknown-kv-cache-type
+    COMMAND ${CMAKE_COMMAND}
+      -DRUNTIME_BIN=$<TARGET_FILE:jetsonfabric-runtime-worker>
+      -DOPTION=--kv-cache-type
+      -DVALUE=missing-kv-cache-type
+      "-DEXPECTED=unknown KV cache type: missing-kv-cache-type"
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/worker/startup_rejection_test.cmake
+  )
+
+  add_test(
+    NAME runtime-rejects-invalid-ubatch-size
+    COMMAND ${CMAKE_COMMAND}
+      -DRUNTIME_BIN=$<TARGET_FILE:jetsonfabric-runtime-worker>
+      -DOPTION=--ubatch-size
+      -DVALUE=0
+      "-DEXPECTED=--ubatch-size must be greater than zero"
       -P ${CMAKE_CURRENT_SOURCE_DIR}/worker/startup_rejection_test.cmake
   )
 

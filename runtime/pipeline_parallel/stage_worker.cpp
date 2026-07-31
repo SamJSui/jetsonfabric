@@ -5,6 +5,7 @@
 #include <chrono>
 #include <exception>
 #include <sstream>
+#include <stdexcept>
 #include <utility>
 
 namespace jetsonfabric::runtime::pipeline_parallel {
@@ -27,10 +28,21 @@ StageRunResult bad_request(const std::string& code, const std::string& message) 
     return error_result("400 Bad Request", code, message);
 }
 
-int elapsed_ms(std::chrono::steady_clock::time_point start) {
+std::int64_t elapsed_us(std::chrono::steady_clock::time_point start) {
     const auto elapsed = std::chrono::steady_clock::now() - start;
-    return static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count());
+    return std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
 }
+
+int elapsed_ms(std::int64_t elapsed_microseconds) {
+    return static_cast<int>(elapsed_microseconds / 1000);
+}
+
+struct StageTimings {
+    std::int64_t execution_us = 0;
+    std::int64_t activation_decode_us = 0;
+    std::int64_t activation_encode_us = 0;
+    std::int64_t stage_total_us = 0;
+};
 
 inference::Payload to_inference_payload(const protocol::StageRequest& request) {
     return inference::Payload{
@@ -87,7 +99,7 @@ protocol::StageResponse base_response(const protocol::StageRequest& request) {
 protocol::StageResponse to_stage_response(
     const protocol::StageRequest& request,
     const inference::StageOutput& output,
-    int latency_ms
+    const StageTimings& timings
 ) {
     protocol::StageResponse response = base_response(request);
     response.payload_kind = inference::to_string(output.payload.kind);
@@ -101,7 +113,11 @@ protocol::StageResponse to_stage_response(
     response.bytes_out = static_cast<std::int64_t>(response.payload.size());
     response.prompt_tokens = output.prompt_tokens;
     response.completion_tokens = output.completion_tokens;
-    response.latency_ms = latency_ms;
+    response.latency_ms = elapsed_ms(timings.execution_us);
+    response.execution_us = timings.execution_us;
+    response.activation_decode_us = timings.activation_decode_us;
+    response.activation_encode_us = timings.activation_encode_us;
+    response.stage_total_us = timings.stage_total_us;
     response.message = output.token_text;
     return response;
 }
@@ -121,12 +137,18 @@ StageWorker::StageWorker(
     std::string node_name,
     std::string model_id,
     StageAssignment assignment,
-    const LayerExecutor& layer_executor
+    const LayerExecutor& layer_executor,
+    std::shared_ptr<const activation::ActivationCodec> activation_codec
 )
     : node_name_(std::move(node_name)),
       model_id_(std::move(model_id)),
       assignment_(assignment),
-      layer_executor_(layer_executor) {}
+      layer_executor_(layer_executor),
+      activation_codec_(std::move(activation_codec)) {
+    if (!activation_codec_) {
+        throw std::invalid_argument("stage worker requires an activation codec");
+    }
+}
 
 StageRunResult StageWorker::run(const protocol::StageRequest& request) const {
     const std::string assignment_error = validate_stage_assignment(assignment_);
@@ -139,6 +161,8 @@ StageRunResult StageWorker::run(const protocol::StageRequest& request) const {
         return bad_request("invalid_stage_request", request_error);
     }
 
+    const auto stage_start = std::chrono::steady_clock::now();
+    StageTimings timings;
     inference::StageInput input;
     try {
         input = to_stage_input(request);
@@ -146,14 +170,28 @@ StageRunResult StageWorker::run(const protocol::StageRequest& request) const {
         return bad_request("invalid_stage_input", error.what());
     }
 
+    const std::string wire_payload_error = inference::validate_payload(input.payload);
+    if (!wire_payload_error.empty()) {
+        return bad_request("invalid_stage_input", wire_payload_error);
+    }
+    if (input.payload.kind == inference::PayloadKind::Activation) {
+        const auto decode_start = std::chrono::steady_clock::now();
+        try {
+            input.payload = activation_codec_->decode(std::move(input.payload));
+        } catch (const std::exception& error) {
+            return bad_request("activation_decode_failed", error.what());
+        }
+        timings.activation_decode_us = elapsed_us(decode_start);
+    }
+
     const std::string input_error = inference::validate_stage_input(input);
     if (!input_error.empty()) {
         return bad_request("invalid_stage_input", input_error);
     }
 
-    const auto start = std::chrono::steady_clock::now();
-    const inference::ExecutionResult execution = layer_executor_.execute(input);
-    const int latency = elapsed_ms(start);
+    const auto execution_start = std::chrono::steady_clock::now();
+    inference::ExecutionResult execution = layer_executor_.execute(input);
+    timings.execution_us = elapsed_us(execution_start);
     if (!execution.ok) {
         const std::string status = execution.error.kind == inference::ErrorKind::InvalidInput
             ? "400 Bad Request"
@@ -166,10 +204,35 @@ StageRunResult StageWorker::run(const protocol::StageRequest& request) const {
         return error_result("502 Bad Gateway", "invalid_stage_output", output_error);
     }
 
+    if (execution.output.payload.kind == inference::PayloadKind::Activation) {
+        const auto encode_start = std::chrono::steady_clock::now();
+        try {
+            execution.output.payload =
+                activation_codec_->encode(std::move(execution.output.payload));
+        } catch (const std::exception& error) {
+            return error_result(
+                "502 Bad Gateway",
+                "activation_encode_failed",
+                error.what()
+            );
+        }
+        timings.activation_encode_us = elapsed_us(encode_start);
+        const std::string encoded_output_error =
+            inference::validate_payload(execution.output.payload);
+        if (!encoded_output_error.empty()) {
+            return error_result(
+                "502 Bad Gateway",
+                "invalid_stage_output",
+                encoded_output_error
+            );
+        }
+    }
+
     StageRunResult result;
     result.ok = true;
     result.status = "200 OK";
-    result.response = to_stage_response(request, execution.output, latency);
+    timings.stage_total_us = elapsed_us(stage_start);
+    result.response = to_stage_response(request, execution.output, timings);
     return result;
 }
 
@@ -193,7 +256,7 @@ StageRunResult StageWorker::close_session(const protocol::StageRequest& request)
     StageRunResult result;
     result.ok = true;
     result.status = "200 OK";
-    result.response = close_response(request, elapsed_ms(start));
+    result.response = close_response(request, elapsed_ms(elapsed_us(start)));
     return result;
 }
 

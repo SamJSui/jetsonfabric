@@ -14,6 +14,10 @@ namespace jetsonfabric::runtime::adapters {
 namespace {
 
 void free_context(llama_context* context) {
+    if (context == nullptr) {
+        return;
+    }
+    llama_synchronize(context);
     llama_free(context);
 }
 
@@ -24,13 +28,36 @@ void free_sampler(llama_sampler* sampler) {
 using ContextPtr = std::unique_ptr<llama_context, decltype(&free_context)>;
 using SamplerPtr = std::unique_ptr<llama_sampler, decltype(&free_sampler)>;
 
+ggml_type llama_kv_cache_type(KVCacheType type) {
+    switch (type) {
+    case KVCacheType::F16:
+        return GGML_TYPE_F16;
+    case KVCacheType::Q8_0:
+        return GGML_TYPE_Q8_0;
+    }
+    return GGML_TYPE_F16;
+}
+
 } // namespace
 
 struct LlamaCppAdapter::Impl {
-    Impl(std::shared_ptr<LlamaCppModel> model_in, int ctx_size_in, int threads_in)
-        : model(std::move(model_in)), ctx_size(ctx_size_in), threads(threads_in) {
+    Impl(
+        std::shared_ptr<LlamaCppModel> model_in,
+        int ctx_size_in,
+        int threads_in,
+        KVCacheType kv_cache_type_in,
+        int ubatch_size_in
+    )
+        : model(std::move(model_in)),
+          ctx_size(ctx_size_in),
+          threads(threads_in),
+          kv_cache_type(kv_cache_type_in),
+          ubatch_size(ubatch_size_in) {
         if (!model) {
             throw std::invalid_argument("llama.cpp model is required");
+        }
+        if (ubatch_size <= 0) {
+            throw std::invalid_argument("llama.cpp micro-batch size must be greater than zero");
         }
     }
 
@@ -52,7 +79,14 @@ struct LlamaCppAdapter::Impl {
         llama_context_params params = llama_context_default_params();
         params.n_ctx = static_cast<std::uint32_t>(std::max(ctx_size, required));
         params.n_batch = static_cast<std::uint32_t>(std::max<int>(1, prompt_tokens.size()));
+        params.n_ubatch = std::min(
+            params.n_batch,
+            static_cast<std::uint32_t>(ubatch_size)
+        );
+        params.n_outputs_max = 1;
         params.no_perf = true;
+        params.type_k = llama_kv_cache_type(kv_cache_type);
+        params.type_v = llama_kv_cache_type(kv_cache_type);
         if (threads > 0) {
             params.n_threads = threads;
             params.n_threads_batch = threads;
@@ -104,6 +138,8 @@ struct LlamaCppAdapter::Impl {
     std::shared_ptr<LlamaCppModel> model;
     int ctx_size = 4096;
     int threads = 0;
+    KVCacheType kv_cache_type = KVCacheType::F16;
+    int ubatch_size = 512;
     std::mutex mutex;
 };
 
@@ -114,10 +150,24 @@ LlamaCppAdapter::LlamaCppAdapter(LlamaCppConfig config)
               .n_gpu_layers = config.n_gpu_layers,
           }),
           config.ctx_size,
-          config.threads) {}
+          config.threads,
+          config.kv_cache_type,
+          config.ubatch_size) {}
 
-LlamaCppAdapter::LlamaCppAdapter(std::shared_ptr<LlamaCppModel> model, int ctx_size, int threads)
-    : impl_(std::make_unique<Impl>(std::move(model), ctx_size, threads)) {}
+LlamaCppAdapter::LlamaCppAdapter(
+    std::shared_ptr<LlamaCppModel> model,
+    int ctx_size,
+    int threads,
+    KVCacheType kv_cache_type,
+    int ubatch_size
+)
+    : impl_(std::make_unique<Impl>(
+          std::move(model),
+          ctx_size,
+          threads,
+          kv_cache_type,
+          ubatch_size
+      )) {}
 
 LlamaCppAdapter::~LlamaCppAdapter() = default;
 

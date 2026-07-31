@@ -31,6 +31,22 @@ struct GenerationRequest {
     std::vector<GenerationStage> stages;
 };
 
+struct GenerationStageTiming {
+    std::string phase;
+    int stage_index = 0;
+    std::string node_name;
+    bool remote = false;
+    int calls = 0;
+    std::int64_t execution_us = 0;
+    std::int64_t activation_decode_us = 0;
+    std::int64_t activation_encode_us = 0;
+    std::int64_t stage_total_us = 0;
+    std::int64_t remote_call_us = 0;
+    std::int64_t remote_overhead_us = 0;
+    std::int64_t bytes_in = 0;
+    std::int64_t bytes_out = 0;
+};
+
 GenerationRequest decode_generation_request(const std::string& body);
 std::string encode_generation_token_event(
     std::uint32_t token,
@@ -45,7 +61,8 @@ std::string encode_generation_done_event(
     int stage_calls,
     int remote_stage_calls,
     std::int64_t bytes_in,
-    std::int64_t bytes_out
+    std::int64_t bytes_out,
+    const std::vector<GenerationStageTiming>& stage_timings
 );
 std::string encode_generation_error_event(const std::string& code, const std::string& message);
 

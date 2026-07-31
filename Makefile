@@ -46,9 +46,12 @@ JETSONFABRIC_CLUSTER_TOKEN ?= jetsonfabric-local-dev-token
 RUNTIME_LISTEN ?= 127.0.0.1:0
 RUNTIME_ENGINE ?= llama.cpp
 RUNTIME_STAGE_TRANSPORT ?= http_binary_v1
+RUNTIME_ACTIVATION_ENCODING ?= f32
+RUNTIME_KV_CACHE_TYPE ?= f16
 RUNTIME_COMPUTE_BACKEND ?= cuda
 RUNTIME_MODE ?= pipeline_parallel
 RUNTIME_CTX_SIZE ?= 4096
+RUNTIME_UBATCH_SIZE ?= 512
 RUNTIME_N_GPU_LAYERS ?= 999
 RUNTIME_THREADS ?= 0
 RUNTIME_HTTP_WORKERS ?= 2
@@ -73,7 +76,12 @@ DEV_MAX_TOKENS ?= 16
 BENCH_URL ?= http://127.0.0.1:52415/v1/chat/completions
 BENCH_REQUEST ?= examples/chat-request.json
 BENCH_COUNT ?= 1
+BENCH_WARMUP ?= 0
 BENCH_CONCURRENCY ?= 1
+BENCH_URLS ?=
+BENCH_MANIFEST ?=
+BENCH_OUTPUT ?=
+BENCH_STREAM ?= false
 
 .PHONY: help
 help:
@@ -100,10 +108,14 @@ help:
 	@printf '  make kill                        Alias for make dev-kill\n\n'
 	@printf 'Developer tools:\n'
 	@printf '  make bench                       Run benchmark client against node API\n'
+	@printf '  make bench BENCH_MANIFEST=...    Run a reproducible benchmark suite\n'
 	@printf '  make clean                       Remove generated build artifacts\n\n'
 	@printf 'Common knobs:\n'
 	@printf '  MODEL_PATH=models/model.gguf\n'
 	@printf '  RUNTIME_STAGE_TRANSPORT=http_binary_v1\n'
+	@printf '  RUNTIME_ACTIVATION_ENCODING=f32  Use f16 to halve inter-stage payload bytes\n'
+	@printf '  RUNTIME_KV_CACHE_TYPE=f16        Use q8_0 to halve llama.cpp KV cache bytes\n'
+	@printf '  RUNTIME_UBATCH_SIZE=512          Bound llama.cpp physical prefill micro-batches\n'
 	@printf '  RUNTIME_BUILD_JOBS=1             Safer on Jetson; try 2 or 4 if memory allows\n'
 	@printf '  RUNTIME_CUDA_ARCH=87             Jetson Orin default\n'
 	@printf '  JF_NODE0_PORT=19180              Fixed local node port\n'
@@ -143,6 +155,7 @@ test-integration-pipeline:
 	JF_NODE1_PORT="$(JF_NODE1_PORT)" \
 	JF_RUNTIME0_PORT="$(JF_RUNTIME0_PORT)" \
 	JF_RUNTIME1_PORT="$(JF_RUNTIME1_PORT)" \
+	JF_RUNTIME_ACTIVATION_ENCODING="$(RUNTIME_ACTIVATION_ENCODING)" \
 	JF_EXPECTED_TOKENS="$(JF_EXPECTED_TOKENS)" \
 	bash scripts/local/validate-colocated-pipeline.sh
 
@@ -217,9 +230,12 @@ run-node:
 		--runtime-bin "$(RUNTIME_BIN)" \
 		--runtime-listen "$(RUNTIME_LISTEN)" \
 		--runtime-stage-transport "$(RUNTIME_STAGE_TRANSPORT)" \
+		--runtime-activation-encoding "$(RUNTIME_ACTIVATION_ENCODING)" \
+		--runtime-kv-cache-type "$(RUNTIME_KV_CACHE_TYPE)" \
 		--runtime-compute-backend "$(RUNTIME_COMPUTE_BACKEND)" \
 		--runtime-mode "$(RUNTIME_MODE)" \
 		--runtime-ctx-size "$(RUNTIME_CTX_SIZE)" \
+		--runtime-ubatch-size "$(RUNTIME_UBATCH_SIZE)" \
 		--runtime-n-gpu-layers "$(RUNTIME_N_GPU_LAYERS)" \
 		--runtime-threads "$(RUNTIME_THREADS)" \
 		--runtime-http-workers "$(RUNTIME_HTTP_WORKERS)" \
@@ -259,10 +275,13 @@ run-runtime:
 		--node-name "$(NODE_NAME)" \
 		--engine "$(RUNTIME_ENGINE)" \
 		--stage-transport "$(RUNTIME_STAGE_TRANSPORT)" \
+		--activation-encoding "$(RUNTIME_ACTIVATION_ENCODING)" \
+		--kv-cache-type "$(RUNTIME_KV_CACHE_TYPE)" \
 		--compute-backend "$(RUNTIME_COMPUTE_BACKEND)" \
 		--model "$(MODEL)" \
 		--model-path "$(MODEL_PATH)" \
 		--ctx-size "$(RUNTIME_CTX_SIZE)" \
+		--ubatch-size "$(RUNTIME_UBATCH_SIZE)" \
 		--n-gpu-layers "$(RUNTIME_N_GPU_LAYERS)" \
 		--threads "$(RUNTIME_THREADS)" \
 		--http-workers "$(RUNTIME_HTTP_WORKERS)" \
@@ -282,9 +301,12 @@ dev-up:
 	RUNTIME_CUDA_ARCH="$(RUNTIME_CUDA_ARCH)" \
 	CUDA_NVCC="$(CUDA_NVCC)" \
 	RUNTIME_BIN="$(RUNTIME_BIN)" \
+	RUNTIME_ACTIVATION_ENCODING="$(RUNTIME_ACTIVATION_ENCODING)" \
+	RUNTIME_KV_CACHE_TYPE="$(RUNTIME_KV_CACHE_TYPE)" \
 	NODE_BIN="$(NODE_BIN)" \
 	RUNTIME_COMPUTE_BACKEND="$(RUNTIME_COMPUTE_BACKEND)" \
 	RUNTIME_CTX_SIZE="$(RUNTIME_CTX_SIZE)" \
+	RUNTIME_UBATCH_SIZE="$(RUNTIME_UBATCH_SIZE)" \
 	RUNTIME_N_GPU_LAYERS="$(RUNTIME_N_GPU_LAYERS)" \
 	RUNTIME_THREADS="$(RUNTIME_THREADS)" \
 	RUNTIME_HTTP_WORKERS="$(RUNTIME_HTTP_WORKERS)" \
@@ -336,10 +358,15 @@ dev-chat:
 .PHONY: bench
 bench:
 	$(GO) run ./tools/bench \
-		--url $(BENCH_URL) \
-		--request $(BENCH_REQUEST) \
-		--count $(BENCH_COUNT) \
-		--concurrency $(BENCH_CONCURRENCY)
+		--url "$(BENCH_URL)" \
+		--urls "$(BENCH_URLS)" \
+		--request "$(BENCH_REQUEST)" \
+		--count "$(BENCH_COUNT)" \
+		--warmup "$(BENCH_WARMUP)" \
+		--concurrency "$(BENCH_CONCURRENCY)" \
+		--stream="$(BENCH_STREAM)" \
+		--manifest "$(BENCH_MANIFEST)" \
+		--output "$(BENCH_OUTPUT)"
 
 .PHONY: clean
 clean:

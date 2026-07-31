@@ -2,6 +2,7 @@
 
 #include "pipeline_parallel/stage_assignment.hpp"
 #include "protocol/execution_mode.hpp"
+#include "protocol/kv_cache_type.hpp"
 
 #include <string>
 
@@ -17,9 +18,12 @@ struct Config {
 
     std::string engine = "llama.cpp";
     std::string stage_transport = "http_binary_v1";
+    std::string activation_encoding = "f32";
     std::string compute_backend = "cuda";
     std::string model_path;
     int ctx_size = 4096;
+    int ubatch_size = 512;
+    KVCacheType kv_cache_type = KVCacheType::F16;
     int n_gpu_layers = 999;
     int threads = 0;
     int http_workers = 2;

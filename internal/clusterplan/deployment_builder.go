@@ -13,12 +13,14 @@ import (
 // DeploymentCompatibility records the runtime facts that were required to
 // agree before a deployment plan was accepted.
 type DeploymentCompatibility struct {
-	Architecture     string                 `json:"architecture"`
-	RuntimeRevision  string                 `json:"runtime_revision"`
-	LlamaCPPRevision string                 `json:"llama_cpp_revision,omitempty"`
-	StageTransport   string                 `json:"stage_transport"`
-	ComputeBackend   cluster.ComputeBackend `json:"compute_backend,omitempty"`
-	CUDAActive       bool                   `json:"cuda_active"`
+	Architecture       string                 `json:"architecture"`
+	RuntimeRevision    string                 `json:"runtime_revision"`
+	LlamaCPPRevision   string                 `json:"llama_cpp_revision,omitempty"`
+	StageTransport     string                 `json:"stage_transport"`
+	ActivationEncoding string                 `json:"activation_encoding"`
+	KVCacheType        string                 `json:"kv_cache_type"`
+	ComputeBackend     cluster.ComputeBackend `json:"compute_backend,omitempty"`
+	CUDAActive         bool                   `json:"cuda_active"`
 }
 
 type DeploymentBuildRequest struct {
@@ -97,12 +99,14 @@ func BuildDeploymentPlan(req DeploymentBuildRequest) (DeploymentBuildResult, err
 	plan, err := NewDeploymentPlan(DeploymentPlanSpec{
 		Identity: req.Identity,
 		Model: DeploymentModelIdentity{
-			ModelID:        model.ID,
-			ModelSHA256:    model.ArtifactSHA256,
-			Engine:         engine,
-			ExecutionMode:  cluster.ExecutionModePipelineParallel,
-			StageTransport: compatibility.StageTransport,
-			LayerCount:     model.LayerCount,
+			ModelID:            model.ID,
+			ModelSHA256:        model.ArtifactSHA256,
+			Engine:             engine,
+			ExecutionMode:      cluster.ExecutionModePipelineParallel,
+			StageTransport:     compatibility.StageTransport,
+			ActivationEncoding: compatibility.ActivationEncoding,
+			KVCacheType:        compatibility.KVCacheType,
+			LayerCount:         model.LayerCount,
 		},
 		Stages: preview.Stages,
 	})
@@ -128,8 +132,8 @@ func selectDeploymentEngine(model cluster.ModelProfile) (cluster.Engine, error) 
 }
 
 func requiredDeploymentStages(policy Policy) int {
-	if policy.StageCount > 0 {
-		return policy.StageCount
+	if stageCount := policyStageCount(policy); stageCount > 0 {
+		return stageCount
 	}
 	return 1
 }
@@ -183,7 +187,7 @@ func compatibleDeploymentMembers(
 	}
 	if selected == nil {
 		return nil, DeploymentCompatibility{}, fmt.Errorf(
-			"need %d fresh runtimes with matching architecture, runtime revision, engine revision, stage transport, execution mode, and compute compatibility",
+			"need %d fresh runtimes with matching architecture, runtime revision, engine revision, stage transport, activation encoding, KV cache type, execution mode, and compute compatibility",
 			requiredStages,
 		)
 	}
@@ -199,8 +203,11 @@ func memberDeploymentCompatibility(
 	runtimeRevision := capabilityText(member.Capabilities, cluster.CapabilityRuntimeRevision)
 	llamaRevision := capabilityText(member.Capabilities, cluster.CapabilityRuntimeLlamaCPPRevision)
 	stageTransport := capabilityText(member.Capabilities, cluster.CapabilityRuntimeStageTransport)
+	activationEncoding := capabilityText(member.Capabilities, cluster.CapabilityRuntimeActivationEncoding)
+	kvCacheType := capabilityText(member.Capabilities, cluster.CapabilityRuntimeKVCacheType)
 	backend := cluster.ComputeBackend(capabilityText(member.Capabilities, cluster.CapabilityRuntimeComputeBackend))
-	if architecture == "" || runtimeRevision == "" || stageTransport == "" {
+	if architecture == "" || runtimeRevision == "" || stageTransport == "" ||
+		activationEncoding == "" || kvCacheType == "" {
 		return DeploymentCompatibility{}, false
 	}
 	if cluster.Engine(capabilityText(member.Capabilities, cluster.CapabilityRuntimeEngine)) != engine {
@@ -229,12 +236,14 @@ func memberDeploymentCompatibility(
 		}
 	}
 	return DeploymentCompatibility{
-		Architecture:     architecture,
-		RuntimeRevision:  runtimeRevision,
-		LlamaCPPRevision: llamaRevision,
-		StageTransport:   stageTransport,
-		ComputeBackend:   backend,
-		CUDAActive:       cudaActive,
+		Architecture:       architecture,
+		RuntimeRevision:    runtimeRevision,
+		LlamaCPPRevision:   llamaRevision,
+		StageTransport:     stageTransport,
+		ActivationEncoding: activationEncoding,
+		KVCacheType:        kvCacheType,
+		ComputeBackend:     backend,
+		CUDAActive:         cudaActive,
 	}, true
 }
 
@@ -250,6 +259,8 @@ func compatibilityKey(value DeploymentCompatibility, includeBackend bool) string
 		value.RuntimeRevision,
 		value.LlamaCPPRevision,
 		value.StageTransport,
+		value.ActivationEncoding,
+		value.KVCacheType,
 		backend,
 		cuda,
 	}, "|")

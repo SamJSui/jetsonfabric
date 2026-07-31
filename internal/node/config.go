@@ -19,19 +19,22 @@ const (
 	DefaultLeaderPreference  = 0
 	ClusterTokenEnv          = "JETSONFABRIC_CLUSTER_TOKEN"
 
-	AutoRuntimeURL                 = "auto"
-	DefaultRuntimeBin              = "dist/jetsonfabric-runtime-worker"
-	DefaultRuntimeListen           = "127.0.0.1:0"
-	DefaultRuntimeStageTransport   = cluster.StageTransportHTTPBinaryV1
-	DefaultRuntimeComputeBackend   = "cuda"
-	DefaultRuntimeMode             = "pipeline_parallel"
-	DefaultRuntimeCtxSize          = 4096
-	DefaultRuntimeNGPULayers       = 999
-	DefaultRuntimeThreads          = 0
-	DefaultRuntimeHTTPWorkers      = 2
-	MaxRuntimeHTTPWorkers          = 64
-	DefaultRuntimeRevision         = "dev"
-	DefaultRuntimeLlamaCPPRevision = "dev"
+	AutoRuntimeURL                   = "auto"
+	DefaultRuntimeBin                = "dist/jetsonfabric-runtime-worker"
+	DefaultRuntimeListen             = "127.0.0.1:0"
+	DefaultRuntimeStageTransport     = cluster.StageTransportHTTPBinaryV1
+	DefaultRuntimeActivationEncoding = cluster.ActivationEncodingF32
+	DefaultRuntimeKVCacheType        = cluster.KVCacheTypeF16
+	DefaultRuntimeComputeBackend     = "cuda"
+	DefaultRuntimeMode               = "pipeline_parallel"
+	DefaultRuntimeCtxSize            = 4096
+	DefaultRuntimeUBatchSize         = 512
+	DefaultRuntimeNGPULayers         = 999
+	DefaultRuntimeThreads            = 0
+	DefaultRuntimeHTTPWorkers        = 2
+	MaxRuntimeHTTPWorkers            = 64
+	DefaultRuntimeRevision           = "dev"
+	DefaultRuntimeLlamaCPPRevision   = "dev"
 
 	DefaultStageIndex = 0
 	DefaultStageCount = 1
@@ -52,21 +55,24 @@ type Config struct {
 	RuntimeURL string
 	RuntimeBin string
 
-	Engine                  cluster.Engine
-	Model                   string
-	ModelPath               string
-	RuntimeListen           string
-	RuntimeStageTransport   string
-	RuntimeComputeBackend   string
-	RuntimeMode             string
-	RuntimeCtxSize          int
-	RuntimeNGPULayers       int
-	RuntimeThreads          int
-	RuntimeHTTPWorkers      int
-	RuntimeStartIdle        bool
-	RuntimeRevision         string
-	RuntimeLlamaCPPRevision string
-	RuntimeCUDAActive       bool
+	Engine                    cluster.Engine
+	Model                     string
+	ModelPath                 string
+	RuntimeListen             string
+	RuntimeStageTransport     string
+	RuntimeActivationEncoding string
+	RuntimeKVCacheType        string
+	RuntimeComputeBackend     string
+	RuntimeMode               string
+	RuntimeCtxSize            int
+	RuntimeUBatchSize         int
+	RuntimeNGPULayers         int
+	RuntimeThreads            int
+	RuntimeHTTPWorkers        int
+	RuntimeStartIdle          bool
+	RuntimeRevision           string
+	RuntimeLlamaCPPRevision   string
+	RuntimeCUDAActive         bool
 
 	StageIndex int
 	StageCount int
@@ -91,40 +97,43 @@ type Config struct {
 
 func DefaultConfigValue() Config {
 	return Config{
-		ClusterID:               DefaultClusterID,
-		Listen:                  DefaultNodeListen,
-		APIURL:                  "",
-		DataDir:                 "",
-		RuntimeURL:              AutoRuntimeURL,
-		RuntimeBin:              DefaultRuntimeBin,
-		Engine:                  cluster.EngineLlamaCPP,
-		Model:                   "qwen2.5-coder-1.5b-q4",
-		ModelPath:               "",
-		RuntimeListen:           DefaultRuntimeListen,
-		RuntimeStageTransport:   DefaultRuntimeStageTransport,
-		RuntimeComputeBackend:   DefaultRuntimeComputeBackend,
-		RuntimeMode:             DefaultRuntimeMode,
-		RuntimeCtxSize:          DefaultRuntimeCtxSize,
-		RuntimeNGPULayers:       DefaultRuntimeNGPULayers,
-		RuntimeThreads:          DefaultRuntimeThreads,
-		RuntimeHTTPWorkers:      DefaultRuntimeHTTPWorkers,
-		RuntimeRevision:         DefaultRuntimeRevision,
-		RuntimeLlamaCPPRevision: DefaultRuntimeLlamaCPPRevision,
-		StageIndex:              DefaultStageIndex,
-		StageCount:              DefaultStageCount,
-		LayerStart:              DefaultLayerStart,
-		LayerEnd:                DefaultLayerEnd,
-		Role:                    membership.NodeRoleAuto,
-		LeaderPreference:        DefaultLeaderPreference,
-		Seeds:                   nil,
-		DiscoveryModes:          append([]string(nil), defaultDiscoveryModes...),
-		DiscoveryInterval:       DefaultDiscoveryInterval,
-		StaleAfter:              DefaultStaleAfter,
-		MDNSService:             discovery.DefaultMDNSService,
-		MDNSDomain:              discovery.DefaultMDNSDomain,
-		MDNSBrowseTimeout:       discovery.DefaultMDNSBrowseTimeout,
-		ModelsPath:              config.DefaultModelRegistryPath(),
-		BenchmarksPath:          config.DefaultBenchmarksPath(),
+		ClusterID:                 DefaultClusterID,
+		Listen:                    DefaultNodeListen,
+		APIURL:                    "",
+		DataDir:                   "",
+		RuntimeURL:                AutoRuntimeURL,
+		RuntimeBin:                DefaultRuntimeBin,
+		Engine:                    cluster.EngineLlamaCPP,
+		Model:                     "qwen2.5-coder-1.5b-q4",
+		ModelPath:                 "",
+		RuntimeListen:             DefaultRuntimeListen,
+		RuntimeStageTransport:     DefaultRuntimeStageTransport,
+		RuntimeActivationEncoding: DefaultRuntimeActivationEncoding,
+		RuntimeKVCacheType:        DefaultRuntimeKVCacheType,
+		RuntimeComputeBackend:     DefaultRuntimeComputeBackend,
+		RuntimeMode:               DefaultRuntimeMode,
+		RuntimeCtxSize:            DefaultRuntimeCtxSize,
+		RuntimeUBatchSize:         DefaultRuntimeUBatchSize,
+		RuntimeNGPULayers:         DefaultRuntimeNGPULayers,
+		RuntimeThreads:            DefaultRuntimeThreads,
+		RuntimeHTTPWorkers:        DefaultRuntimeHTTPWorkers,
+		RuntimeRevision:           DefaultRuntimeRevision,
+		RuntimeLlamaCPPRevision:   DefaultRuntimeLlamaCPPRevision,
+		StageIndex:                DefaultStageIndex,
+		StageCount:                DefaultStageCount,
+		LayerStart:                DefaultLayerStart,
+		LayerEnd:                  DefaultLayerEnd,
+		Role:                      membership.NodeRoleAuto,
+		LeaderPreference:          DefaultLeaderPreference,
+		Seeds:                     nil,
+		DiscoveryModes:            append([]string(nil), defaultDiscoveryModes...),
+		DiscoveryInterval:         DefaultDiscoveryInterval,
+		StaleAfter:                DefaultStaleAfter,
+		MDNSService:               discovery.DefaultMDNSService,
+		MDNSDomain:                discovery.DefaultMDNSDomain,
+		MDNSBrowseTimeout:         discovery.DefaultMDNSBrowseTimeout,
+		ModelsPath:                config.DefaultModelRegistryPath(),
+		BenchmarksPath:            config.DefaultBenchmarksPath(),
 	}
 }
 
@@ -159,6 +168,8 @@ func normalizeStringsInConfig(cfg Config) Config {
 	cfg.ModelPath = strings.TrimSpace(cfg.ModelPath)
 	cfg.RuntimeListen = strings.TrimSpace(cfg.RuntimeListen)
 	cfg.RuntimeStageTransport = strings.TrimSpace(cfg.RuntimeStageTransport)
+	cfg.RuntimeActivationEncoding = strings.TrimSpace(cfg.RuntimeActivationEncoding)
+	cfg.RuntimeKVCacheType = strings.TrimSpace(cfg.RuntimeKVCacheType)
 	cfg.RuntimeComputeBackend = strings.TrimSpace(cfg.RuntimeComputeBackend)
 	cfg.RuntimeMode = strings.TrimSpace(cfg.RuntimeMode)
 	cfg.RuntimeRevision = strings.TrimSpace(cfg.RuntimeRevision)
@@ -185,6 +196,12 @@ func normalizeRuntimeConfig(cfg Config) Config {
 	if cfg.RuntimeStageTransport == "" {
 		cfg.RuntimeStageTransport = DefaultRuntimeStageTransport
 	}
+	if cfg.RuntimeActivationEncoding == "" {
+		cfg.RuntimeActivationEncoding = DefaultRuntimeActivationEncoding
+	}
+	if cfg.RuntimeKVCacheType == "" {
+		cfg.RuntimeKVCacheType = DefaultRuntimeKVCacheType
+	}
 	if cfg.RuntimeComputeBackend == "" {
 		cfg.RuntimeComputeBackend = DefaultRuntimeComputeBackend
 	}
@@ -193,6 +210,9 @@ func normalizeRuntimeConfig(cfg Config) Config {
 	}
 	if cfg.RuntimeCtxSize <= 0 {
 		cfg.RuntimeCtxSize = DefaultRuntimeCtxSize
+	}
+	if cfg.RuntimeUBatchSize == 0 {
+		cfg.RuntimeUBatchSize = DefaultRuntimeUBatchSize
 	}
 	if cfg.RuntimeNGPULayers == 0 {
 		cfg.RuntimeNGPULayers = DefaultRuntimeNGPULayers
@@ -252,6 +272,16 @@ func ValidateConfig(cfg Config) error {
 	}
 	if cfg.RuntimeStageTransport == "" {
 		return fmt.Errorf("--runtime-stage-transport is required")
+	}
+	if cfg.RuntimeActivationEncoding == "" {
+		return fmt.Errorf("--runtime-activation-encoding is required")
+	}
+	if cfg.RuntimeKVCacheType != cluster.KVCacheTypeF16 &&
+		cfg.RuntimeKVCacheType != cluster.KVCacheTypeQ8_0 {
+		return fmt.Errorf("--runtime-kv-cache-type must be %q or %q", cluster.KVCacheTypeF16, cluster.KVCacheTypeQ8_0)
+	}
+	if cfg.RuntimeUBatchSize < 1 {
+		return fmt.Errorf("--runtime-ubatch-size must be greater than zero")
 	}
 	if cfg.RuntimeHTTPWorkers < 1 || cfg.RuntimeHTTPWorkers > MaxRuntimeHTTPWorkers {
 		return fmt.Errorf("--runtime-http-workers must be between 1 and %d", MaxRuntimeHTTPWorkers)

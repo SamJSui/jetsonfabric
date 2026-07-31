@@ -24,6 +24,8 @@ func TestActivationFrameRoundTripPreservesBinaryPayload(t *testing.T) {
 			Phase: inference.PhasePrefill, StageIndex: 1, StageCount: 2,
 			NodeName: "stage-1", LayerStart: 14, LayerEnd: 28,
 			PayloadKind: PayloadKindActivation, DType: "f32", Shape: []int64{4, 16},
+			ExecutionUS: 1200, ActivationDecodeUS: 10, ActivationEncodeUS: 20,
+			StageTotalUS: 1300,
 		},
 		Payload: payload,
 	})
@@ -46,6 +48,10 @@ func TestActivationFrameRoundTripPreservesBinaryPayload(t *testing.T) {
 	}
 	if decoded.PayloadBytes != int64(len(payload)) || decoded.DType != "f32" || len(decoded.Shape) != 2 {
 		t.Fatalf("unexpected metadata: %+v", decoded.Metadata)
+	}
+	if decoded.ExecutionUS != 1200 || decoded.ActivationDecodeUS != 10 ||
+		decoded.ActivationEncodeUS != 20 || decoded.StageTotalUS != 1300 {
+		t.Fatalf("timings changed during round trip: %+v", decoded.Metadata)
 	}
 }
 

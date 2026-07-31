@@ -34,6 +34,7 @@ type deploymentSpec struct {
 	DeploymentID         string
 	ModelID              string
 	StageCount           int
+	StageLayerCounts     []int
 	AllowColocatedStages bool
 	ContextSize          int
 	Threads              int

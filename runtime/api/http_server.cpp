@@ -18,6 +18,7 @@
 #include <iostream>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -30,6 +31,8 @@ namespace {
 
 constexpr std::size_t kMaxHeaderBytes = 64U << 10;
 constexpr std::size_t kMaxBodyBytes = (512U << 20) + (1U << 20) + 20U;
+constexpr int kStageKeepAliveIdleSeconds = 5;
+constexpr int kHTTPIOTimeoutSeconds = 30;
 
 std::string health_body(const RuntimeAPI& runtime) {
     std::ostringstream body;
@@ -38,6 +41,10 @@ std::string health_body(const RuntimeAPI& runtime) {
          << "\"runtime\":\"" << runtime.runtime_name() << "\","
          << "\"engine\":\"" << runtime.engine_name() << "\","
          << "\"mode\":\"" << execution_mode_string(runtime.execution_mode()) << "\","
+         << "\"stage_transport\":\"" << runtime.stage_transport_name() << "\","
+         << "\"activation_encoding\":\"" << runtime.activation_encoding() << "\","
+         << "\"kv_cache_type\":\"" << runtime.kv_cache_type() << "\","
+         << "\"ubatch_size\":" << runtime.ubatch_size() << ","
          << "\"model\":\"" << runtime.model() << "\""
          << "}";
     return body.str();
@@ -74,60 +81,83 @@ std::optional<std::size_t> content_length(const std::string& headers) {
     return std::nullopt;
 }
 
-std::string read_http_request(int client_fd) {
-    std::string request;
-    request.reserve(8192);
-    std::size_t header_end = std::string::npos;
-    std::optional<std::size_t> body_length;
+std::optional<std::string> read_http_request(int client_fd, std::string& buffered) {
     char buffer[8192];
 
     while (true) {
+        const std::size_t marker = buffered.find("\r\n\r\n");
+        if (marker != std::string::npos) {
+            const std::size_t header_end = marker + 4;
+            if (header_end > kMaxHeaderBytes) {
+                throw std::invalid_argument("HTTP headers are too large");
+            }
+            const std::size_t expected_body =
+                content_length(buffered.substr(0, marker)).value_or(0);
+            const std::size_t request_size = header_end + expected_body;
+            if (buffered.size() >= request_size) {
+                std::string request = buffered.substr(0, request_size);
+                buffered.erase(0, request_size);
+                return request;
+            }
+        } else if (buffered.size() > kMaxHeaderBytes) {
+            throw std::invalid_argument("HTTP headers are too large");
+        }
+        if (buffered.size() > kMaxHeaderBytes + kMaxBodyBytes) {
+            throw std::invalid_argument("HTTP request body is too large");
+        }
+
         const ssize_t n = recv(client_fd, buffer, sizeof(buffer), 0);
         if (n < 0) {
             if (errno == EINTR) continue;
+            if ((errno == EAGAIN || errno == EWOULDBLOCK) && buffered.empty()) {
+                return std::nullopt;
+            }
             throw std::runtime_error(std::string("recv failed: ") + std::strerror(errno));
         }
-        if (n == 0) break;
-        request.append(buffer, static_cast<std::size_t>(n));
-
-        if (header_end == std::string::npos) {
-            const std::size_t marker = request.find("\r\n\r\n");
-            if (marker != std::string::npos) {
-                header_end = marker + 4;
-                if (header_end > kMaxHeaderBytes) {
-                    throw std::invalid_argument("HTTP headers are too large");
-                }
-                body_length = content_length(request.substr(0, marker));
-            } else if (request.size() > kMaxHeaderBytes) {
-                throw std::invalid_argument("HTTP headers are too large");
-            }
+        if (n == 0) {
+            if (buffered.empty()) return std::nullopt;
+            break;
         }
-
-        if (header_end != std::string::npos) {
-            const std::size_t expected_body = body_length.value_or(0);
-            if (request.size() >= header_end + expected_body) {
-                request.resize(header_end + expected_body);
-                return request;
-            }
-        }
-        if (request.size() > kMaxHeaderBytes + kMaxBodyBytes) {
-            throw std::invalid_argument("HTTP request body is too large");
-        }
+        buffered.append(buffer, static_cast<std::size_t>(n));
     }
 
-    if (header_end == std::string::npos) {
+    const std::size_t marker = buffered.find("\r\n\r\n");
+    if (marker == std::string::npos) {
         throw std::invalid_argument("incomplete HTTP request headers");
     }
-    const std::size_t expected_body = body_length.value_or(0);
-    if (request.size() != header_end + expected_body) {
+    const std::size_t header_end = marker + 4;
+    const std::size_t expected_body =
+        content_length(buffered.substr(0, marker)).value_or(0);
+    if (buffered.size() < header_end + expected_body) {
         throw std::invalid_argument("truncated HTTP request body");
     }
+    std::string request = buffered.substr(0, header_end + expected_body);
+    buffered.erase(0, header_end + expected_body);
     return request;
 }
 
 std::string request_body(const std::string& request) {
     const std::size_t marker = request.find("\r\n\r\n");
     return marker == std::string::npos ? std::string{} : request.substr(marker + 4);
+}
+
+bool requests_stage_keep_alive(const std::string& request) {
+    if (!starts_with(request, "POST /v1/layer-split/stage ")) return false;
+    const std::size_t header_end = request.find("\r\n\r\n");
+    if (header_end == std::string::npos) return false;
+    const std::string headers = lower(request.substr(0, header_end) + "\r\n");
+    return headers.find("\r\nconnection: keep-alive\r\n") != std::string::npos;
+}
+
+void set_stage_keep_alive_timeout(int client_fd) {
+    timeval timeout{.tv_sec = kStageKeepAliveIdleSeconds, .tv_usec = 0};
+    (void) setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+}
+
+void set_http_io_timeout(int client_fd) {
+    timeval timeout{.tv_sec = kHTTPIOTimeoutSeconds, .tv_usec = 0};
+    (void) setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    (void) setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 }
 
 bool send_all(int fd, const std::string& data) {
@@ -180,13 +210,14 @@ int HttpServer::run() const {
     std::mutex queue_mutex;
     std::condition_variable queue_ready;
     std::deque<int> clients;
+    std::set<int> active_clients;
     bool accepting = true;
     const std::size_t queue_capacity =
         static_cast<std::size_t>(config_.http_workers) * 8;
     std::vector<std::thread> workers;
     workers.reserve(static_cast<std::size_t>(config_.http_workers));
     for (int index = 0; index < config_.http_workers; ++index) {
-        workers.emplace_back([this, &queue_mutex, &queue_ready, &clients, &accepting]() {
+        workers.emplace_back([this, &queue_mutex, &queue_ready, &clients, &active_clients, &accepting]() {
             while (true) {
                 int client_fd = -1;
                 {
@@ -199,8 +230,14 @@ int HttpServer::run() const {
                     }
                     client_fd = clients.front();
                     clients.pop_front();
+                    active_clients.insert(client_fd);
                 }
                 handle_client(client_fd);
+                {
+                    const std::lock_guard lock(queue_mutex);
+                    active_clients.erase(client_fd);
+                }
+                close(client_fd);
             }
         });
     }
@@ -215,6 +252,7 @@ int HttpServer::run() const {
             if (running_.load()) std::cerr << "accept failed: " << std::strerror(errno) << "\n";
             continue;
         }
+        set_http_io_timeout(client_fd);
         bool queued = false;
         {
             const std::lock_guard lock(queue_mutex);
@@ -237,9 +275,18 @@ int HttpServer::run() const {
         }
     }
     close(server_fd);
+    runtime_.shutdown();
     {
         const std::lock_guard lock(queue_mutex);
         accepting = false;
+        for (int client_fd : clients) {
+            (void) shutdown(client_fd, SHUT_RDWR);
+            close(client_fd);
+        }
+        clients.clear();
+        for (int client_fd : active_clients) {
+            (void) shutdown(client_fd, SHUT_RDWR);
+        }
     }
     queue_ready.notify_all();
     for (std::thread& worker : workers) {
@@ -296,61 +343,67 @@ bool HttpServer::wait_for_client(int server_fd) const {
 }
 
 void HttpServer::handle_client(int client_fd) const {
-    HttpResponse response;
-    try {
-        const std::string request = read_http_request(client_fd);
-        const std::string body = request_body(request);
-        if (starts_with(request, "POST /v1/generate ")) {
-            if (!send_generation_headers(client_fd)) {
-                close(client_fd);
-                return;
-            }
-            const RuntimeResponse final_event = runtime_.generate(
-                body,
-                [client_fd](const std::string& event) {
-                    return send_chunk(client_fd, event + "\n");
+    std::string buffered;
+    buffered.reserve(8192);
+    while (true) {
+        HttpResponse response;
+        bool keep_alive = false;
+        try {
+            const std::optional<std::string> wire_request =
+                read_http_request(client_fd, buffered);
+            if (!wire_request.has_value()) break;
+            const std::string& request = *wire_request;
+            const std::string body = request_body(request);
+            if (starts_with(request, "POST /v1/generate ")) {
+                if (!send_generation_headers(client_fd)) break;
+                const RuntimeResponse final_event = runtime_.generate(
+                    body,
+                    [client_fd](const std::string& event) {
+                        return send_chunk(client_fd, event + "\n");
+                    }
+                );
+                if (!final_event.body.empty()) {
+                    (void) send_chunk(client_fd, final_event.body + "\n");
                 }
-            );
-            if (!final_event.body.empty()) {
-                (void) send_chunk(client_fd, final_event.body + "\n");
+                (void) send_all(client_fd, "0\r\n\r\n");
+                break;
             }
-            (void) send_all(client_fd, "0\r\n\r\n");
-            close(client_fd);
-            return;
+            response = not_found_response();
+            if (starts_with(request, "GET /healthz ")) {
+                response = json_response("200 OK", health_body(runtime_));
+            } else if (starts_with(request, "GET /v1/deployment ")) {
+                const RuntimeResponse runtime_response = runtime_.deployment_status();
+                response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+            } else if (starts_with(request, "POST /v1/deployment/load ")) {
+                const RuntimeResponse runtime_response = runtime_.load_deployment(body);
+                response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+            } else if (starts_with(request, "POST /v1/deployment/activate ")) {
+                const RuntimeResponse runtime_response = runtime_.activate_deployment(body);
+                response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+            } else if (starts_with(request, "POST /v1/deployment/drain ")) {
+                const RuntimeResponse runtime_response = runtime_.drain_deployment(body);
+                response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+            } else if (starts_with(request, "POST /v1/deployment/unload ")) {
+                const RuntimeResponse runtime_response = runtime_.unload_deployment(body);
+                response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+            } else if (starts_with(request, "POST /v1/chat/completions ")) {
+                const RuntimeResponse runtime_response = runtime_.chat_completion(body);
+                response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+            } else if (starts_with(request, "POST /v1/layer-split/stage ")) {
+                const RuntimeResponse runtime_response = runtime_.run_stage(body);
+                response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+                keep_alive = requests_stage_keep_alive(request);
+                response.close_connection = !keep_alive;
+            }
+        } catch (const std::exception& err) {
+            response = json_response(
+                "400 Bad Request",
+                std::string("{\"error\":\"invalid_http_request\",\"message\":\"") + err.what() + "\"}"
+            );
         }
-        response = not_found_response();
-        if (starts_with(request, "GET /healthz ")) {
-            response = json_response("200 OK", health_body(runtime_));
-        } else if (starts_with(request, "GET /v1/deployment ")) {
-            const RuntimeResponse runtime_response = runtime_.deployment_status();
-            response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
-        } else if (starts_with(request, "POST /v1/deployment/load ")) {
-            const RuntimeResponse runtime_response = runtime_.load_deployment(body);
-            response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
-        } else if (starts_with(request, "POST /v1/deployment/activate ")) {
-            const RuntimeResponse runtime_response = runtime_.activate_deployment(body);
-            response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
-        } else if (starts_with(request, "POST /v1/deployment/drain ")) {
-            const RuntimeResponse runtime_response = runtime_.drain_deployment(body);
-            response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
-        } else if (starts_with(request, "POST /v1/deployment/unload ")) {
-            const RuntimeResponse runtime_response = runtime_.unload_deployment(body);
-            response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
-        } else if (starts_with(request, "POST /v1/chat/completions ")) {
-            const RuntimeResponse runtime_response = runtime_.chat_completion(body);
-            response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
-        } else if (starts_with(request, "POST /v1/layer-split/stage ")) {
-            const RuntimeResponse runtime_response = runtime_.run_stage(body);
-            response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
-        }
-    } catch (const std::exception& err) {
-        response = json_response(
-            "400 Bad Request",
-            std::string("{\"error\":\"invalid_http_request\",\"message\":\"") + err.what() + "\"}"
-        );
+        if (!send_all(client_fd, response.serialize()) || !keep_alive) break;
+        set_stage_keep_alive_timeout(client_fd);
     }
-    send_all(client_fd, response.serialize());
-    close(client_fd);
 }
 
 } // namespace jetsonfabric::runtime

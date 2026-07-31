@@ -91,8 +91,10 @@ func TestCoordinatorPublishesNewEpochWhileOldSessionsDrain(t *testing.T) {
 	if err := json.Unmarshal(responseDuringDrain.Body.Bytes(), &runResponse); err != nil {
 		t.Fatalf("decode managed generation response: %v", err)
 	}
-	if runResponse.RuntimeIdentity.StageTransport != cluster.StageTransportHTTPBinaryV1 {
-		t.Fatalf("managed runtime identity lost stage transport: %+v", runResponse.RuntimeIdentity)
+	if runResponse.RuntimeIdentity.StageTransport != cluster.StageTransportHTTPBinaryV1 ||
+		runResponse.RuntimeIdentity.ActivationEncoding != cluster.ActivationEncodingF32 ||
+		runResponse.RuntimeIdentity.KVCacheType != cluster.KVCacheTypeF16 {
+		t.Fatalf("managed runtime identity lost runtime strategy: %+v", runResponse.RuntimeIdentity)
 	}
 	select {
 	case response := <-switchDone:
@@ -177,14 +179,16 @@ func deploymentSwitchMember(apiURL string, now time.Time) membership.Member {
 		Hostname: "host-a", APIURL: apiURL, Arch: "amd64",
 		Capabilities: map[string]any{
 			cluster.CapabilityMemoryGB: 64.0, cluster.CapabilityComputeBackends: []string{"cpu"},
-			cluster.CapabilityRuntimeEngine:           string(cluster.EngineLlamaCPP),
-			cluster.CapabilityRuntimeComputeBackend:   string(cluster.ComputeBackendCPU),
-			cluster.CapabilityRuntimeExecutionMode:    string(cluster.ExecutionModePipelineParallel),
-			cluster.CapabilityRuntimeStageTransport:   cluster.StageTransportHTTPBinaryV1,
-			cluster.CapabilityRuntimeRevision:         "runtime-test",
-			cluster.CapabilityRuntimeLlamaCPPRevision: "llama-test",
-			cluster.CapabilityRuntimeCUDAActive:       false,
-			cluster.CapabilityRuntimeStartsIdle:       true,
+			cluster.CapabilityRuntimeEngine:             string(cluster.EngineLlamaCPP),
+			cluster.CapabilityRuntimeComputeBackend:     string(cluster.ComputeBackendCPU),
+			cluster.CapabilityRuntimeExecutionMode:      string(cluster.ExecutionModePipelineParallel),
+			cluster.CapabilityRuntimeStageTransport:     cluster.StageTransportHTTPBinaryV1,
+			cluster.CapabilityRuntimeActivationEncoding: cluster.ActivationEncodingF32,
+			cluster.CapabilityRuntimeKVCacheType:        cluster.KVCacheTypeF16,
+			cluster.CapabilityRuntimeRevision:           "runtime-test",
+			cluster.CapabilityRuntimeLlamaCPPRevision:   "llama-test",
+			cluster.CapabilityRuntimeCUDAActive:         false,
+			cluster.CapabilityRuntimeStartsIdle:         true,
 		},
 		StartedAt: now.Add(-time.Hour), LastSeen: now,
 	}
@@ -310,6 +314,16 @@ func (c *multiDeploymentClient) Status(_ context.Context, nodeURL string) (runti
 }
 
 func (c *multiDeploymentClient) Load(ctx context.Context, nodeURL string, request runtimebridge.LoadDeploymentRequest) (runtimebridge.DeploymentOperationResponse, error) {
+	if request.ActivationEncoding != cluster.ActivationEncodingF32 {
+		return runtimebridge.DeploymentOperationResponse{}, errors.New(
+			"load request omitted the planned activation encoding",
+		)
+	}
+	if request.KVCacheType != cluster.KVCacheTypeF16 {
+		return runtimebridge.DeploymentOperationResponse{}, errors.New(
+			"load request omitted the planned KV cache type",
+		)
+	}
 	c.mu.Lock()
 	fail := c.failLoadModel == request.ModelID
 	unreachable := c.unreachable[nodeURL]
