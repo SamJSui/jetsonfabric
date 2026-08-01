@@ -170,7 +170,37 @@ target_link_libraries(jetsonfabric-runtime-worker PRIVATE
   ${JF_LLAMA_TARGET}
 )
 
+add_executable(jetsonfabric-two-node-collective-bench
+  benchmarks/collective_stats.cpp
+  benchmarks/two_node_collective.cpp
+)
+target_include_directories(jetsonfabric-two-node-collective-bench PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_options(jetsonfabric-two-node-collective-bench PRIVATE
+  -Wall
+  -Wextra
+  -Wpedantic
+)
+
 if(BUILD_TESTING)
+  add_executable(jetsonfabric-collective-stats-test
+    benchmarks/collective_stats.cpp
+    benchmarks/collective_stats_test.cpp
+  )
+  target_include_directories(jetsonfabric-collective-stats-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-collective-stats-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME collective-stats
+    COMMAND jetsonfabric-collective-stats-test
+  )
+
   add_executable(jetsonfabric-runtime-stage-interface-test
     inference/stage.cpp
     inference/stage_test.cpp
