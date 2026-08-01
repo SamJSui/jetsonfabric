@@ -26,6 +26,19 @@ std::uint32_t require_u32(const gguf_context * context, const char * key) {
     return gguf_get_val_u32(context, index);
 }
 
+std::uint32_t optional_u32(
+    const gguf_context * context,
+    const char * key,
+    std::uint32_t fallback
+) {
+    const std::int64_t index = gguf_find_key(context, key);
+    if (index < 0) return fallback;
+    if (gguf_get_kv_type(context, index) != GGUF_TYPE_UINT32) {
+        throw std::runtime_error(std::string("GGUF metadata key is not uint32: ") + key);
+    }
+    return gguf_get_val_u32(context, index);
+}
+
 float require_f32(const gguf_context * context, const char * key) {
     const std::int64_t index = require_key(context, key);
     if (gguf_get_kv_type(context, index) != GGUF_TYPE_FLOAT32) {
@@ -92,7 +105,14 @@ Qwen2HParams load_qwen2_hparams(const gguf_context * context) {
     params.head_count = require_u32(context, "qwen2.attention.head_count");
     params.kv_head_count = require_u32(context, "qwen2.attention.head_count_kv");
     info.context_length = require_u32(context, "qwen2.context_length");
-    params.rope_dimension_count = require_u32(context, "qwen2.rope.dimension_count");
+    const std::uint32_t head_length = params.head_count == 0
+        ? 0
+        : info.embedding_length / params.head_count;
+    params.rope_dimension_count = optional_u32(
+        context,
+        "qwen2.rope.dimension_count",
+        head_length
+    );
     params.rope_frequency_base = require_f32(context, "qwen2.rope.freq_base");
     params.rms_epsilon = require_f32(
         context,
