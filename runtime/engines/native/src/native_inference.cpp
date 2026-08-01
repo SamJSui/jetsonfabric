@@ -23,15 +23,18 @@ std::int32_t greedy_token(const std::vector<float>& logits) {
 class NativeEngine::Impl {
 public:
     Impl(const std::string& package_path, Backend backend, int threads)
-        : architecture(create_architecture(package_path)),
-          tensors(package_path, architecture->model_info().layer_count, backend, threads) {
+        : tensors(package_path, backend, threads),
+          architecture(create_architecture(tensors)) {
         info = architecture->model_info();
+        info.source_sha256 = tensors.source_sha256();
+        info.compute_backend = tensors.backend_name();
+        info.compute_device = tensors.device_name();
         info.vocabulary_size = tensors.vocabulary_size();
         info.weight_bytes = tensors.weight_bytes();
     }
 
-    std::unique_ptr<ModelArchitecture> architecture;
     TensorStore tensors;
+    std::unique_ptr<ModelArchitecture> architecture;
     ModelInfo info;
 };
 
@@ -51,6 +54,14 @@ const ModelInfo& NativeEngine::model_info() const { return impl_->info; }
 double NativeEngine::load_time_ms() const { return load_time_ms_; }
 
 std::vector<float> NativeEngine::logits(std::span<const std::int32_t> tokens) {
+    if (tokens.empty() || tokens.size() > impl_->info.context_length) {
+        throw std::invalid_argument("native token sequence is outside model context");
+    }
+    for (const std::int32_t token : tokens) {
+        if (token < 0 || static_cast<std::uint32_t>(token) >= impl_->info.vocabulary_size) {
+            throw std::invalid_argument("native token ID is outside model vocabulary");
+        }
+    }
     return impl_->architecture->logits(impl_->tensors, tokens);
 }
 

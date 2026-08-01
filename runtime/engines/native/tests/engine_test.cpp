@@ -306,6 +306,14 @@ void test_stage_residency(const fs::path& package) {
     expect(full_stats.selected_weight_bytes == 20, "full model did not select every weight");
     expect(full_stats.selected_tensor_count == 5, "full model did not select every tensor");
     jf_model_close(full);
+
+    jf_model * all_layers = open_model(package, 0, JF_ALL_LAYERS);
+    const jf_model_stats all_stats = jf_model_get_stats(all_layers);
+    expect(
+        all_stats.layer_end == 2 && all_stats.selected_weight_bytes == 20,
+        "all-layers plan did not resolve the complete model"
+    );
+    jf_model_close(all_layers);
 }
 
 void test_rejects_invalid_inputs(const fs::path& root, const std::vector<SegmentFixture>& segments) {

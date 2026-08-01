@@ -69,6 +69,8 @@ typedef struct jf_stage_plan {
     uint32_t evict_before_open;
 } jf_stage_plan;
 
+#define JF_ALL_LAYERS UINT32_MAX
+
 typedef struct jf_model_stats {
     uint32_t layer_start;
     uint32_t layer_end;

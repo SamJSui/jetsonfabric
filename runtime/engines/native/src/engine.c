@@ -543,8 +543,13 @@ jf_status jf_model_open(
     const uint32_t layer_count = jf_read_u32_le(manifest + 12);
     const uint64_t source_size = jf_read_u64_le(manifest + 16);
     const uint32_t segment_count = jf_read_u32_le(manifest + 56);
+    jf_stage_plan resolved_plan = *plan;
+    if (resolved_plan.layer_end == JF_ALL_LAYERS) {
+        resolved_plan.layer_end = layer_count;
+    }
     if (layer_count == 0 || layer_count > JF_MAX_LAYERS || source_size == 0 ||
-        plan->layer_start >= plan->layer_end || plan->layer_end > layer_count) {
+        resolved_plan.layer_start >= resolved_plan.layer_end ||
+        resolved_plan.layer_end > layer_count) {
         status = status_error(JF_STATUS_INVALID_ARGUMENT, "stage range or model dimensions are invalid");
         goto fail_header;
     }
@@ -635,8 +640,8 @@ jf_status jf_model_open(
             status = status_error(JF_STATUS_FORMAT_ERROR, "manifest tensor totals overflow");
             goto fail_manifest;
         }
-        const int selected = segment_selected(segment, *plan) ||
-            (segment->kind == JF_SEGMENT_OUTPUT && plan->layer_end == layer_count);
+        const int selected = segment_selected(segment, resolved_plan) ||
+            (segment->kind == JF_SEGMENT_OUTPUT && resolved_plan.layer_end == layer_count);
         if (selected) {
             ++selected_segments;
             if (!add_u64(selected_tensors, segment->tensor_count, &selected_tensors) ||
@@ -686,8 +691,8 @@ jf_status jf_model_open(
     }
     memcpy(model->source_sha256, manifest + 24, sizeof(model->source_sha256));
     model->stats = (jf_model_stats){
-        .layer_start = plan->layer_start,
-        .layer_end = plan->layer_end,
+        .layer_start = resolved_plan.layer_start,
+        .layer_end = resolved_plan.layer_end,
         .layer_count = layer_count,
         .selected_weight_bytes = selected_weights,
         .total_weight_bytes = total_weights,
@@ -699,8 +704,9 @@ jf_status jf_model_open(
     size_t mapping_index = 0;
     size_t tensor_index = 0;
     for (uint32_t index = 0; index < segment_count; ++index) {
-        const int selected = segment_selected(&segments[index], *plan) ||
-            (segments[index].kind == JF_SEGMENT_OUTPUT && plan->layer_end == layer_count);
+        const int selected = segment_selected(&segments[index], resolved_plan) ||
+            (segments[index].kind == JF_SEGMENT_OUTPUT &&
+             resolved_plan.layer_end == layer_count);
         if (!selected) {
             continue;
         }
@@ -710,8 +716,8 @@ jf_status jf_model_open(
                 &segments[index],
                 model,
                 mapping_index,
-                plan->verify_hashes != 0,
-                plan->evict_before_open != 0
+                resolved_plan.verify_hashes != 0,
+                resolved_plan.evict_before_open != 0
             )
             : map_tensor_segment(
                 directory,
@@ -719,8 +725,8 @@ jf_status jf_model_open(
                 model,
                 mapping_index,
                 &tensor_index,
-                plan->verify_hashes != 0,
-                plan->evict_before_open != 0
+                resolved_plan.verify_hashes != 0,
+                resolved_plan.evict_before_open != 0
             );
         if (status.code != JF_STATUS_OK) {
             close_model_contents(model);

@@ -15,6 +15,9 @@ enum class Backend {
 
 struct ModelInfo {
     std::string architecture;
+    std::string source_sha256;
+    std::string compute_backend;
+    std::string compute_device;
     std::uint32_t layer_count = 0;
     std::uint32_t embedding_length = 0;
     std::uint32_t context_length = 0;

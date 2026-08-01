@@ -1,8 +1,9 @@
 #include "model_architecture.hpp"
 
+#include "tensor_store.hpp"
+
 #include "gguf.h"
 
-#include <filesystem>
 #include <functional>
 #include <memory>
 #include <stdexcept>
@@ -12,7 +13,8 @@
 namespace jetsonfabric::native {
 
 std::unique_ptr<ModelArchitecture> create_qwen2_architecture(
-    const std::filesystem::path& package_path
+    const gguf_context * metadata,
+    const TensorStore& tensors
 );
 
 namespace {
@@ -23,20 +25,26 @@ public:
 };
 
 using Gguf = std::unique_ptr<gguf_context, GgufDeleter>;
-using Factory = std::function<std::unique_ptr<ModelArchitecture>(const std::filesystem::path&)>;
+using Factory = std::function<std::unique_ptr<ModelArchitecture>(
+    const gguf_context *, const TensorStore&
+)>;
 
-std::string read_architecture(const std::filesystem::path& package_path) {
-    const std::filesystem::path metadata_path = package_path / "metadata.gguf";
-    Gguf context(gguf_init_from_file(
-        metadata_path.string().c_str(),
+Gguf parse_metadata(const TensorStore& tensors) {
+    const auto metadata = tensors.gguf_metadata();
+    Gguf context(gguf_init_from_buffer(
+        metadata.data(), metadata.size(),
         gguf_init_params{.no_alloc = true, .ctx = nullptr}
     ));
     if (!context) throw std::runtime_error("could not parse preserved GGUF metadata");
-    const std::int64_t key = gguf_find_key(context.get(), "general.architecture");
-    if (key < 0 || gguf_get_kv_type(context.get(), key) != GGUF_TYPE_STRING) {
+    return context;
+}
+
+std::string read_architecture(const gguf_context * context) {
+    const std::int64_t key = gguf_find_key(context, "general.architecture");
+    if (key < 0 || gguf_get_kv_type(context, key) != GGUF_TYPE_STRING) {
         throw std::runtime_error("GGUF general.architecture metadata is required");
     }
-    return gguf_get_val_str(context.get(), key);
+    return gguf_get_val_str(context, key);
 }
 
 const std::unordered_map<std::string, Factory>& factories() {
@@ -48,14 +56,14 @@ const std::unordered_map<std::string, Factory>& factories() {
 
 } // namespace
 
-std::unique_ptr<ModelArchitecture> create_architecture(const std::string& package_path) {
-    const std::filesystem::path path(package_path);
-    const std::string architecture = read_architecture(path);
+std::unique_ptr<ModelArchitecture> create_architecture(const TensorStore& tensors) {
+    const Gguf metadata = parse_metadata(tensors);
+    const std::string architecture = read_architecture(metadata.get());
     const auto found = factories().find(architecture);
     if (found == factories().end()) {
         throw std::runtime_error("unsupported native model architecture: " + architecture);
     }
-    return found->second(path);
+    return found->second(metadata.get(), tensors);
 }
 
 } // namespace jetsonfabric::native

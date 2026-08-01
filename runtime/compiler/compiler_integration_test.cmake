@@ -72,4 +72,23 @@ if(NOT QWEN_OUTPUT MATCHES "\"engine\": \"jetsonfabric-native\"" OR
   message(FATAL_ERROR "native Qwen benchmark returned unexpected output: ${QWEN_OUTPUT}")
 endif()
 
+execute_process(
+  COMMAND "${INFERENCE_BENCH_BIN}"
+    --package "${WORK_DIR}/fixture.jfm"
+    --backend cpu
+    --tokens 8
+    --max-tokens 1
+    --iterations 1
+    --threads 1
+  RESULT_VARIABLE INVALID_TOKEN_RESULT
+  OUTPUT_VARIABLE INVALID_TOKEN_OUTPUT
+  ERROR_VARIABLE INVALID_TOKEN_ERROR
+)
+if(INVALID_TOKEN_RESULT EQUAL 0 OR
+   NOT INVALID_TOKEN_ERROR MATCHES "token ID is outside model vocabulary")
+  message(FATAL_ERROR
+    "native Qwen accepted an invalid token: ${INVALID_TOKEN_OUTPUT}${INVALID_TOKEN_ERROR}"
+  )
+endif()
+
 file(REMOVE_RECURSE "${WORK_DIR}")

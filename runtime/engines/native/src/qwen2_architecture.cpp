@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <initializer_list>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -20,6 +21,49 @@ namespace jetsonfabric::native {
 namespace {
 
 constexpr std::size_t kGraphSize = 8192;
+
+void require_shape(
+    const TensorStore& tensors,
+    const std::string& name,
+    std::initializer_list<std::int64_t> expected
+) {
+    const ggml_tensor * tensor = tensors.require(name);
+    if (ggml_n_dims(tensor) != static_cast<int>(expected.size())) {
+        throw std::runtime_error("native Qwen2 tensor has wrong rank: " + name);
+    }
+    std::size_t dimension = 0;
+    for (const std::int64_t size : expected) {
+        if (tensor->ne[dimension++] != size) {
+            throw std::runtime_error("native Qwen2 tensor has wrong shape: " + name);
+        }
+    }
+}
+
+void validate_qwen2_tensors(const TensorStore& tensors, const Qwen2HParams& params) {
+    const std::int64_t embedding = params.public_info.embedding_length;
+    const std::int64_t head_length = embedding / params.head_count;
+    const std::int64_t kv_length = head_length * params.kv_head_count;
+    const std::int64_t feed_forward = params.feed_forward_length;
+    const std::int64_t vocabulary = tensors.vocabulary_size();
+    require_shape(tensors, "token_embd.weight", {embedding, vocabulary});
+    require_shape(tensors, "output_norm.weight", {embedding});
+    require_shape(tensors, "output.weight", {embedding, vocabulary});
+    for (std::uint32_t layer = 0; layer < params.public_info.layer_count; ++layer) {
+        const std::string prefix = "blk." + std::to_string(layer) + ".";
+        require_shape(tensors, prefix + "attn_norm.weight", {embedding});
+        require_shape(tensors, prefix + "attn_q.weight", {embedding, embedding});
+        require_shape(tensors, prefix + "attn_q.bias", {embedding});
+        require_shape(tensors, prefix + "attn_k.weight", {embedding, kv_length});
+        require_shape(tensors, prefix + "attn_k.bias", {kv_length});
+        require_shape(tensors, prefix + "attn_v.weight", {embedding, kv_length});
+        require_shape(tensors, prefix + "attn_v.bias", {kv_length});
+        require_shape(tensors, prefix + "attn_output.weight", {embedding, embedding});
+        require_shape(tensors, prefix + "ffn_norm.weight", {embedding});
+        require_shape(tensors, prefix + "ffn_gate.weight", {embedding, feed_forward});
+        require_shape(tensors, prefix + "ffn_up.weight", {embedding, feed_forward});
+        require_shape(tensors, prefix + "ffn_down.weight", {feed_forward, embedding});
+    }
+}
 
 class ForwardGraph {
 public:
@@ -136,7 +180,8 @@ private:
     ggml_tensor * apply_rope(ggml_tensor * tensor) {
         return ggml_rope_ext(
             context_.get(), tensor, positions_, nullptr,
-            params_.rope_dimension_count, 0, params_.public_info.context_length,
+            params_.rope_dimension_count, GGML_ROPE_TYPE_NEOX,
+            params_.public_info.context_length,
             params_.rope_frequency_base, 1.0F, 0.0F, 1.0F, 32.0F, 1.0F
         );
     }
@@ -225,8 +270,10 @@ private:
 
 class Qwen2Architecture final : public ModelArchitecture {
 public:
-    explicit Qwen2Architecture(const std::filesystem::path& package_path)
-        : hparams_(load_qwen2_hparams(package_path)) {}
+    Qwen2Architecture(const gguf_context * metadata, const TensorStore& tensors)
+        : hparams_(load_qwen2_hparams(metadata)) {
+        validate_qwen2_tensors(tensors, hparams_);
+    }
 
     const ModelInfo& model_info() const override { return hparams_.public_info; }
 
@@ -242,9 +289,10 @@ private:
 };
 
 std::unique_ptr<ModelArchitecture> create_qwen2_architecture(
-    const std::filesystem::path& package_path
+    const gguf_context * metadata,
+    const TensorStore& tensors
 ) {
-    return std::make_unique<Qwen2Architecture>(package_path);
+    return std::make_unique<Qwen2Architecture>(metadata, tensors);
 }
 
 } // namespace jetsonfabric::native

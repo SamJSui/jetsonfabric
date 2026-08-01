@@ -22,6 +22,6 @@ public:
     ) const = 0;
 };
 
-std::unique_ptr<ModelArchitecture> create_architecture(const std::string& package_path);
+std::unique_ptr<ModelArchitecture> create_architecture(const TensorStore& tensors);
 
 } // namespace jetsonfabric::native

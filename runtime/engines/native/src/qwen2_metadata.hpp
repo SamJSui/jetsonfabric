@@ -3,8 +3,6 @@
 #include "jetsonfabric/native_inference.hpp"
 
 #include <cstdint>
-#include <filesystem>
-
 struct gguf_context;
 
 namespace jetsonfabric::native {
@@ -19,6 +17,6 @@ struct Qwen2HParams {
     float rms_epsilon = 0.0F;
 };
 
-Qwen2HParams load_qwen2_hparams(const std::filesystem::path& package_path);
+Qwen2HParams load_qwen2_hparams(const gguf_context * metadata);
 
 } // namespace jetsonfabric::native

@@ -3,19 +3,12 @@
 #include "gguf.h"
 
 #include <limits>
-#include <memory>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 
 namespace jetsonfabric::native {
 namespace {
-
-class GgufDeleter {
-public:
-    void operator()(gguf_context * context) const { gguf_free(context); }
-};
-
-using Gguf = std::unique_ptr<gguf_context, GgufDeleter>;
 
 std::int64_t require_key(const gguf_context * context, const char * key) {
     const std::int64_t index = gguf_find_key(context, key);
@@ -41,6 +34,26 @@ float require_f32(const gguf_context * context, const char * key) {
     return gguf_get_val_f32(context, index);
 }
 
+void reject_unsupported_rope_scaling(const gguf_context * context) {
+    const std::int64_t type_key = gguf_find_key(context, "qwen2.rope.scaling.type");
+    if (type_key >= 0) {
+        if (gguf_get_kv_type(context, type_key) != GGUF_TYPE_STRING) {
+            throw std::runtime_error("Qwen2 RoPE scaling type is not a string");
+        }
+        const std::string type = gguf_get_val_str(context, type_key);
+        if (type != "none" && type != "linear") {
+            throw std::runtime_error("native Qwen2 does not support RoPE scaling type " + type);
+        }
+    }
+    const std::int64_t factor_key = gguf_find_key(context, "qwen2.rope.scaling.factor");
+    if (factor_key >= 0) {
+        if (gguf_get_kv_type(context, factor_key) != GGUF_TYPE_FLOAT32 ||
+            std::fabs(gguf_get_val_f32(context, factor_key) - 1.0F) > 1.0e-6F) {
+            throw std::runtime_error("native Qwen2 does not support scaled RoPE factors");
+        }
+    }
+}
+
 void validate_hparams(const Qwen2HParams& params) {
     const ModelInfo& info = params.public_info;
     if (info.layer_count == 0 || info.embedding_length == 0 ||
@@ -61,34 +74,28 @@ void validate_hparams(const Qwen2HParams& params) {
 
 } // namespace
 
-Qwen2HParams load_qwen2_hparams(const std::filesystem::path& package_path) {
-    const std::filesystem::path metadata_path = package_path / "metadata.gguf";
-    Gguf context(gguf_init_from_file(
-        metadata_path.string().c_str(),
-        gguf_init_params{.no_alloc = true, .ctx = nullptr}
-    ));
-    if (!context) {
-        throw std::runtime_error("could not parse preserved GGUF metadata");
-    }
-    const std::int64_t architecture_key = require_key(context.get(), "general.architecture");
-    if (gguf_get_kv_type(context.get(), architecture_key) != GGUF_TYPE_STRING ||
-        std::string(gguf_get_val_str(context.get(), architecture_key)) != "qwen2") {
+Qwen2HParams load_qwen2_hparams(const gguf_context * context) {
+    if (context == nullptr) throw std::invalid_argument("Qwen2 metadata is required");
+    const std::int64_t architecture_key = require_key(context, "general.architecture");
+    if (gguf_get_kv_type(context, architecture_key) != GGUF_TYPE_STRING ||
+        std::string(gguf_get_val_str(context, architecture_key)) != "qwen2") {
         throw std::runtime_error("native execution currently supports only qwen2 GGUF models");
     }
+    reject_unsupported_rope_scaling(context);
 
     Qwen2HParams params;
     ModelInfo& info = params.public_info;
     info.architecture = "qwen2";
-    info.layer_count = require_u32(context.get(), "qwen2.block_count");
-    info.embedding_length = require_u32(context.get(), "qwen2.embedding_length");
-    params.feed_forward_length = require_u32(context.get(), "qwen2.feed_forward_length");
-    params.head_count = require_u32(context.get(), "qwen2.attention.head_count");
-    params.kv_head_count = require_u32(context.get(), "qwen2.attention.head_count_kv");
-    info.context_length = require_u32(context.get(), "qwen2.context_length");
-    params.rope_dimension_count = require_u32(context.get(), "qwen2.rope.dimension_count");
-    params.rope_frequency_base = require_f32(context.get(), "qwen2.rope.freq_base");
+    info.layer_count = require_u32(context, "qwen2.block_count");
+    info.embedding_length = require_u32(context, "qwen2.embedding_length");
+    params.feed_forward_length = require_u32(context, "qwen2.feed_forward_length");
+    params.head_count = require_u32(context, "qwen2.attention.head_count");
+    params.kv_head_count = require_u32(context, "qwen2.attention.head_count_kv");
+    info.context_length = require_u32(context, "qwen2.context_length");
+    params.rope_dimension_count = require_u32(context, "qwen2.rope.dimension_count");
+    params.rope_frequency_base = require_f32(context, "qwen2.rope.freq_base");
     params.rms_epsilon = require_f32(
-        context.get(),
+        context,
         "qwen2.attention.layer_norm_rms_epsilon"
     );
     validate_hparams(params);
