@@ -46,11 +46,44 @@ or through the direct runtime transport. Multi-stage runtime workers require
 the same `JETSONFABRIC_CLUSTER_TOKEN` as their supervising nodes so peer
 Stagewire calls can authenticate.
 
+## Experimental Tensor-Parallel Runtime
+
+The CUDA build includes an experimental llama.cpp tensor-parallel execution
+mode. One driver runtime presents a single logical generation stage while
+llama.cpp shards model tensors across its local CUDA device and one or more
+remote CUDA devices exposed by `jetsonfabric-tensor-worker`.
+
+Start the provider on a trusted private network:
+
+```bash
+make run-tensor-worker \
+  TENSOR_WORKER_LISTEN=0.0.0.0:52520 \
+  TENSOR_WORKER_ALLOW_REMOTE=true
+```
+
+Then start the driver with a provider address and optional local/remote split:
+
+```bash
+make run-runtime \
+  RUNTIME_MODE=tensor_parallel \
+  RUNTIME_COMPUTE_BACKEND=cuda \
+  RUNTIME_TENSOR_RPC_PEERS=node-b.local:52520 \
+  RUNTIME_TENSOR_SPLIT=3,2 \
+  STAGE_INDEX=0 STAGE_COUNT=1 \
+  LAYER_START=0 LAYER_END=48
+```
+
+The tensor worker uses llama.cpp's raw GGML RPC protocol, which provides no
+authentication or encryption. Non-loopback listeners therefore require the
+explicit `--allow-remote` acknowledgement and must remain on a trusted LAN.
+This first implementation is a direct-runtime research path; coordinator
+placement and lifecycle management remain pipeline-only until tensor execution
+has a secure transport and a stable rank-assignment contract.
+
 ## Tensor-Parallel Feasibility Benchmark
 
-The optional CUDA benchmark measures a Qwen-shaped SwiGLU MLP locally and with
-its intermediate width split across two Jetsons. It is a research tool, not a
-runtime execution mode:
+The optional CUDA microbenchmark measures a Qwen-shaped SwiGLU MLP locally and
+with its intermediate width split across two Jetsons:
 
 ```bash
 cmake -S runtime -B runtime/build-tp \
@@ -65,13 +98,29 @@ See
 [`docs/benchmarks/2026-07-31-tensor-parallel-feasibility.md`](../docs/benchmarks/2026-07-31-tensor-parallel-feasibility.md)
 for commands, methodology, results, and claim boundaries.
 
+The full 14B runtime comparison is documented in
+[`docs/benchmarks/2026-08-01-tensor-parallel-runtime.md`](../docs/benchmarks/2026-08-01-tensor-parallel-runtime.md).
+
+## Native Engine Foundation
+
+`engines/native` contains a standalone C model core and the JFM stage-native
+package reader. `jf-model-compile` imports GGUF tensors into reusable per-layer
+segments without changing their quantized bytes. This path currently measures
+model packaging, exact stage selection, and NVMe first-touch; it is not registered as a serving
+engine until it passes end-to-end Qwen correctness gates. See
+[`docs/native-engine.md`](../docs/native-engine.md).
+
 ## Layout
 
 - `worker/`: process entrypoint and validated runtime configuration;
 - `api/`: health, deployment lifecycle, generation, and binary stage endpoints;
 - `deployment/`: resident deployment state and lifecycle barriers;
 - `engine/`: runtime service and engine construction;
+- `inference/`: engine-neutral execution interface and request values;
 - `adapters/`: llama.cpp full-model and partial-layer execution;
+- `engines/native/`: dependency-light C model package and stage-loading core;
+- `compiler/`: offline GGUF-to-JFM import tools;
+- `tensor_parallel/`: device-mesh validation and trusted-LAN RPC provider;
 - `protocol/`: generation, stage, and lifecycle serialization;
 - `transport/`: runtime-initiated peer Stagewire HTTP transport;
 - `benchmarks/`: isolated transport and CUDA feasibility tools;

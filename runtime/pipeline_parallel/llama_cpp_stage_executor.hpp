@@ -1,7 +1,7 @@
 #pragma once
 
 #include "adapters/llama_cpp_stage_adapter.hpp"
-#include "pipeline_parallel/layer_executor.hpp"
+#include "inference/executor.hpp"
 
 #include <cstddef>
 #include <string>
@@ -9,7 +9,7 @@
 
 namespace jetsonfabric::runtime::pipeline_parallel {
 
-class LlamaCppStageExecutor final : public LayerExecutor {
+class LlamaCppStageExecutor final : public inference::Executor {
 public:
     explicit LlamaCppStageExecutor(adapters::LlamaCppStageConfig config);
 

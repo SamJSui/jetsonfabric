@@ -58,8 +58,11 @@ Implemented behavior includes:
 - active-deployment repair after an empty runtime process restarts;
 - bounded runtime HTTP workers and persistent ordered connections to peer nodes;
 - selectable relay and direct runtime-to-runtime HTTP transports;
+- opt-in multi-session continuous decode batching through one native
+  `llama_decode` batch;
 - opt-in prompt-lookup speculative decoding with target verification and
   distributed KV-cache rollback;
+- experimental direct-runtime tensor sharding over trusted-LAN GGML RPC;
 - OpenAI-compatible buffered and streaming chat completions through any node.
 
 See [the architecture](docs/architecture.md) for component ownership and
@@ -68,95 +71,61 @@ See [the architecture](docs/architecture.md) for component ownership and
 ## Measured Results
 
 The physical test cluster used two Jetson Orin Nano 8 GB nodes in MAXN_SUPER
-mode over wired 1 GbE. All models were Qwen2.5-Coder Q4_K_M. The performance
-sweep used a 1,024-token context, 64 output tokens, three warmups, and 20
-measured requests at concurrency 1.
+mode over wired 1 GbE. Tests used greedy Qwen2.5-Coder GGUF models and verified
+token counts against final usage. Detailed reports preserve the exact model,
+quantization, context, output length, concurrency, and sample count.
+
+### Pareto Frontier
+
+| Objective | Configuration | Best measured result |
+| --- | --- | --- |
+| Maximum aggregate throughput | 1.5B, two replicas | **80.06 output tok/s** |
+| Performance/quality knee | 7B, two replicas | **24.63 aggregate tok/s**, 84.1% HumanEval+ |
+| Largest Pareto model | 14B, 26/22 pipeline | **12.19 aggregate tok/s**, 86.6% HumanEval+ |
+| Maximum demonstrated capacity | 32B Q2_K, 33/31 pipeline | **11.46 GiB resident weights**, 5.149 aggregate tok/s |
+
+Replica and pipeline throughput above use the concurrency-two serving matrix.
+HumanEval+ used one greedy sample for each of 164 EvalPlus tasks. The 32B model
+proved capacity, but did not improve HumanEval+ over 14B and reduced throughput.
 
 ![One-node and two-node throughput and energy across model sizes](docs/benchmarks/figures/model-scaling.svg)
 
-HumanEval used one greedy sample for each of 164 EvalPlus tasks, a 1,536-token
-context, and at most 512 output tokens. The 1.5B, 3B, and 7B models ran on one
-node; 14B used the two-node pipeline.
-
 ![HumanEval Plus quality versus fixed-output throughput](docs/benchmarks/figures/quality-throughput.svg)
 
-| Model | Placement | TTFT p50 | ITL p50 | E2E p50 | Output tok/s | J/token | HumanEval+ |
+### Matched 14B Architecture Comparison
+
+The same Q4_K_M model, prompt, 2,048-token context, 32-token output, and exact
+token sequence were used for the pipeline and tensor runs.
+
+| Mode | Placement | TTFT mean | ITL mean | E2E mean | Decode tok/s | J/token | Captured wire traffic |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1.5B | One node | 103 ms | 24 ms | 1.68 s | 37.51 | 0.452 | 68.3% |
-| 3B | One node | 126 ms | 41 ms | 2.81 s | 22.43 | 0.838 | 76.8% |
-| 7B | One node | 248 ms | 79 ms | 5.31 s | 12.05 | 1.718 | 84.1% |
-| 14B | Two nodes | 418 ms | 159 ms | 10.52 s | 6.08 | 4.479 | 86.6% |
+| Pipeline | 24/24 layers | **361 ms** | **154 ms** | **5.14 s** | **6.50** | **4.25** | **3.2 MB** |
+| Tensor | 60/40 weights | 1,096 ms | 596 ms | 19.58 s | 1.68 | 11.36 | 6.55 GB |
 
-For this original sweep, TTFT ended at the first nonempty SSE content chunk and
-ITL measured intervals between streamed content chunks. The current benchmark
-client instead tracks runtime token events and verifies their count against
-final usage. E2E is full request latency for the fixed 64-token experiment. The
-table and performance figure report medians; tail estimates are not promoted
-from a 20-request sample.
+Wire counters covered one warmup plus three measured requests. Power and
+latency metrics cover the three measured requests. Tensor sharding was correct,
+but repeated intra-layer collectives made it network-bound on 1 GbE.
 
-Key findings:
+### Findings
 
-- 32B Q2_K is the measured dense-model capacity limit: 11.46 GiB of resident
-  weights load as 33/31 layer partitions and sustain all 164 HumanEval
-  generations at up to concurrency two without a CUDA OOM.
-- 7B is the measured performance/quality knee. It delivered about twice the
-  14B throughput with 38% of its energy per output token.
-- The 7B-to-14B HumanEval difference was not statistically distinguishable on
-  164 tasks.
-- Splitting reduced throughput by 20.5% for 1.5B, 14.1% for 3B, and 8.8% for
-  7B relative to each model's one-node baseline.
-- Exact greedy tokens, activation CRC continuity, CUDA activity, partitioned
-  residency, power, temperature, and failure behavior were captured physically.
+- **Use replicas when the model fits.** They produced the highest aggregate
+  throughput for 1.5B, 3B, and 7B.
+- **Use pipeline parallelism for capacity.** It served 14B and 32B models that
+  cannot fit on one 8 GB node.
+- **7B is the measured performance/quality knee.** The 7B-to-14B HumanEval
+  difference was not statistically significant on 164 tasks.
+- **Continuous decode batching is implemented but remains opt-in.** The
+  physical concurrency sweep did not beat unbatched execution on these nodes.
+- **Tensor parallelism needs a faster interconnect.** It preserved exact tokens
+  but was 3.9x slower in decode than the pipeline over 1 GbE.
 
-These measurements establish the current claim boundary: aggregate model
-capacity is proven. The original concurrency-1 sweep does not establish a
-distributed speedup.
+Detailed methodology and claim boundaries:
 
-### Capacity Frontier
-
-The maximum-model experiment compared Qwen2.5-Coder 32B Q2_K against the 14B
-Q4_K_M quality/performance point:
-
-| Model | Placement | HumanEval | HumanEval+ | Fixed-64 output tok/s | J/token |
-| --- | --- | ---: | ---: | ---: | ---: |
-| 14B Q4_K_M | Two nodes | 89.6% | 86.6% | 6.08 | 4.48 |
-| 32B Q2_K | Two nodes | **90.9%** | 86.6% | 2.39 | 9.50 |
-
-The 32B model proves additional capacity, but not a better Pareto point:
-HumanEval+ tied, the base-score difference was not statistically significant,
-and fixed-output throughput fell 60.7%. At concurrency two, 32B reached 5.149
-aggregate output tok/s while both GPUs remained active. See the
-[32B capacity report](docs/benchmarks/2026-07-30-32b-capacity.md).
-
-### Serving Matrix
-
-A follow-up matrix used F16 activations, a 1,536-token context, 128 output
-tokens, stage allocations balanced from measured runtime timings, and
-concurrency 1, 2, and 4. Values below are the best measured concurrency-2
-configurations after warmup.
-
-| Model | Placement | Output tok/s | TTFT p50 | ITL p50 | E2E p50 |
-| --- | --- | ---: | ---: | ---: | ---: |
-| 1.5B | Two replicas | 80.06 | 75 ms | 24 ms | 3.19 s |
-| 1.5B | 18/10 pipeline | 63.44 | 148 ms | 29 ms | 4.02 s |
-| 3B | Two replicas | 46.45 | 115 ms | 42 ms | 5.48 s |
-| 3B | 21/15 pipeline | 39.77 | 203 ms | 48 ms | 6.44 s |
-| 7B | Two replicas | 24.63 | 198 ms | 80 ms | 10.36 s |
-| 7B | 16/12 pipeline | 22.60 | 316 ms | 85 ms | 11.33 s |
-| 14B | 26/22 pipeline | **12.19** | 533 ms | 159 ms | 20.99 s |
-
-Replicas remain the throughput optimum when the model fits on one board. The
-balanced pipeline retains 79.2%, 85.6%, and 91.8% of replica throughput for
-1.5B, 3B, and 7B respectively. For 14B, which cannot fit on one 8 GB node,
-concurrency 2 nearly doubles aggregate pipeline throughput over concurrency 1
-while median request latency rises only 3.0%.
-
-The detailed method, every suite, runtime timing decomposition, and claim
-boundaries are in the
-[serving matrix report](docs/benchmarks/2026-07-29-serving-matrix.md).
-
-Direct runtime transport and prompt-lookup speculation are evaluated in the
-[runtime transport report](docs/benchmarks/2026-07-31-runtime-transport-speculation.md).
+- [model scaling and HumanEval](docs/benchmarks/2026-07-27-two-orin-nano.md);
+- [serving matrix](docs/benchmarks/2026-07-29-serving-matrix.md);
+- [32B capacity](docs/benchmarks/2026-07-30-32b-capacity.md);
+- [runtime transport, batching, and speculation](docs/benchmarks/2026-07-31-runtime-transport-speculation.md);
+- [tensor runtime comparison](docs/benchmarks/2026-08-01-tensor-parallel-runtime.md).
 
 ## Quick Start
 
@@ -339,14 +308,14 @@ Current work is:
 
 1. **Harden the memory boundary:** estimate weights, KV, activations, compute
    buffers, fragmentation, and replacement overlap before admitting a plan.
-2. **Improve two-node utilization:** profile decode kernels and evaluate
-   pipeline micro-batching or continuous batching against throughput, latency,
-   and energy.
-3. **Evaluate a sparse frontier:** extend partial residency to one measured MoE
-   architecture only if its accuracy and active-parameter speed justify the
-   added runtime graph support.
-4. **Operator and recovery experience:** package services, distribute models,
+2. **Improve pipeline utilization:** profile decode kernels and evaluate
+   chunked prefill against long-prompt TTFT. Continuous decode batching is
+   already implemented and remains opt-in based on physical results.
+3. **Operator and recovery experience:** package services, distribute models,
    expose repeatable benchmarks, and automate node-loss acceptance tests.
+4. **Jetson-native engine:** JFM v2 packaging, exact stage selection, integrity
+   validation, and optimized NVMe first-touch are complete. Implement one-node
+   Qwen execution parity before registering the native path for serving.
 
 After those are stable:
 
@@ -354,8 +323,8 @@ After those are stable:
 - persist coordinator intent and deployment state across leader failure;
 - add structured metrics and traces;
 - evaluate additional measured activation codecs;
-- pursue tensor parallelism only if measurements and Jetson networking justify
-  the added complexity.
+- integrate tensor placement into coordinator lifecycle only after transport
+  authentication and faster-link measurements justify the added complexity.
 
 ## Current Limitations
 
@@ -363,8 +332,9 @@ After those are stable:
   patch tied to the pinned `llama.cpp` revision.
 - Reported model residency covers tensor payloads, not allocator overhead,
   compute buffers, KV cache, fragmentation, or replacement overlap.
-- Runtime HTTP serving is bounded to two workers by default. Model execution
-  remains serialized inside each stage adapter.
+- Runtime HTTP serving is bounded to two workers by default. Stage adapters
+  serialize native execution calls; optional continuous batching coalesces
+  concurrent decode steps into one call.
 - Peer operations reuse one ordered HTTP/1.1 connection per target; they are
   not multiplexed and do not overlap microbatches.
 - The `f16` activation codec uses scalar CPU conversion; physical benchmarks
@@ -372,3 +342,8 @@ After those are stable:
 - Chat completions use greedy sampling.
 - Stage traffic uses a shared cluster token over plaintext HTTP. Use only a
   trusted network.
+- Experimental tensor execution uses raw unauthenticated GGML RPC and bypasses
+  coordinator lifecycle management. It is restricted to trusted-LAN research.
+- The native JFM path does not generate tokens yet. llama.cpp remains the
+  serving engine and correctness oracle while native tokenization, CUDA graph
+  execution, KV cache, logits, and sampling are implemented and validated.

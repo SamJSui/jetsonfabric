@@ -3,6 +3,7 @@
 #include "pipeline_parallel/stage_assignment.hpp"
 #include "protocol/execution_mode.hpp"
 #include "protocol/kv_cache_type.hpp"
+#include "tensor_parallel/device_mesh.hpp"
 
 #include <string>
 
@@ -34,6 +35,7 @@ struct Config {
 
     ExecutionMode mode = ExecutionMode::DataParallel;
     pipeline_parallel::StageAssignment stage_assignment;
+    tensor_parallel::DeviceMesh tensor_mesh;
 
     bool start_idle = false;
 };

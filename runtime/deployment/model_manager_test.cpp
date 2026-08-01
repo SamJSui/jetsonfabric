@@ -41,7 +41,7 @@ void expect_transition(
     );
 }
 
-class RecordingExecutor final : public runtime::pipeline_parallel::LayerExecutor {
+class RecordingExecutor final : public runtime::inference::Executor {
 public:
     explicit RecordingExecutor(int* destruction_count = nullptr)
         : destruction_count_(destruction_count) {}
@@ -88,7 +88,7 @@ private:
     int* destruction_count_;
 };
 
-class BlockingExecutor final : public runtime::pipeline_parallel::LayerExecutor {
+class BlockingExecutor final : public runtime::inference::Executor {
 public:
     explicit BlockingExecutor(std::atomic_int& destruction_count)
         : destruction_count_(destruction_count) {}
@@ -314,7 +314,7 @@ void test_loaded_manager() {
         managed_identity(),
         assignment(),
         runtime::InferenceEngineParts{
-            .layer_executor = std::move(executor),
+            .executor = std::move(executor),
             .model_residency = std::nullopt,
         }
     );
@@ -377,6 +377,29 @@ void test_loaded_manager() {
     expect(recording->last_closed_session == "session-1", "wrong session was closed");
 }
 
+void test_engine_assignment_overrides_requested_assignment() {
+    auto executor = std::make_unique<RecordingExecutor>();
+    runtime::pipeline_parallel::StageAssignment effective = assignment();
+    effective.layer_end = 48;
+    runtime::deployment::ModelManager manager(
+        "node-a",
+        managed_identity(),
+        assignment(),
+        runtime::InferenceEngineParts{
+            .executor = std::move(executor),
+            .model_residency = std::nullopt,
+            .execution_assignment = effective,
+        }
+    );
+
+    runtime::protocol::StageRequest request = valid_request();
+    request.layer_end = 48;
+    expect(
+        manager.run_stage(request).ok,
+        "model manager did not use the engine's effective stage assignment"
+    );
+}
+
 void test_guarded_unload() {
     int destruction_count = 0;
     auto executor = std::make_unique<RecordingExecutor>(&destruction_count);
@@ -386,7 +409,7 @@ void test_guarded_unload() {
         managed_identity(),
         assignment(),
         runtime::InferenceEngineParts{
-            .layer_executor = std::move(executor),
+            .executor = std::move(executor),
             .model_residency = std::nullopt,
         }
     );
@@ -458,7 +481,7 @@ void test_in_flight_execution_survives_unload() {
         managed_identity(),
         assignment(),
         runtime::InferenceEngineParts{
-            .layer_executor = std::move(executor),
+            .executor = std::move(executor),
             .model_residency = std::nullopt,
         }
     );
@@ -510,7 +533,7 @@ void test_loading_deployment_can_be_canceled() {
                 builder_changed.notify_all();
                 builder_changed.wait(lock, [&]() { return release_builder; });
                 return runtime::InferenceEngineParts{
-                    .layer_executor = std::make_unique<RecordingExecutor>(),
+                    .executor = std::make_unique<RecordingExecutor>(),
                     .model_residency = std::nullopt,
                 };
             }
@@ -557,7 +580,7 @@ void test_invalid_identity_rejected() {
                 std::move(identity),
                 assignment(),
                 runtime::InferenceEngineParts{
-                    .layer_executor = std::make_unique<RecordingExecutor>(),
+                    .executor = std::make_unique<RecordingExecutor>(),
                     .model_residency = std::nullopt,
                 }
             );
@@ -601,6 +624,7 @@ int main() {
     test_invalid_resident_state_transitions();
     test_idle_manager();
     test_loaded_manager();
+    test_engine_assignment_overrides_requested_assignment();
     test_guarded_unload();
     test_in_flight_execution_survives_unload();
     test_loading_deployment_can_be_canceled();

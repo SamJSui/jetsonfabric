@@ -1,0 +1,18 @@
+{
+  "benchmark": "jf_native_model_load_v1",
+  "iterations": 20,
+  "verify_hashes": false,
+  "evict_before_open": false,
+  "prefetch": false,
+  "prefetch_threads": 1,
+  "layer_start": 0,
+  "layer_end": 24,
+  "layer_count": 48,
+  "resident_weight_bytes": 4390699008,
+  "total_weight_bytes": 8982142976,
+  "mapped_bytes": 4390729280,
+  "resident_tensor_count": 289,
+  "total_tensor_count": 579,
+  "prefetch_checksum": 0,
+  "open": {"min_ms": 0.300, "median_ms": 0.314, "p95_ms": 0.356}
+}

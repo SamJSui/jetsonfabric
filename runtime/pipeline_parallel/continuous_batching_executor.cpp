@@ -21,7 +21,7 @@ struct ContinuousBatchingExecutor::Impl {
         std::promise<inference::ExecutionResult> completion;
     };
 
-    Impl(std::unique_ptr<LayerExecutor> delegate_in, ContinuousBatchingConfig config_in)
+    Impl(std::unique_ptr<inference::Executor> delegate_in, ContinuousBatchingConfig config_in)
         : delegate(std::move(delegate_in)),
           config(config_in) {
         if (!delegate) {
@@ -140,7 +140,7 @@ struct ContinuousBatchingExecutor::Impl {
         }
     }
 
-    std::unique_ptr<LayerExecutor> delegate;
+    std::unique_ptr<inference::Executor> delegate;
     ContinuousBatchingConfig config;
     mutable std::mutex mutex;
     mutable std::mutex delegate_mutex;
@@ -150,7 +150,7 @@ struct ContinuousBatchingExecutor::Impl {
 };
 
 ContinuousBatchingExecutor::ContinuousBatchingExecutor(
-    std::unique_ptr<LayerExecutor> delegate,
+    std::unique_ptr<inference::Executor> delegate,
     ContinuousBatchingConfig config
 )
     : impl_(std::make_unique<Impl>(std::move(delegate), config)) {}

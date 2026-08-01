@@ -33,7 +33,7 @@ std::vector<std::uint8_t> f32_bytes(float first, float second) {
     return bytes;
 }
 
-class FirstStageExecutor final : public runtime::pipeline_parallel::LayerExecutor {
+class FirstStageExecutor final : public runtime::inference::Executor {
 public:
     runtime::inference::ExecutionResult execute(
         const runtime::inference::StageInput& input
@@ -64,7 +64,7 @@ public:
     }
 };
 
-class LastStageExecutor final : public runtime::pipeline_parallel::LayerExecutor {
+class LastStageExecutor final : public runtime::inference::Executor {
 public:
     runtime::inference::ExecutionResult execute(
         const runtime::inference::StageInput& input

@@ -1,0 +1,55 @@
+{
+  "benchmark": "jf_native_engine_foundation_v2",
+  "measured_at": "2026-08-01",
+  "source_branch": "feature/tensor-parallel-runtime",
+  "base_commit": "3626ce7d44501c73551d07c51d81f8905ef8013f",
+  "worktree_dirty": true,
+  "publication_status": "exploratory; repeat from a committed tree before using as a public performance claim",
+  "host": {
+    "node_name": "dopey",
+    "device": "NVIDIA Jetson Orin Nano Engineering Reference Developer Kit Super",
+    "memory_gib": 7.4,
+    "jetson_linux": "R39.2",
+    "kernel": "6.8.12-1021-tegra",
+    "power_mode": "MAXN_SUPER",
+    "cpu_count": 6,
+    "cpu_frequency_hz": 1728000000,
+    "gpu_frequency_hz": 1020000000,
+    "emc_frequency_hz": 3199000000,
+    "storage_model": "SPCC M.2 PCIe SSD",
+    "storage_transport": "nvme",
+    "gcc": "13.3.0",
+    "cmake": "3.28.3"
+  },
+  "model": {
+    "name": "Qwen2.5-Coder-14B-Instruct Q4_K_M",
+    "source_path": "/var/lib/jetsonfabric/models/qwen2.5-coder-14b-instruct-q4_k_m.gguf",
+    "source_bytes": 8988110272,
+    "source_sha256": "c1e659736d89ac1065fb495330fb824d94001974a4bfa78e7270e43476a8d940",
+    "layer_count": 48,
+    "tensor_count": 579,
+    "tensor_bytes": 8982142976,
+    "jfm_format_version": 2,
+    "jfm_package_bytes": 8988179784,
+    "jfm_metadata_bytes": 5967296
+  },
+  "compiler_seconds": {
+    "portable_three_pass": 243,
+    "portable_combined_write_hash": 238,
+    "openssl_combined_write_hash": 41,
+    "v2_openssl_with_source_reverification": 55.228
+  },
+  "methodology": {
+    "warm_open_iterations": 20,
+    "cold_prefetch_iterations": 5,
+    "cold_approximation": "posix_fadvise(POSIX_FADV_DONTNEED) before mmap",
+    "first_touch": "one byte per mapped page after MADV_WILLNEED",
+    "limitations": [
+      "The Linux eviction hint is not equivalent to a reboot or privileged global page-cache drop.",
+      "The node and idle llama.cpp runtime remained active during the measurements.",
+      "This benchmark measures package import and model residency, not token generation.",
+      "The native serving executor and CUDA transformer kernels are not implemented yet."
+    ],
+    "evidence_note": "Files without v2 in their name are exploratory JFM v1 optimization records. The five-sample v2 cold p95 fields equal the observed maxima and are not stable tail estimates."
+  }
+}

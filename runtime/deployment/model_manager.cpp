@@ -187,6 +187,7 @@ public:
             InferenceEngineParts engine_parts = build_engine_parts();
             const std::optional<ModelResidency> model_residency =
                 engine_parts.model_residency;
+            assignment = engine_parts.execution_assignment.value_or(assignment);
             std::unique_ptr<ResidentExecution> execution =
                 std::make_unique<ResidentExecution>(
                     std::move(node_name),
@@ -445,7 +446,7 @@ private:
                   std::move(node_name),
                   std::move(model_id),
                   assignment,
-                  Impl::require_layer_executor(engine_parts),
+                  Impl::require_executor(engine_parts),
                   std::move(activation_codec)
               ) {}
 
@@ -502,6 +503,7 @@ private:
         pipeline_parallel::StageAssignment assignment,
         InferenceEngineParts engine_parts
     ) {
+        assignment = engine_parts.execution_assignment.value_or(assignment);
         const DeploymentKey key = key_for(identity);
         deployments_.emplace(
             key,
@@ -787,13 +789,13 @@ private:
         return identity;
     }
 
-    static const pipeline_parallel::LayerExecutor& require_layer_executor(
+    static const inference::Executor& require_executor(
         const InferenceEngineParts& engine_parts
     ) {
-        if (!engine_parts.layer_executor) {
-            throw std::invalid_argument("model manager requires a layer executor");
+        if (!engine_parts.executor) {
+            throw std::invalid_argument("model manager requires an inference executor");
         }
-        return *engine_parts.layer_executor;
+        return *engine_parts.executor;
     }
 
     static std::shared_ptr<const activation::ActivationCodec> require_activation_codec(

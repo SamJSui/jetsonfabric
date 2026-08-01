@@ -64,6 +64,12 @@ jobs:
       - name: Install native build dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build jq
 
+      - name: Test standalone native engine boundary
+        run: |
+          cmake -S runtime/engines/native -B runtime/build-native-ci -DCMAKE_BUILD_TYPE=Release
+          cmake --build runtime/build-native-ci --parallel 2
+          ctest --test-dir runtime/build-native-ci --output-on-failure
+
       - name: Cache CI model
         id: model-cache
         uses: actions/cache@v4
@@ -262,6 +268,9 @@ jobs:
 
       - name: Run native runtime unit tests
         run: ctest --test-dir "$CI_RUNTIME_BUILD_DIR" --output-on-failure
+
+      - name: Run benchmark client unit tests
+        run: python3 -m unittest tools.bench.test_runtime_jsonl
 
       - name: Run Qwen2 partition residency equivalence
         run: CI_MODEL_PATH="$CI_QWEN_MODEL_PATH" "$CI_RUNTIME_BUILD_DIR/jetsonfabric-llama-stage-test"

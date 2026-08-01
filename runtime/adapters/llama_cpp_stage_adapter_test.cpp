@@ -465,6 +465,7 @@ void verify_two_stage_speculative_rollback(
             .n_gpu_layers = 0,
             .layer_start = range.start,
             .layer_end = range.end,
+            .tensor_parallel = std::nullopt,
         });
         stages.push_back(std::make_unique<LlamaCppStageAdapter>(LlamaCppStageConfig{
             .model = std::move(stage_model),
@@ -588,6 +589,7 @@ void verify_pipeline_equivalence(
             .n_gpu_layers = 0,
             .layer_start = range.start,
             .layer_end = range.end,
+            .tensor_parallel = std::nullopt,
         });
         stages.push_back(std::make_unique<LlamaCppStageAdapter>(LlamaCppStageConfig{
             .model = stage_model,
@@ -680,6 +682,7 @@ int main(int argc, char** argv) {
         auto model = std::make_shared<LlamaCppModel>(LlamaCppModelConfig{
             .model_path = model_path,
             .n_gpu_layers = 0,
+            .tensor_parallel = std::nullopt,
         });
         if (argc == 2 && std::string(argv[1]) == "--print-layer-count") {
             std::cout << model->n_layer() << '\n';

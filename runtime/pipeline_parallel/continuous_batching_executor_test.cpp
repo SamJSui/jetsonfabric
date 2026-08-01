@@ -30,7 +30,7 @@ inference::StageInput input_for(std::string session_id, inference::Phase phase) 
     return input;
 }
 
-class RecordingExecutor final : public pipeline_parallel::LayerExecutor {
+class RecordingExecutor final : public inference::Executor {
 public:
     inference::ExecutionResult execute(const inference::StageInput&) const override {
         ++single_calls;
@@ -56,7 +56,7 @@ public:
     mutable std::atomic_int last_batch_size{0};
 };
 
-class FailingBatchExecutor final : public pipeline_parallel::LayerExecutor {
+class FailingBatchExecutor final : public inference::Executor {
 public:
     explicit FailingBatchExecutor(bool throw_error) : throw_error_(throw_error) {}
 
