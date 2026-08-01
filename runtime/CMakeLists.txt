@@ -187,6 +187,10 @@ target_compile_options(jetsonfabric-two-node-collective-bench PRIVATE
 option(JF_BUILD_CUDA_BENCHMARKS "Build Jetson CUDA feasibility benchmarks" OFF)
 set(JF_CUDA_ARCHITECTURES "87" CACHE STRING "CUDA architectures for Jetson benchmarks")
 if(JF_BUILD_CUDA_BENCHMARKS)
+  if(NOT CMAKE_CUDA_COMPILER AND EXISTS "/usr/local/cuda/bin/nvcc")
+    set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc" CACHE FILEPATH "CUDA compiler")
+  endif()
+  set(CMAKE_CUDA_ARCHITECTURES "${JF_CUDA_ARCHITECTURES}" CACHE STRING "CUDA architectures" FORCE)
   enable_language(CUDA)
   find_package(CUDAToolkit REQUIRED)
   add_executable(jetsonfabric-tensor-parallel-mlp-bench
