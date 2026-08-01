@@ -33,6 +33,7 @@ data/
 artifacts/
 reports/
 *.log
+!docs/benchmarks/evidence/20260801-native-inference/tegrastats.log
 *.jsonl
 
 models/
