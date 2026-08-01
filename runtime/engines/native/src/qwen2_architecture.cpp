@@ -89,10 +89,9 @@ public:
     }
 
     std::vector<float> compute(std::span<const std::int32_t> tokens) {
-        ggml_backend_t backend = weights_.backend();
-        ggml_backend_t backends[] = {backend};
+        std::span<ggml_backend_t> backends = weights_.scheduler_backends();
         ggml_backend_sched_ptr scheduler(ggml_backend_sched_new(
-            backends, nullptr, 1, kGraphSize, false, true
+            backends.data(), nullptr, backends.size(), kGraphSize, false, true
         ));
         if (!scheduler || !ggml_backend_sched_alloc_graph(scheduler.get(), graph_)) {
             throw std::runtime_error("could not allocate native Qwen2 compute graph");

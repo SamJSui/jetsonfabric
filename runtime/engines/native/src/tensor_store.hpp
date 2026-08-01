@@ -6,6 +6,7 @@
 #include "ggml-backend.h"
 #include "ggml-cpp.h"
 
+#include <array>
 #include <cstdint>
 #include <cstddef>
 #include <span>
@@ -24,6 +25,9 @@ public:
     );
 
     ggml_backend_t backend() const { return backend_.get(); }
+    std::span<ggml_backend_t> scheduler_backends() {
+        return {scheduler_backends_.data(), scheduler_backend_count_};
+    }
     ggml_tensor * find(const std::string& name) const;
     ggml_tensor * require(const std::string& name) const;
     std::uint32_t vocabulary_size() const;
@@ -39,6 +43,9 @@ private:
     void copy_tensors(jf_model * model);
 
     ggml_backend_ptr backend_;
+    ggml_backend_ptr cpu_fallback_;
+    std::array<ggml_backend_t, 2> scheduler_backends_{};
+    std::size_t scheduler_backend_count_ = 0;
     ggml_context_ptr context_;
     ggml_backend_buffer_ptr buffer_;
     std::unordered_map<std::string, ggml_tensor *> tensors_;

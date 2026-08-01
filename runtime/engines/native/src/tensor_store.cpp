@@ -59,6 +59,11 @@ TensorStore::TensorStore(
     Backend backend,
     int threads
 ) : backend_(create_backend(backend, threads)) {
+    scheduler_backends_[scheduler_backend_count_++] = backend_.get();
+    if (backend == Backend::Cuda) {
+        cpu_fallback_ = create_backend(Backend::Cpu, threads);
+        scheduler_backends_[scheduler_backend_count_++] = cpu_fallback_.get();
+    }
     backend_name_ = ggml_backend_name(backend_.get());
     const ggml_backend_dev_t device = ggml_backend_get_device(backend_.get());
     device_name_ = device == nullptr ? "unknown" : ggml_backend_dev_name(device);
