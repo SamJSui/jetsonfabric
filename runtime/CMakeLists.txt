@@ -122,6 +122,18 @@ target_link_libraries(jf-model-compile PRIVATE
   ${CMAKE_DL_LIBS}
 )
 
+add_executable(jf-llama-greedy-oracle
+  benchmarks/llama_greedy_oracle.cpp
+)
+target_compile_options(jf-llama-greedy-oracle PRIVATE
+  -Wall
+  -Wextra
+  -Wpedantic
+)
+target_link_libraries(jf-llama-greedy-oracle PRIVATE
+  ${JF_LLAMA_TARGET}
+)
+
 if(BUILD_TESTING)
   add_executable(jf-model-fixture
     compiler/model_fixture.cpp
