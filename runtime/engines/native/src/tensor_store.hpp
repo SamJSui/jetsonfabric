@@ -24,6 +24,7 @@ public:
     );
 
     ggml_backend_t backend() const { return backend_.get(); }
+    ggml_tensor * find(const std::string& name) const;
     ggml_tensor * require(const std::string& name) const;
     std::uint32_t vocabulary_size() const;
     std::uint64_t weight_bytes() const { return weight_bytes_; }

@@ -48,6 +48,9 @@ void validate_qwen2_tensors(const TensorStore& tensors, const Qwen2HParams& para
     require_shape(tensors, "token_embd.weight", {embedding, vocabulary});
     require_shape(tensors, "output_norm.weight", {embedding});
     require_shape(tensors, "output.weight", {embedding, vocabulary});
+    if (tensors.find("output.bias") != nullptr) {
+        require_shape(tensors, "output.bias", {vocabulary});
+    }
     for (std::uint32_t layer = 0; layer < params.public_info.layer_count; ++layer) {
         const std::string prefix = "blk." + std::to_string(layer) + ".";
         require_shape(tensors, prefix + "attn_norm.weight", {embedding});
@@ -139,6 +142,14 @@ private:
         return ggml_mul(context_.get(), normalized, weights_.require(weight_name));
     }
 
+    ggml_tensor * output_projection(ggml_tensor * input) {
+        ggml_tensor * output = linear("output.weight", input);
+        if (ggml_tensor * bias = weights_.find("output.bias")) {
+            output = ggml_add(context_.get(), output, bias);
+        }
+        return output;
+    }
+
     ggml_tensor * attention(ggml_tensor * input, std::uint32_t layer) {
         const std::string prefix = "blk." + std::to_string(layer) + ".";
         const ModelInfo& info = params_.public_info;
@@ -227,7 +238,7 @@ private:
         }
         hidden = ggml_get_rows(context_.get(), hidden, output_index_);
         hidden = rms_norm(hidden, "output_norm.weight");
-        logits_ = linear("output.weight", hidden);
+        logits_ = output_projection(hidden);
         ggml_set_output(logits_);
         graph_ = ggml_new_graph_custom(context_.get(), kGraphSize, false);
         ggml_build_forward_expand(graph_, logits_);

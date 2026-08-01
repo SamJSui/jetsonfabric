@@ -161,12 +161,17 @@ void TensorStore::copy_tensors(jf_model * model) {
     }
 }
 
-ggml_tensor * TensorStore::require(const std::string& name) const {
+ggml_tensor * TensorStore::find(const std::string& name) const {
     const auto found = tensors_.find(name);
-    if (found == tensors_.end()) {
+    return found == tensors_.end() ? nullptr : found->second;
+}
+
+ggml_tensor * TensorStore::require(const std::string& name) const {
+    ggml_tensor * tensor = find(name);
+    if (tensor == nullptr) {
         throw std::runtime_error("required native tensor is missing: " + name);
     }
-    return found->second;
+    return tensor;
 }
 
 std::uint32_t TensorStore::vocabulary_size() const {
