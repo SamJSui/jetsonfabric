@@ -18,6 +18,7 @@ NATIVE_ENGINE_BUILD_DIR ?= runtime/build-native-engine
 MODEL_COMPILER_BIN ?= $(DIST_DIR)/jf-model-compile
 NATIVE_MODEL_BENCH_BIN ?= $(DIST_DIR)/jf-native-model-bench
 NATIVE_INFERENCE_BENCH_BIN ?= $(DIST_DIR)/jf-native-inference-bench
+LLAMA_GREEDY_ORACLE_BIN ?= $(DIST_DIR)/jf-llama-greedy-oracle
 NODE_BIN ?= $(DIST_DIR)/jetsonfabric-node
 INTEGRATION_BUILD_DIR ?= runtime/build-integration-cpu
 INTEGRATION_RUNTIME_BIN ?= $(DIST_DIR)/jetsonfabric-runtime-worker-integration-cpu
@@ -263,15 +264,19 @@ model-compiler: setup
 		-DJF_LLAMA_CPP_SOURCE_DIR=$(abspath $(LLAMA_CPP_DIR))
 	$(CMAKE) --build $(RUNTIME_BUILD_DIR) \
 		--target jf-model-compile jf-native-model-bench jf-native-inference-bench \
+			jf-llama-greedy-oracle \
 		--parallel $(RUNTIME_BUILD_JOBS)
 	mkdir -p $(DIST_DIR)
 	cp $(RUNTIME_BUILD_DIR)/jf-model-compile $(MODEL_COMPILER_BIN).tmp
 	cp $(RUNTIME_BUILD_DIR)/engines/native/jf-native-model-bench $(NATIVE_MODEL_BENCH_BIN).tmp
 	cp $(RUNTIME_BUILD_DIR)/engines/native/jf-native-inference-bench $(NATIVE_INFERENCE_BENCH_BIN).tmp
-	chmod +x $(MODEL_COMPILER_BIN).tmp $(NATIVE_MODEL_BENCH_BIN).tmp $(NATIVE_INFERENCE_BENCH_BIN).tmp
+	cp $(RUNTIME_BUILD_DIR)/jf-llama-greedy-oracle $(LLAMA_GREEDY_ORACLE_BIN).tmp
+	chmod +x $(MODEL_COMPILER_BIN).tmp $(NATIVE_MODEL_BENCH_BIN).tmp \
+		$(NATIVE_INFERENCE_BENCH_BIN).tmp $(LLAMA_GREEDY_ORACLE_BIN).tmp
 	mv -f $(MODEL_COMPILER_BIN).tmp $(MODEL_COMPILER_BIN)
 	mv -f $(NATIVE_MODEL_BENCH_BIN).tmp $(NATIVE_MODEL_BENCH_BIN)
 	mv -f $(NATIVE_INFERENCE_BENCH_BIN).tmp $(NATIVE_INFERENCE_BENCH_BIN)
+	mv -f $(LLAMA_GREEDY_ORACLE_BIN).tmp $(LLAMA_GREEDY_ORACLE_BIN)
 
 .PHONY: model-compile
 model-compile: model-compiler
@@ -346,6 +351,16 @@ runtime-cuda: setup
 	cp $(RUNTIME_BUILD_DIR)/jetsonfabric-tensor-worker $(TENSOR_WORKER_BIN).tmp
 	chmod +x $(TENSOR_WORKER_BIN).tmp
 	mv -f $(TENSOR_WORKER_BIN).tmp $(TENSOR_WORKER_BIN)
+	cp $(RUNTIME_BUILD_DIR)/jf-model-compile $(MODEL_COMPILER_BIN).tmp
+	cp $(RUNTIME_BUILD_DIR)/engines/native/jf-native-model-bench $(NATIVE_MODEL_BENCH_BIN).tmp
+	cp $(RUNTIME_BUILD_DIR)/engines/native/jf-native-inference-bench $(NATIVE_INFERENCE_BENCH_BIN).tmp
+	cp $(RUNTIME_BUILD_DIR)/jf-llama-greedy-oracle $(LLAMA_GREEDY_ORACLE_BIN).tmp
+	chmod +x $(MODEL_COMPILER_BIN).tmp $(NATIVE_MODEL_BENCH_BIN).tmp \
+		$(NATIVE_INFERENCE_BENCH_BIN).tmp $(LLAMA_GREEDY_ORACLE_BIN).tmp
+	mv -f $(MODEL_COMPILER_BIN).tmp $(MODEL_COMPILER_BIN)
+	mv -f $(NATIVE_MODEL_BENCH_BIN).tmp $(NATIVE_MODEL_BENCH_BIN)
+	mv -f $(NATIVE_INFERENCE_BENCH_BIN).tmp $(NATIVE_INFERENCE_BENCH_BIN)
+	mv -f $(LLAMA_GREEDY_ORACLE_BIN).tmp $(LLAMA_GREEDY_ORACLE_BIN)
 
 .PHONY: run-node
 run-node:

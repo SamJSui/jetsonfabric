@@ -1,14 +1,15 @@
 # JetsonFabric Native Engine
 
-The native engine work isolates the model hot path from node orchestration and
-from llama.cpp. It currently implements the first production-facing boundary:
-an offline GGUF importer and a dependency-light C library that maps only the
-weights required by a deployment stage.
+The native engine isolates the model hot path from node orchestration and from
+`libllama`. It includes an offline GGUF importer, a dependency-light C loader,
+and an experimental architecture-selected inference path over GGML backends.
 
-It is not yet registered as a serving engine. llama.cpp remains the inference
-implementation and correctness oracle until the native path has real Qwen
-tokenization, attention, KV-cache, logits, and sampling parity. This prevents
-the repository from advertising a synthetic or incomplete inference path.
+It is not yet registered as a serving engine. The first architecture strategy
+implements Qwen2/Qwen2.5 attention, FFN, logits, optional output bias, and
+greedy token selection. It currently accepts token IDs, reloads the full model
+on one node, and recomputes the full prefix for every output token. llama.cpp
+remains the serving implementation and correctness oracle until tokenizer,
+KV-cache, lifecycle, and distributed-stage parity gates pass.
 
 ## Boundaries
 
@@ -18,12 +19,23 @@ jetsonfabric-node (Go)
       -> inference::Executor
           -> llama.cpp executor (current serving path)
           -> native executor (after parity gates)
-              -> libjetsonfabric-native-engine (C/CUDA)
+              -> NativeEngine
+                  -> TensorStore (JFM integrity, tensors, GGML backend)
+                  -> ArchitectureRegistry
+                      -> Qwen2Architecture (first strategy)
 ```
 
-The C library does not depend on Go, HTTP, JSON, discovery, coordinator state,
-or llama.cpp. The offline compiler uses the pinned GGUF parser only to import
-GGUF metadata and copy the original quantized tensor bytes.
+`NativeEngine` is not Qwen-specific. Model architecture modules own only the
+metadata rules, required tensor shapes, and compute graph that differ between
+model families. Adding another family means implementing `ModelArchitecture`
+and registering its GGUF architecture name; it does not change JFM loading,
+backend selection, generation control, or benchmark reporting.
+
+The C loader does not depend on Go, HTTP, JSON, discovery, coordinator state,
+GGML, or llama.cpp. The offline compiler uses the pinned GGUF parser only to
+import metadata and copy the original quantized tensor bytes. Experimental
+inference uses JetsonFabric-owned graphs over GGML/GGML-CUDA, but does not link
+or call `libllama`.
 
 ## Package Format
 
@@ -106,12 +118,43 @@ evict each clean segment before mapping it, providing a non-root approximation
 of cold NVMe residency. `JFM_PREFETCH_THREADS` measures whether concurrent
 segment faulting improves that storage-bound phase on the target device.
 
+## Native Inference Baseline
+
+The inference benchmark consumes explicit token IDs so tokenizer behavior is
+not mixed with graph correctness. Use the separate llama.cpp oracle to obtain
+the prompt and expected greedy token sequences, then require an exact match:
+
+```bash
+dist/jf-llama-greedy-oracle \
+  --model /var/lib/jetsonfabric/models/model.gguf \
+  --prompt 'Once upon a time' \
+  --max-tokens 4 \
+  --n-gpu-layers 999 \
+  --threads 6
+
+make bench-native-inference \
+  JFM_PACKAGE=/var/lib/jetsonfabric/models/model.jfm \
+  JFM_INFERENCE_BACKEND=cuda \
+  JFM_TOKENS=token0,token1,token2 \
+  JFM_MAX_TOKENS=4 \
+  JFM_EXPECTED_TOKENS=next0,next1,next2,next3 \
+  JFM_INFERENCE_WARMUPS=1 \
+  JFM_INFERENCE_ITERATIONS=10
+```
+
+The benchmark verifies JFM segment hashes, reports the source GGUF SHA-256 and
+actual GGML backend/device, and emits raw timing samples. `ttft` measures the
+first full-prefix graph. `itl` and `decode_tokens_per_second` describe repeated
+full-prefix execution and are not comparable to KV-cached decode. The output
+therefore declares `kv_cache: false` and
+`decode_policy: full_prefix_recompute`.
+
 ## Native Serving Gates
 
-The native implementation should be selectable through `inference::Executor`
-only after all of these are true for one supported Qwen architecture:
+The native implementation becomes selectable through `inference::Executor`
+only after all of these are true for one supported architecture:
 
-1. Greedy token IDs match llama.cpp for fixed prompts.
+1. Greedy token IDs match llama.cpp for fixed real-model prompts on CPU and CUDA.
 2. Logits stay within a documented tolerance.
 3. Prefill, decode, and KV-cache rollback pass lifecycle tests.
 4. One-node CUDA generation is stable before distributed stage execution.
