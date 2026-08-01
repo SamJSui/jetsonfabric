@@ -170,7 +170,70 @@ target_link_libraries(jetsonfabric-runtime-worker PRIVATE
   ${JF_LLAMA_TARGET}
 )
 
+add_executable(jetsonfabric-two-node-collective-bench
+  benchmarks/collective_stats.cpp
+  benchmarks/tcp_peer.cpp
+  benchmarks/two_node_collective.cpp
+)
+target_include_directories(jetsonfabric-two-node-collective-bench PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_options(jetsonfabric-two-node-collective-bench PRIVATE
+  -Wall
+  -Wextra
+  -Wpedantic
+)
+
+option(JF_BUILD_CUDA_BENCHMARKS "Build Jetson CUDA feasibility benchmarks" OFF)
+set(JF_CUDA_ARCHITECTURES "87" CACHE STRING "CUDA architectures for Jetson benchmarks")
+if(JF_BUILD_CUDA_BENCHMARKS)
+  if(NOT CMAKE_CUDA_COMPILER AND EXISTS "/usr/local/cuda/bin/nvcc")
+    set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc" CACHE FILEPATH "CUDA compiler")
+  endif()
+  set(CMAKE_CUDA_ARCHITECTURES "${JF_CUDA_ARCHITECTURES}" CACHE STRING "CUDA architectures" FORCE)
+  enable_language(CUDA)
+  find_package(CUDAToolkit REQUIRED)
+  add_executable(jetsonfabric-tensor-parallel-mlp-bench
+    benchmarks/collective_stats.cpp
+    benchmarks/tcp_peer.cpp
+    benchmarks/tensor_parallel_mlp.cu
+  )
+  target_include_directories(jetsonfabric-tensor-parallel-mlp-bench PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-tensor-parallel-mlp-bench PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>
+    $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
+  )
+  target_link_libraries(jetsonfabric-tensor-parallel-mlp-bench PRIVATE
+    CUDA::cublas
+    CUDA::cudart
+  )
+  set_target_properties(jetsonfabric-tensor-parallel-mlp-bench PROPERTIES
+    CUDA_ARCHITECTURES "${JF_CUDA_ARCHITECTURES}"
+    CUDA_STANDARD 17
+    CUDA_STANDARD_REQUIRED ON
+  )
+endif()
+
 if(BUILD_TESTING)
+  add_executable(jetsonfabric-collective-stats-test
+    benchmarks/collective_stats.cpp
+    benchmarks/collective_stats_test.cpp
+  )
+  target_include_directories(jetsonfabric-collective-stats-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-collective-stats-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME collective-stats
+    COMMAND jetsonfabric-collective-stats-test
+  )
+
   add_executable(jetsonfabric-runtime-stage-interface-test
     inference/stage.cpp
     inference/stage_test.cpp
