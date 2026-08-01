@@ -106,6 +106,15 @@ Wire counters covered one warmup plus three measured requests. Power and
 latency metrics cover the three measured requests. Tensor sharding was correct,
 but repeated intra-layer collectives made it network-bound on 1 GbE.
 
+### Native Engine Correctness Baseline
+
+The experimental JetsonFabric-native Qwen2 graph reproduced the exact greedy
+token sequence from the pinned llama.cpp oracle on CPU and CUDA. On one Orin
+Nano with Qwen2.5-Coder 1.5B Q4_K_M, CUDA measured 100.84 ms p50 TTFT and
+8.66 tok/s p50 repeated full-prefix decode across ten samples. This path does
+not yet use a KV cache and is not comparable to the serving results above. See
+the [native inference baseline](docs/benchmarks/2026-08-01-native-inference-baseline.md).
+
 ### Findings
 
 - **Use replicas when the model fits.** They produced the highest aggregate
@@ -314,8 +323,9 @@ Current work is:
 3. **Operator and recovery experience:** package services, distribute models,
    expose repeatable benchmarks, and automate node-loss acceptance tests.
 4. **Jetson-native engine:** JFM v2 packaging, exact stage selection, integrity
-   validation, and optimized NVMe first-touch are complete. Implement one-node
-   Qwen execution parity before registering the native path for serving.
+   validation, optimized NVMe first-touch, and one-node Qwen2 greedy parity on
+   CPU and CUDA are complete. Add tokenizer, KV-cache, and lifecycle parity
+   before registering the native path for serving or splitting its graph.
 
 After those are stable:
 
@@ -344,6 +354,8 @@ After those are stable:
   trusted network.
 - Experimental tensor execution uses raw unauthenticated GGML RPC and bypasses
   coordinator lifecycle management. It is restricted to trusted-LAN research.
-- The native JFM path does not generate tokens yet. llama.cpp remains the
-  serving engine and correctness oracle while native tokenization, CUDA graph
-  execution, KV cache, logits, and sampling are implemented and validated.
+- The native JFM path performs experimental one-node Qwen2 greedy generation
+  from token IDs, but reloads the full model and recomputes the full prefix for
+  every token. llama.cpp remains the serving engine and correctness oracle
+  while tokenization, KV cache, lifecycle, and distributed-stage parity are
+  implemented and validated.

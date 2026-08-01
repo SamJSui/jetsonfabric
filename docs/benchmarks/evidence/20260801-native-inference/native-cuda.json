@@ -1,0 +1,28 @@
+{
+  "engine": "jetsonfabric-native",
+  "architecture": "qwen2",
+  "source_sha256": "cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046",
+  "requested_backend": "cuda",
+  "backend": "CUDA0",
+  "device": "CUDA0",
+  "layer_count": 28,
+  "embedding_length": 1536,
+  "vocabulary_size": 151936,
+  "weight_bytes": 1111370240,
+  "prompt_tokens": [12522, 5193, 264, 882],
+  "sampled_tokens": [11, 1052, 572, 264],
+  "warmups": 1,
+  "iterations": 10,
+  "load_ms": 13607.460,
+  "ttft_ms": [114.569, 106.045, 102.436, 101.629, 100.041, 100.737, 100.217, 100.617, 100.751, 100.930],
+  "itl_ms": [128.929, 117.711, 115.335, 115.465, 115.374, 115.166, 115.460, 115.228, 115.373, 115.571],
+  "decode_tokens_per_second": [7.756, 8.495, 8.670, 8.661, 8.667, 8.683, 8.661, 8.678, 8.668, 8.653],
+  "end_to_end_tokens_per_second": [7.978, 8.711, 8.920, 8.928, 8.965, 8.964, 8.957, 8.963, 8.951, 8.936],
+  "ttft_p50_ms": 100.840,
+  "itl_p50_ms": 115.417,
+  "decode_tokens_per_second_p50": 8.664,
+  "end_to_end_tokens_per_second_p50": 8.943,
+  "kv_cache": false,
+  "decode_policy": "full_prefix_recompute"
+}
+

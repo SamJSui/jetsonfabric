@@ -1,0 +1,28 @@
+{
+  "engine": "jetsonfabric-native",
+  "architecture": "qwen2",
+  "source_sha256": "cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046",
+  "requested_backend": "cpu",
+  "backend": "CPU",
+  "device": "CPU",
+  "layer_count": 28,
+  "embedding_length": 1536,
+  "vocabulary_size": 151936,
+  "weight_bytes": 1111370240,
+  "prompt_tokens": [12522, 5193, 264, 882],
+  "sampled_tokens": [11, 1052, 572, 264],
+  "warmups": 1,
+  "iterations": 10,
+  "load_ms": 13874.399,
+  "ttft_ms": [114.013, 113.898, 114.021, 114.592, 114.214, 114.041, 114.048, 115.716, 114.016, 114.174],
+  "itl_ms": [173.316, 163.413, 161.362, 162.882, 161.181, 166.220, 161.174, 161.074, 161.436, 161.376],
+  "decode_tokens_per_second": [5.770, 6.119, 6.197, 6.139, 6.204, 6.016, 6.204, 6.208, 6.194, 6.197],
+  "end_to_end_tokens_per_second": [6.310, 6.621, 6.688, 6.631, 6.692, 6.528, 6.694, 6.678, 6.685, 6.686],
+  "ttft_p50_ms": 114.045,
+  "itl_p50_ms": 161.406,
+  "decode_tokens_per_second_p50": 6.196,
+  "end_to_end_tokens_per_second_p50": 6.682,
+  "kv_cache": false,
+  "decode_policy": "full_prefix_recompute"
+}
+
