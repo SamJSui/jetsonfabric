@@ -24,6 +24,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -379,11 +380,14 @@ public:
         std::chrono::steady_clock::time_point last_used;
     };
 
-    explicit Impl(std::string cluster_token)
-        : cluster_token_(std::move(cluster_token)) {}
+    Impl(std::string cluster_token, HTTPStageTarget target)
+        : cluster_token_(std::move(cluster_token)), target_(target) {}
 
     std::shared_ptr<PeerConnection> connection_for(const HTTPURL& target) const {
-        const std::string key = target.host + ':' + target.port;
+        const auto key = std::make_pair(
+            target.host + ':' + target.port,
+            std::this_thread::get_id()
+        );
         const std::lock_guard lock(connections_mutex_);
         auto [iterator, inserted] = connections_.try_emplace(key);
         if (inserted) {
@@ -394,6 +398,20 @@ public:
 
     const std::string& cluster_token() const noexcept {
         return cluster_token_;
+    }
+
+    const std::string& target_url(const protocol::GenerationStage& stage) const {
+        if (target_ == HTTPStageTarget::Runtime) {
+            if (stage.runtime_url.empty()) {
+                throw std::invalid_argument("direct stage transport requires runtime_url");
+            }
+            return stage.runtime_url;
+        }
+        return stage.api_url;
+    }
+
+    bool uses_runtime_target() const noexcept {
+        return target_ == HTTPStageTarget::Runtime;
     }
 
     void reset(const std::shared_ptr<PeerConnection>& connection) const noexcept {
@@ -413,13 +431,19 @@ public:
     }
 
 private:
+    using ConnectionKey = std::pair<std::string, std::thread::id>;
+
     std::string cluster_token_;
+    HTTPStageTarget target_;
     mutable std::mutex connections_mutex_;
-    mutable std::map<std::string, std::shared_ptr<PeerConnection>> connections_;
+    mutable std::map<ConnectionKey, std::shared_ptr<PeerConnection>> connections_;
 };
 
-HTTPStageTransport::HTTPStageTransport(std::string cluster_token)
-    : impl_(std::make_unique<Impl>(std::move(cluster_token))) {}
+HTTPStageTransport::HTTPStageTransport(
+    std::string cluster_token,
+    HTTPStageTarget target
+)
+    : impl_(std::make_unique<Impl>(std::move(cluster_token), target)) {}
 
 HTTPStageTransport::~HTTPStageTransport() = default;
 
@@ -441,10 +465,22 @@ pipeline_parallel::StageRunResult HTTPStageTransport::invoke(
     }
     try {
         const auto call_start = std::chrono::steady_clock::now();
-        const HTTPURL target = parse_http_url(stage.api_url);
+        const HTTPURL target = parse_http_url(impl_->target_url(stage));
+        if (impl_->uses_runtime_target()) {
+            const HTTPURL node_api = parse_http_url(stage.api_url);
+            if (lower(target.host) != lower(node_api.host)) {
+                return stage_error(
+                    "400 Bad Request",
+                    "runtime_endpoint_mismatch",
+                    "direct runtime host must match the stage node API host"
+                );
+            }
+        }
         const std::string operation_name = operation == pipeline_parallel::StageOperation::CloseSession
             ? protocol::kStageOperationCloseSession
-            : protocol::kStageOperationExecute;
+            : operation == pipeline_parallel::StageOperation::RollbackSession
+                ? protocol::kStageOperationRollbackSession
+                : protocol::kStageOperationExecute;
         const std::string body = protocol::encode_stage_request(request, operation_name);
         std::ostringstream headers;
         headers << "POST " << stage_path(target.path) << " HTTP/1.1\r\n"
@@ -508,6 +544,13 @@ pipeline_parallel::StageRunResult HTTPStageTransport::invoke(
             return stage_error(response.status, code, message);
         }
         protocol::StageResponse decoded = protocol::decode_stage_response(response.body);
+        if (decoded.operation != operation_name) {
+            return stage_error(
+                "502 Bad Gateway",
+                "runtime_stage_operation_mismatch",
+                "peer runtime acknowledged a different stage operation"
+            );
+        }
         if (response.status_code < 200 || response.status_code >= 300 || !decoded.error.empty()) {
             return stage_error(
                 response.status,

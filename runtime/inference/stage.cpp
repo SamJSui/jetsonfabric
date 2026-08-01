@@ -77,6 +77,8 @@ std::string to_string(PayloadKind kind) {
         return "activation";
     case PayloadKind::SampledToken:
         return "sampled_token";
+    case PayloadKind::SampledTokens:
+        return "sampled_tokens";
     }
     throw std::invalid_argument("invalid inference payload kind");
 }
@@ -86,6 +88,7 @@ PayloadKind parse_payload_kind(const std::string& value) {
     if (value == "tokens") return PayloadKind::Tokens;
     if (value == "activation") return PayloadKind::Activation;
     if (value == "sampled_token") return PayloadKind::SampledToken;
+    if (value == "sampled_tokens") return PayloadKind::SampledTokens;
     throw std::invalid_argument("invalid inference payload kind: " + value);
 }
 
@@ -129,6 +132,9 @@ std::string validate_payload(const Payload& payload) {
     if (payload.kind == PayloadKind::SampledToken && count != 1) {
         return "sampled_token payload must contain exactly one element";
     }
+    if (payload.kind == PayloadKind::SampledTokens && count < 2) {
+        return "sampled_tokens payload must contain at least two elements";
+    }
     return "";
 }
 
@@ -163,7 +169,7 @@ bool is_allowed_input(Phase phase, StagePosition position, PayloadKind kind) {
     if (phase == Phase::Prefill) {
         return kind == PayloadKind::Text || kind == PayloadKind::Tokens;
     }
-    return kind == PayloadKind::SampledToken;
+    return kind == PayloadKind::SampledToken || kind == PayloadKind::Tokens;
 }
 
 PayloadKind expected_output(Phase /*phase*/, StagePosition position) {

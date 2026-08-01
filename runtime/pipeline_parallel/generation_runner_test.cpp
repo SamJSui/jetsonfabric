@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <future>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -42,6 +43,7 @@ runtime::protocol::GenerationRequest generation_request(
                 .node_id = "node-a",
                 .node_name = "dopey",
                 .api_url = "http://node-a:8080",
+                .runtime_url = "",
                 .layer_start = 0,
                 .layer_end = 4,
             },
@@ -51,6 +53,7 @@ runtime::protocol::GenerationRequest generation_request(
                 .node_id = "node-b",
                 .node_name = "sleepy",
                 .api_url = "http://node-b:8080",
+                .runtime_url = "",
                 .layer_start = 4,
                 .layer_end = 8,
             },
@@ -60,6 +63,7 @@ runtime::protocol::GenerationRequest generation_request(
 
 runtime::protocol::StageResponse response_for(const runtime::protocol::StageRequest& request) {
     runtime::protocol::StageResponse response;
+    response.operation = runtime::protocol::kStageOperationExecute;
     response.session_id = request.session_id;
     response.request_id = request.request_id;
     response.model_id = request.model_id;
@@ -93,6 +97,98 @@ void set_u32_payload(runtime::protocol::StageResponse& response, std::uint32_t t
     };
     response.bytes_out = 4;
 }
+
+void append_u32(std::vector<std::uint8_t>& payload, std::uint32_t token) {
+    payload.push_back(static_cast<std::uint8_t>(token & 0xffU));
+    payload.push_back(static_cast<std::uint8_t>((token >> 8U) & 0xffU));
+    payload.push_back(static_cast<std::uint8_t>((token >> 16U) & 0xffU));
+    payload.push_back(static_cast<std::uint8_t>((token >> 24U) & 0xffU));
+}
+
+class FixedDraft final : public runtime::speculative::DraftStrategy {
+public:
+    std::vector<std::uint32_t> propose(
+        const std::vector<std::uint32_t>& history,
+        std::size_t
+    ) const override {
+        return history == std::vector<std::uint32_t>({1, 2, 1, 2, 10})
+            ? std::vector<std::uint32_t>({20, 21})
+            : std::vector<std::uint32_t>{};
+    }
+};
+
+struct SpeculativeHarness {
+    int rollback_calls = 0;
+    int close_calls = 0;
+    int rollback_fail_stage = -1;
+
+    runtime::pipeline_parallel::StageRunResult invoke(
+        const runtime::protocol::GenerationStage& stage,
+        const runtime::protocol::StageRequest& request,
+        runtime::pipeline_parallel::StageOperation operation
+    ) {
+        runtime::pipeline_parallel::StageRunResult result;
+        result.ok = true;
+        result.status = "200 OK";
+        result.response = response_for(request);
+        if (operation == runtime::pipeline_parallel::StageOperation::CloseSession) {
+            ++close_calls;
+            result.response.payload_kind = "text";
+            result.response.encoding = "utf-8";
+            return result;
+        }
+        if (operation == runtime::pipeline_parallel::StageOperation::RollbackSession) {
+            ++rollback_calls;
+            expect(request.rollback_tokens == 1, "runner requested the wrong rollback suffix");
+            if (stage.stage_index == rollback_fail_stage) {
+                result.ok = false;
+                result.status = "502 Bad Gateway";
+                result.error_code = "injected_rollback_failure";
+                result.error_message = "injected rollback failure";
+                return result;
+            }
+            result.response.payload_kind = "text";
+            result.response.encoding = "utf-8";
+            return result;
+        }
+
+        if (stage.stage_index == 0) {
+            const std::int64_t rows = request.phase == "prefill" ? 1 : request.shape.front();
+            result.response.payload_kind = "activation";
+            result.response.dtype = "f32";
+            result.response.shape = {rows, 1};
+            result.response.byte_order = "little";
+            result.response.layout = "row_major";
+            result.response.payload.resize(static_cast<std::size_t>(rows) * sizeof(float));
+            if (request.phase == "prefill") {
+                result.response.prompt_tokens = 4;
+                result.response.prompt_token_ids = {1, 2, 1, 2};
+            }
+            return result;
+        }
+
+        if (request.phase == "prefill") {
+            set_u32_payload(result.response, 10);
+            result.response.message = "a";
+            result.response.completion_tokens = 1;
+            return result;
+        }
+
+        result.response.payload_kind = "sampled_tokens";
+        result.response.dtype = "u32";
+        result.response.shape = {3};
+        result.response.byte_order = "little";
+        result.response.layout = "row_major";
+        for (const std::uint32_t token : {20U, 99U, 30U}) {
+            append_u32(result.response.payload, token);
+        }
+        result.response.message = "bcd";
+        result.response.token_text_offsets = {1, 2, 3};
+        result.response.token_eog = {0, 0, 0};
+        result.response.completion_tokens = 3;
+        return result;
+    }
+};
 
 struct InvocationHarness {
     int execute_calls = 0;
@@ -254,6 +350,76 @@ void test_generation_owns_both_loops_and_cleanup() {
         "stage request IDs were not independently derived from the pass request"
     );
     expect(emitted.size() == 2 && emitted[0].text == "hello" && emitted[1].text == " world", "token stream changed");
+}
+
+void test_speculative_verification_accepts_prefix_and_rolls_back_suffix() {
+    SpeculativeHarness harness;
+    runtime::pipeline_parallel::GenerationRunner runner(
+        [&harness](const auto& stage, const auto& request, auto operation) {
+            return harness.invoke(stage, request, operation);
+        },
+        std::make_shared<FixedDraft>(),
+        2
+    );
+    std::vector<runtime::pipeline_parallel::GenerationToken> emitted;
+    const runtime::pipeline_parallel::GenerationResult result = runner.run(
+        generation_request(3),
+        [&emitted](const auto& token) {
+            emitted.push_back(token);
+            return true;
+        }
+    );
+
+    expect(
+        result.ok,
+        "speculative generation failed: " + result.error_code + ": " + result.error_message
+    );
+    expect(
+        result.sampled_tokens == std::vector<std::uint32_t>({10, 20, 99}),
+        "speculative verification emitted the wrong accepted prefix or correction"
+    );
+    expect(result.target_decode_passes == 1, "speculation did not reduce target decode passes");
+    expect(
+        result.speculative_draft_tokens == 2 && result.speculative_accepted_tokens == 1,
+        "speculative acceptance telemetry changed"
+    );
+    expect(harness.rollback_calls == 2, "rejected KV suffix was not rolled back on every stage");
+    expect(emitted.size() == 3 && emitted[1].text == "b" && emitted[2].text == "c",
+           "speculative token text was not split correctly");
+}
+
+void test_rollback_failure_closes_every_stage_without_emitting_rejected_tokens() {
+    for (const int failing_stage : {0, 1}) {
+        SpeculativeHarness harness;
+        harness.rollback_fail_stage = failing_stage;
+        runtime::pipeline_parallel::GenerationRunner runner(
+            [&harness](const auto& stage, const auto& request, auto operation) {
+                return harness.invoke(stage, request, operation);
+            },
+            std::make_shared<FixedDraft>(),
+            2
+        );
+        std::vector<runtime::pipeline_parallel::GenerationToken> emitted;
+        const runtime::pipeline_parallel::GenerationResult result = runner.run(
+            generation_request(3),
+            [&emitted](const auto& token) {
+                emitted.push_back(token);
+                return true;
+            }
+        );
+
+        expect(!result.ok, "rollback failure was reported as a successful generation");
+        expect(
+            result.error_code == "generation_rollback_failed",
+            "rollback failure used the wrong error code"
+        );
+        expect(harness.rollback_calls == 2, "rollback failure stopped before attempting every stage");
+        expect(harness.close_calls == 2, "rollback failure did not close every stage session");
+        expect(
+            emitted.size() == 1 && emitted.front().token == 10,
+            "rollback failure emitted an accepted or rejected speculative token"
+        );
+    }
 }
 
 void test_independent_generations_overlap_pipeline_stages() {
@@ -478,11 +644,26 @@ void test_generation_protocol_and_stagewire_round_trip() {
     response.activation_decode_us = 11;
     response.activation_encode_us = 12;
     response.message = std::string(1, static_cast<char>(0x9e));
+    response.token_text_offsets = {1};
+    response.token_eog = {0};
+    response.prompt_token_ids = {1, 2, 3};
+    response.verification_width = 3;
     const runtime::protocol::StageResponse response_round_trip = runtime::protocol::decode_stage_response(
         runtime::protocol::encode_stage_response(response)
     );
     expect(response_round_trip.payload == response.payload, "stage response payload changed during round trip");
+    expect(response_round_trip.operation == response.operation, "stage response operation changed during round trip");
     expect(response_round_trip.message == response.message, "stage response token bytes changed during round trip");
+    expect(
+        response_round_trip.token_text_offsets == response.token_text_offsets &&
+            response_round_trip.token_eog == response.token_eog &&
+            response_round_trip.prompt_token_ids == response.prompt_token_ids,
+        "stage response speculative token metadata changed during round trip"
+    );
+    expect(
+        response_round_trip.verification_width == response.verification_width,
+        "stage response verification width changed during round trip"
+    );
     expect(
         response_round_trip.execution_us == response.execution_us &&
             response_round_trip.activation_decode_us == response.activation_decode_us &&
@@ -518,6 +699,55 @@ void test_generation_protocol_rejects_inconsistent_plan() {
     expect(rejected, "inconsistent generation plan was accepted");
 }
 
+void test_stagewire_rejects_operation_payload_mismatch() {
+    runtime::protocol::StageRequest request;
+    request.session_id = "session-a";
+    request.request_id = "request-a";
+    request.model_id = "model-a";
+    request.stage_count = 1;
+    request.node_name = "dopey";
+    request.layer_end = 8;
+    request.payload_kind = "text";
+    request.encoding = "utf-8";
+
+    request.rollback_tokens = 1;
+    bool execute_rejected = false;
+    try {
+        (void) runtime::protocol::encode_stage_request(
+            request,
+            runtime::protocol::kStageOperationExecute
+        );
+    } catch (const std::invalid_argument&) {
+        execute_rejected = true;
+    }
+    expect(execute_rejected, "execute operation accepted rollback_tokens");
+
+    request.rollback_tokens = 0;
+    bool rollback_rejected = false;
+    try {
+        (void) runtime::protocol::encode_stage_request(
+            request,
+            runtime::protocol::kStageOperationRollbackSession
+        );
+    } catch (const std::invalid_argument&) {
+        rollback_rejected = true;
+    }
+    expect(rollback_rejected, "rollback operation accepted zero rollback_tokens");
+
+    request.rollback_tokens = 0;
+    request.max_tokens = runtime::protocol::kMaxStageTokens + 1;
+    bool max_tokens_rejected = false;
+    try {
+        (void) runtime::protocol::encode_stage_request(
+            request,
+            runtime::protocol::kStageOperationExecute
+        );
+    } catch (const std::invalid_argument&) {
+        max_tokens_rejected = true;
+    }
+    expect(max_tokens_rejected, "stage request accepted an oversized max_tokens value");
+}
+
 void test_generation_protocol_rejects_empty_prompt() {
     const std::string body = R"({
         "request_id":"request-a",
@@ -543,6 +773,8 @@ void test_generation_protocol_rejects_empty_prompt() {
 int main() {
     try {
         test_generation_owns_both_loops_and_cleanup();
+        test_speculative_verification_accepts_prefix_and_rolls_back_suffix();
+        test_rollback_failure_closes_every_stage_without_emitting_rejected_tokens();
         test_independent_generations_overlap_pipeline_stages();
         test_sink_cancellation_closes_every_stage();
         test_generation_coalesces_split_utf8_token_bytes();
@@ -551,6 +783,7 @@ int main() {
         test_generation_propagates_managed_deployment_identity();
         test_cleanup_rejects_mismatched_success_identity();
         test_generation_protocol_and_stagewire_round_trip();
+        test_stagewire_rejects_operation_payload_mismatch();
         test_generation_protocol_rejects_inconsistent_plan();
         test_generation_protocol_rejects_empty_prompt();
         std::cout << "generation runner tests passed\n";

@@ -33,8 +33,8 @@ func TestStageProxyStreamsBinaryFrameWithoutChangingContentType(t *testing.T) {
 		if r.URL.Path != api.PathLayerSplitStage {
 			t.Fatalf("unexpected runtime path: %s", r.URL.Path)
 		}
-		if r.Header.Get(api.HeaderClusterToken) != "" || r.Header.Get(api.HeaderCoordinatorNodeID) != "" {
-			t.Fatalf("fabric credentials reached runtime: token=%q coordinator=%q", r.Header.Get(api.HeaderClusterToken), r.Header.Get(api.HeaderCoordinatorNodeID))
+		if r.Header.Get(api.HeaderClusterToken) != "cluster-secret" || r.Header.Get(api.HeaderCoordinatorNodeID) != "" {
+			t.Fatalf("unexpected runtime authorization headers: token=%q coordinator=%q", r.Header.Get(api.HeaderClusterToken), r.Header.Get(api.HeaderCoordinatorNodeID))
 		}
 		if r.Header.Get("Content-Type") != stagewire.ContentType {
 			t.Fatalf("content-type=%q", r.Header.Get("Content-Type"))
@@ -52,7 +52,7 @@ func TestStageProxyStreamsBinaryFrameWithoutChangingContentType(t *testing.T) {
 	}))
 	defer runtime.Close()
 
-	proxy, err := NewStageProxy(runtime.URL)
+	proxy, err := NewStageProxy(runtime.URL, "cluster-secret")
 	if err != nil {
 		t.Fatalf("create proxy: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestStageProxyStreamsBinaryFrameWithoutChangingContentType(t *testing.T) {
 }
 
 func TestStageProxyRejectsEmptyBody(t *testing.T) {
-	proxy, err := NewStageProxy("http://127.0.0.1:9090")
+	proxy, err := NewStageProxy("http://127.0.0.1:9090", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestStageProxyRejectsEmptyBody(t *testing.T) {
 }
 
 func TestStageProxyRejectsNonPost(t *testing.T) {
-	proxy, err := NewStageProxy("http://127.0.0.1:9090")
+	proxy, err := NewStageProxy("http://127.0.0.1:9090", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestStageProxyReturnsBadGatewayWhenRuntimeUnavailable(t *testing.T) {
 	runtimeURL := "http://" + listener.Addr().String()
 	_ = listener.Close()
 
-	proxy, err := NewStageProxy(runtimeURL)
+	proxy, err := NewStageProxy(runtimeURL, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestStageProxyReturnsBadGatewayWhenRuntimeUnavailable(t *testing.T) {
 }
 
 func TestNewStageProxyRequiresAbsoluteRuntimeURL(t *testing.T) {
-	if _, err := NewStageProxy("127.0.0.1:9090"); err == nil {
+	if _, err := NewStageProxy("127.0.0.1:9090", ""); err == nil {
 		t.Fatal("expected invalid URL error")
 	}
 }

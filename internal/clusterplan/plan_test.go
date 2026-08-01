@@ -9,7 +9,7 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/membership"
 )
 
-func TestPlanUsesAPIURLNotRuntimeURL(t *testing.T) {
+func TestPlanCarriesNodeAndRuntimeURLs(t *testing.T) {
 	now := clusterPlanTestNow()
 	member := clusterPlanTestMember("node-a", "dopey-a", "dopey", "http://dopey.local:52415")
 	member.RuntimeURL = "http://127.0.0.1:9090"
@@ -18,8 +18,8 @@ func TestPlanUsesAPIURLNotRuntimeURL(t *testing.T) {
 	if !preview.Valid || len(preview.Stages) != 1 {
 		t.Fatalf("expected valid one-stage preview: %+v", preview)
 	}
-	if preview.Stages[0].APIURL != member.APIURL || preview.Stages[0].APIURL == member.RuntimeURL {
-		t.Fatalf("planner must use node API URL: %+v", preview.Stages[0])
+	if preview.Stages[0].APIURL != member.APIURL || preview.Stages[0].RuntimeURL != member.RuntimeURL {
+		t.Fatalf("planner lost a stage endpoint: %+v", preview.Stages[0])
 	}
 }
 

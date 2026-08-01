@@ -2,6 +2,7 @@
 
 #include "activation/activation_codec_factory.hpp"
 #include "engine/generation_service.hpp"
+#include "speculative/draft_strategy_factory.hpp"
 #include "protocol/execution_mode.hpp"
 #include "protocol/generation.hpp"
 #include "protocol/stage.hpp"
@@ -405,6 +406,22 @@ int RuntimeService::ubatch_size() const {
     return config_.ubatch_size;
 }
 
+int RuntimeService::parallel_sessions() const {
+    return config_.parallel_sessions;
+}
+
+int RuntimeService::decode_batch_size() const {
+    return config_.decode_batch_size;
+}
+
+std::string RuntimeService::speculative_draft() const {
+    return config_.speculative_draft;
+}
+
+int RuntimeService::speculative_max_tokens() const {
+    return config_.speculative_max_tokens;
+}
+
 RuntimeResponse RuntimeService::deployment_status() const {
     const deployment::DeploymentStatus status = model_manager_.deployment_status();
 
@@ -549,7 +566,9 @@ RuntimeResponse RuntimeService::generate(
         config_.node_name,
         config_.mode,
         model_manager_,
-        *stage_transport_
+        *stage_transport_,
+        speculative::create_draft_strategy(config_.speculative_draft),
+        config_.speculative_max_tokens
     );
     const pipeline_parallel::GenerationResult result = generation_service.generate(
         request,
@@ -578,9 +597,16 @@ RuntimeResponse RuntimeService::generate(
             result.sampled_tokens,
             result.stage_calls,
             result.remote_stage_calls,
+            result.rollback_stage_calls,
+            result.remote_rollback_stage_calls,
+            result.rollback_stage_us,
+            result.rollback_remote_call_us,
             result.bytes_in,
             result.bytes_out,
-            result.stage_timings
+            result.stage_timings,
+            result.target_decode_passes,
+            result.speculative_draft_tokens,
+            result.speculative_accepted_tokens
         ),
     };
 }
@@ -600,15 +626,19 @@ RuntimeResponse RuntimeService::run_stage(const std::string& request_body) const
     try {
         operation = protocol::decode_stage_operation(request_body);
         request = protocol::decode_stage_request(request_body);
+        protocol::validate_stage_operation(operation, request.rollback_tokens);
     } catch (const std::exception& err) {
         return json_error("400 Bad Request", "invalid_stage_request", err.what());
     }
 
     const pipeline_parallel::StageRunResult result = operation == protocol::kStageOperationCloseSession
         ? model_manager_.close_session(request)
-        : model_manager_.run_stage(request);
+        : operation == protocol::kStageOperationRollbackSession
+            ? model_manager_.rollback_session(request)
+            : model_manager_.run_stage(request);
     if (!result.ok) {
         protocol::StageResponse response = stage_error_response(request, result.error_code, result.error_message);
+        response.operation = operation;
         return RuntimeResponse{
             result.status,
             protocol::kStageWireContentType,
@@ -616,10 +646,12 @@ RuntimeResponse RuntimeService::run_stage(const std::string& request_body) const
         };
     }
 
+    protocol::StageResponse response = result.response;
+    response.operation = operation;
     return RuntimeResponse{
         "200 OK",
         protocol::kStageWireContentType,
-        protocol::encode_stage_response(result.response),
+        protocol::encode_stage_response(std::move(response)),
     };
 }
 

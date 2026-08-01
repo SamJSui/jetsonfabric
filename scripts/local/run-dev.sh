@@ -233,6 +233,10 @@ JETSONFABRIC_CLUSTER_TOKEN="$CLUSTER_TOKEN" setsid "$NODE_BIN" \
   --runtime-n-gpu-layers "${RUNTIME_N_GPU_LAYERS:-999}" \
   --runtime-threads "${RUNTIME_THREADS:-0}" \
   --runtime-http-workers "${RUNTIME_HTTP_WORKERS:-2}" \
+  --runtime-parallel-sessions "${RUNTIME_PARALLEL_SESSIONS:-2}" \
+  --runtime-decode-batch-size "${RUNTIME_DECODE_BATCH_SIZE:-1}" \
+  --runtime-speculative-draft "${RUNTIME_SPECULATIVE_DRAFT:-none}" \
+  --runtime-speculative-max-tokens "${RUNTIME_SPECULATIVE_MAX_TOKENS:-4}" \
   --engine "${NODE_ENGINE:-llama.cpp}" \
   --model "$MODEL_ID" \
   --model-path "$MODEL_PATH" \

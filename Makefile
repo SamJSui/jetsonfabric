@@ -20,6 +20,9 @@ INTEGRATION_RUNTIME_BIN ?= $(DIST_DIR)/jetsonfabric-runtime-worker-integration-c
 LLAMA_CPP_REPO ?= https://github.com/ggml-org/llama.cpp
 LLAMA_CPP_DIR ?= runtime/third_party/llama.cpp
 LLAMA_CPP_COMMIT ?= bf2c86ddc0685f580595954056c2e77ebabfab4f
+RUNTIME_REVISION ?= $(shell $(GIT) describe --always --dirty 2>/dev/null || printf unknown)
+LLAMA_CPP_REVISION ?= $(LLAMA_CPP_COMMIT)
+GO_REVISION_LDFLAGS := -X github.com/SamJSui/jetsonfabric/internal/node.DefaultRuntimeRevision=$(RUNTIME_REVISION) -X github.com/SamJSui/jetsonfabric/internal/node.DefaultRuntimeLlamaCPPRevision=$(LLAMA_CPP_REVISION)
 
 BENCHMARKS_PATH ?= data/benchmarks.jsonl
 MODELS_PATH ?= configs/models.example.json
@@ -49,12 +52,18 @@ RUNTIME_STAGE_TRANSPORT ?= http_binary_v1
 RUNTIME_ACTIVATION_ENCODING ?= f32
 RUNTIME_KV_CACHE_TYPE ?= f16
 RUNTIME_COMPUTE_BACKEND ?= cuda
+RUNTIME_CUDA_ACTIVE ?= true
 RUNTIME_MODE ?= pipeline_parallel
 RUNTIME_CTX_SIZE ?= 4096
 RUNTIME_UBATCH_SIZE ?= 512
 RUNTIME_N_GPU_LAYERS ?= 999
 RUNTIME_THREADS ?= 0
 RUNTIME_HTTP_WORKERS ?= 2
+RUNTIME_PARALLEL_SESSIONS ?= 2
+RUNTIME_DECODE_BATCH_SIZE ?= 1
+RUNTIME_SPECULATIVE_DRAFT ?= none
+RUNTIME_SPECULATIVE_MAX_TOKENS ?= 4
+RUNTIME_START_IDLE ?= false
 
 STAGE_INDEX ?= 0
 STAGE_COUNT ?= 1
@@ -116,6 +125,9 @@ help:
 	@printf '  RUNTIME_ACTIVATION_ENCODING=f32  Use f16 to halve inter-stage payload bytes\n'
 	@printf '  RUNTIME_KV_CACHE_TYPE=f16        Use q8_0 to halve llama.cpp KV cache bytes\n'
 	@printf '  RUNTIME_UBATCH_SIZE=512          Bound llama.cpp physical prefill micro-batches\n'
+	@printf '  RUNTIME_PARALLEL_SESSIONS=4      Reserve shared KV capacity for batching\n'
+	@printf '  RUNTIME_DECODE_BATCH_SIZE=2      Enable continuous decode batching\n'
+	@printf '  RUNTIME_SPECULATIVE_DRAFT=prompt_lookup  Enable target-verified lookup drafting\n'
 	@printf '  RUNTIME_BUILD_JOBS=1             Safer on Jetson; try 2 or 4 if memory allows\n'
 	@printf '  RUNTIME_CUDA_ARCH=87             Jetson Orin default\n'
 	@printf '  JF_NODE0_PORT=19180              Fixed local node port\n'
@@ -168,12 +180,12 @@ node: node-linux-amd64 node-linux-arm64
 .PHONY: node-linux-amd64
 node-linux-amd64:
 	mkdir -p $(DIST_DIR)
-	GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-node-linux-amd64 ./cmd/jetsonfabric-node
+	GOOS=linux GOARCH=amd64 $(GO) build -buildvcs=false -ldflags '$(GO_REVISION_LDFLAGS)' -o $(DIST_DIR)/jetsonfabric-node-linux-amd64 ./cmd/jetsonfabric-node
 
 .PHONY: node-linux-arm64
 node-linux-arm64:
 	mkdir -p $(DIST_DIR)
-	GOOS=linux GOARCH=arm64 $(GO) build -buildvcs=false -o $(DIST_DIR)/jetsonfabric-node-linux-arm64 ./cmd/jetsonfabric-node
+	GOOS=linux GOARCH=arm64 $(GO) build -buildvcs=false -ldflags '$(GO_REVISION_LDFLAGS)' -o $(DIST_DIR)/jetsonfabric-node-linux-arm64 ./cmd/jetsonfabric-node
 
 .PHONY: setup
 setup:
@@ -220,7 +232,7 @@ runtime-cuda: setup
 
 .PHONY: run-node
 run-node:
-	JETSONFABRIC_CLUSTER_TOKEN="$(JETSONFABRIC_CLUSTER_TOKEN)" $(GO) run ./cmd/jetsonfabric-node \
+	JETSONFABRIC_CLUSTER_TOKEN="$(JETSONFABRIC_CLUSTER_TOKEN)" $(GO) run -ldflags '$(GO_REVISION_LDFLAGS)' ./cmd/jetsonfabric-node \
 		--cluster-id "$(NODE_CLUSTER_ID)" \
 		--node-name "$(NODE_NAME)" \
 		--listen "$(NODE_LISTEN)" \
@@ -233,12 +245,18 @@ run-node:
 		--runtime-activation-encoding "$(RUNTIME_ACTIVATION_ENCODING)" \
 		--runtime-kv-cache-type "$(RUNTIME_KV_CACHE_TYPE)" \
 		--runtime-compute-backend "$(RUNTIME_COMPUTE_BACKEND)" \
+		--runtime-cuda-active="$(RUNTIME_CUDA_ACTIVE)" \
 		--runtime-mode "$(RUNTIME_MODE)" \
 		--runtime-ctx-size "$(RUNTIME_CTX_SIZE)" \
 		--runtime-ubatch-size "$(RUNTIME_UBATCH_SIZE)" \
 		--runtime-n-gpu-layers "$(RUNTIME_N_GPU_LAYERS)" \
 		--runtime-threads "$(RUNTIME_THREADS)" \
 		--runtime-http-workers "$(RUNTIME_HTTP_WORKERS)" \
+		--runtime-parallel-sessions "$(RUNTIME_PARALLEL_SESSIONS)" \
+		--runtime-decode-batch-size "$(RUNTIME_DECODE_BATCH_SIZE)" \
+		--runtime-speculative-draft "$(RUNTIME_SPECULATIVE_DRAFT)" \
+		--runtime-speculative-max-tokens "$(RUNTIME_SPECULATIVE_MAX_TOKENS)" \
+		--runtime-idle="$(RUNTIME_START_IDLE)" \
 		--engine "$(NODE_ENGINE)" \
 		--model "$(MODEL)" \
 		--model-path "$(MODEL_PATH)" \
@@ -285,6 +303,10 @@ run-runtime:
 		--n-gpu-layers "$(RUNTIME_N_GPU_LAYERS)" \
 		--threads "$(RUNTIME_THREADS)" \
 		--http-workers "$(RUNTIME_HTTP_WORKERS)" \
+		--parallel-sessions "$(RUNTIME_PARALLEL_SESSIONS)" \
+		--decode-batch-size "$(RUNTIME_DECODE_BATCH_SIZE)" \
+		--speculative-draft "$(RUNTIME_SPECULATIVE_DRAFT)" \
+		--speculative-max-tokens "$(RUNTIME_SPECULATIVE_MAX_TOKENS)" \
 		--mode "$(RUNTIME_MODE)" \
 		--stage-index "$(STAGE_INDEX)" \
 		--stage-count "$(STAGE_COUNT)" \
@@ -310,6 +332,10 @@ dev-up:
 	RUNTIME_N_GPU_LAYERS="$(RUNTIME_N_GPU_LAYERS)" \
 	RUNTIME_THREADS="$(RUNTIME_THREADS)" \
 	RUNTIME_HTTP_WORKERS="$(RUNTIME_HTTP_WORKERS)" \
+	RUNTIME_PARALLEL_SESSIONS="$(RUNTIME_PARALLEL_SESSIONS)" \
+	RUNTIME_DECODE_BATCH_SIZE="$(RUNTIME_DECODE_BATCH_SIZE)" \
+	RUNTIME_SPECULATIVE_DRAFT="$(RUNTIME_SPECULATIVE_DRAFT)" \
+	RUNTIME_SPECULATIVE_MAX_TOKENS="$(RUNTIME_SPECULATIVE_MAX_TOKENS)" \
 	NODE_CLUSTER_ID="$(NODE_CLUSTER_ID)" \
 	NODE_ENGINE="$(NODE_ENGINE)" \
 	JF_CLUSTER_TOKEN="$(JETSONFABRIC_CLUSTER_TOKEN)" \

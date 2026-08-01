@@ -125,11 +125,15 @@ set(JF_RUNTIME_SOURCES
   adapters/llama_cpp_stage_adapter.cpp
 
   pipeline_parallel/stage_assignment.cpp
+  pipeline_parallel/continuous_batching_executor.cpp
   pipeline_parallel/generation_runner.cpp
   pipeline_parallel/stage_worker.cpp
   pipeline_parallel/llama_cpp_full_model_executor.cpp
   pipeline_parallel/llama_cpp_stage_executor.cpp
   pipeline_parallel/synthetic_activation_executor.cpp
+
+  speculative/prompt_lookup_draft.cpp
+  speculative/draft_strategy_factory.cpp
 
   engine/runtime_service.cpp
   engine/generation_service.cpp
@@ -340,6 +344,41 @@ if(BUILD_TESTING)
     COMMAND jetsonfabric-stage-transport-test
   )
 
+  add_executable(jetsonfabric-continuous-batching-test
+    inference/stage.cpp
+    pipeline_parallel/continuous_batching_executor.cpp
+    pipeline_parallel/continuous_batching_executor_test.cpp
+  )
+  target_include_directories(jetsonfabric-continuous-batching-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-continuous-batching-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME continuous-batching
+    COMMAND jetsonfabric-continuous-batching-test
+  )
+
+  add_executable(jetsonfabric-prompt-lookup-draft-test
+    speculative/prompt_lookup_draft.cpp
+    speculative/prompt_lookup_draft_test.cpp
+  )
+  target_include_directories(jetsonfabric-prompt-lookup-draft-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-prompt-lookup-draft-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME prompt-lookup-draft
+    COMMAND jetsonfabric-prompt-lookup-draft-test
+  )
+
   add_executable(jetsonfabric-http-stage-transport-test
     protocol/stage.cpp
     protocol/stage_control.cpp
@@ -494,6 +533,26 @@ if(BUILD_TESTING)
       -DOPTION=--ubatch-size
       -DVALUE=0
       "-DEXPECTED=--ubatch-size must be greater than zero"
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/worker/startup_rejection_test.cmake
+  )
+
+  add_test(
+    NAME runtime-rejects-unknown-speculative-draft
+    COMMAND ${CMAKE_COMMAND}
+      -DRUNTIME_BIN=$<TARGET_FILE:jetsonfabric-runtime-worker>
+      -DOPTION=--speculative-draft
+      -DVALUE=missing-draft
+      "-DEXPECTED=--speculative-draft must be none or prompt_lookup"
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/worker/startup_rejection_test.cmake
+  )
+
+  add_test(
+    NAME runtime-rejects-unauthenticated-external-listen
+    COMMAND ${CMAKE_COMMAND}
+      -DRUNTIME_BIN=$<TARGET_FILE:jetsonfabric-runtime-worker>
+      -DOPTION=--listen
+      -DVALUE=0.0.0.0:9090
+      "-DEXPECTED=non-loopback --listen requires JETSONFABRIC_CLUSTER_TOKEN"
       -P ${CMAKE_CURRENT_SOURCE_DIR}/worker/startup_rejection_test.cmake
   )
 

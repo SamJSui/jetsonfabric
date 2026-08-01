@@ -226,8 +226,12 @@ int main() {
         close(blocked_server_fd);
     });
 
-    transport::HTTPStageTransport interruptible_transport("test-token");
-    stage.api_url = "http://127.0.0.1:" + std::to_string(blocked_port);
+    transport::HTTPStageTransport interruptible_transport(
+        "test-token",
+        transport::HTTPStageTarget::Runtime
+    );
+    stage.api_url = "http://127.0.0.1:1";
+    stage.runtime_url = "http://127.0.0.1:" + std::to_string(blocked_port);
     std::future<pipeline_parallel::StageRunResult> blocked_invoke =
         std::async(std::launch::async, [&]() {
             return interruptible_transport.invoke(

@@ -36,8 +36,9 @@ client
                            -> GenerationService / ModelManager
                            -> GenerationRunner
                                 -> local StageWorker
-                                -> StageTransport -> peer node facade
+                                -> StageTransport -> peer runtime directly
                                      -> peer StageWorker
+                                   or peer node facade in relay mode
 ```
 
 There are two deliberate execution paths:

@@ -121,6 +121,88 @@ func TestBuildDeploymentPlanRejectsStageTransportMismatch(t *testing.T) {
 	}
 }
 
+func TestBuildDeploymentPlanRejectsSpeculativeConfigurationMismatch(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value any
+	}{
+		{name: "draft strategy", key: cluster.CapabilityRuntimeSpeculativeDraft, value: "prompt_lookup"},
+		{name: "maximum width", key: cluster.CapabilityRuntimeSpeculativeMax, value: 8},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := time.Now().UTC()
+			members := []membership.Member{
+				deploymentMember("node-a", "dopey", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now),
+				deploymentMember("node-b", "grumpy", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now),
+			}
+			members[1].Capabilities[tt.key] = tt.value
+
+			_, err := BuildDeploymentPlan(DeploymentBuildRequest{
+				Identity:   DeploymentIdentity{DeploymentID: "deployment-a", Epoch: 1},
+				Model:      deployableModel(nil),
+				Members:    members,
+				Now:        now,
+				StaleAfter: time.Minute,
+				Policy:     Policy{StageCount: 2, AllowColocatedStages: true},
+			})
+			if err == nil || !strings.Contains(err.Error(), "speculative") {
+				t.Fatalf("BuildDeploymentPlan() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestBuildDeploymentPlanRejectsSessionCapacityMismatch(t *testing.T) {
+	now := time.Now().UTC()
+	members := []membership.Member{
+		deploymentMember("node-a", "dopey", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now),
+		deploymentMember("node-b", "grumpy", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now),
+	}
+	members[1].Capabilities[cluster.CapabilityRuntimeParallelSessions] = 4
+	members[1].Capabilities[cluster.CapabilityRuntimeDecodeBatchSize] = 2
+
+	_, err := BuildDeploymentPlan(DeploymentBuildRequest{
+		Identity:   DeploymentIdentity{DeploymentID: "deployment-a", Epoch: 1},
+		Model:      deployableModel(nil),
+		Members:    members,
+		Now:        now,
+		StaleAfter: time.Minute,
+		Policy:     Policy{StageCount: 2, AllowColocatedStages: true},
+	})
+	if err == nil || !strings.Contains(err.Error(), "session capacity") {
+		t.Fatalf("BuildDeploymentPlan() error = %v", err)
+	}
+}
+
+func TestBuildDeploymentPlanRejectsUnsafeDirectRuntimeEndpoint(t *testing.T) {
+	for _, runtimeURL := range []string{"http://127.0.0.1:9090", "http://0.0.0.0:9090"} {
+		t.Run(runtimeURL, func(t *testing.T) {
+			now := time.Now().UTC()
+			member := deploymentMember(
+				"node-a", "dopey", "arm64", "runtime-a", "llama-a",
+				cluster.ComputeBackendCPU, false, now,
+			)
+			member.APIURL = strings.Replace(runtimeURL, ":9090", ":52415", 1)
+			member.Capabilities[cluster.CapabilityRuntimeStageTransport] = cluster.StageTransportHTTPDirectV1
+			member.RuntimeURL = runtimeURL
+
+			_, err := BuildDeploymentPlan(DeploymentBuildRequest{
+				Identity:   DeploymentIdentity{DeploymentID: "deployment-a", Epoch: 1},
+				Model:      deployableModel(nil),
+				Members:    []membership.Member{member},
+				Now:        now,
+				StaleAfter: time.Minute,
+				Policy:     Policy{StageCount: 1},
+			})
+			if err == nil {
+				t.Fatalf("expected unsafe direct runtime endpoint %q to be rejected", runtimeURL)
+			}
+		})
+	}
+}
+
 func TestBuildDeploymentPlanRejectsActivationEncodingMismatch(t *testing.T) {
 	now := time.Now().UTC()
 	members := []membership.Member{
@@ -258,6 +340,10 @@ func deploymentMember(
 			cluster.CapabilityRuntimeStageTransport:     cluster.StageTransportHTTPBinaryV1,
 			cluster.CapabilityRuntimeActivationEncoding: cluster.ActivationEncodingF32,
 			cluster.CapabilityRuntimeKVCacheType:        cluster.KVCacheTypeF16,
+			cluster.CapabilityRuntimeSpeculativeDraft:   "none",
+			cluster.CapabilityRuntimeSpeculativeMax:     4,
+			cluster.CapabilityRuntimeParallelSessions:   2,
+			cluster.CapabilityRuntimeDecodeBatchSize:    1,
 			cluster.CapabilityRuntimeRevision:           runtimeRevision,
 			cluster.CapabilityRuntimeLlamaCPPRevision:   llamaRevision,
 			cluster.CapabilityRuntimeCUDAActive:         cudaActive,

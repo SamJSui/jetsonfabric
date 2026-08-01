@@ -21,6 +21,10 @@ RUNTIME_N_GPU_LAYERS="${JF_RUNTIME_N_GPU_LAYERS:-0}"
 RUNTIME_CUDA_ACTIVE="${JF_RUNTIME_CUDA_ACTIVE:-false}"
 RUNTIME_STAGE_TRANSPORT="${JF_RUNTIME_STAGE_TRANSPORT:-http_binary_v1}"
 RUNTIME_ACTIVATION_ENCODING="${JF_RUNTIME_ACTIVATION_ENCODING:-${RUNTIME_ACTIVATION_ENCODING:-f32}}"
+RUNTIME_SPECULATIVE_DRAFT="${JF_RUNTIME_SPECULATIVE_DRAFT:-none}"
+RUNTIME_SPECULATIVE_MAX_TOKENS="${JF_RUNTIME_SPECULATIVE_MAX_TOKENS:-4}"
+EXPECT_SPECULATIVE_DRAFT="${JF_EXPECT_SPECULATIVE_DRAFT:-false}"
+EXPECT_SPECULATIVE_ROLLBACK="${JF_EXPECT_SPECULATIVE_ROLLBACK:-false}"
 RUNTIME_BUILD_DIR="${RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build}"
 RUNTIME_BIN="${RUNTIME_BIN:-$ROOT_DIR/dist/jetsonfabric-runtime-worker}"
 NODE_BIN="${NODE_BIN:-$ROOT_DIR/dist/jetsonfabric-node}"
@@ -34,6 +38,23 @@ case "$RUNTIME_CUDA_ACTIVE" in
     exit 2
     ;;
 esac
+case "$RUNTIME_SPECULATIVE_DRAFT" in
+  none|prompt_lookup) ;;
+  *)
+    echo "JF_RUNTIME_SPECULATIVE_DRAFT must be none or prompt_lookup" >&2
+    exit 2
+    ;;
+esac
+if [[ ! "$RUNTIME_SPECULATIVE_MAX_TOKENS" =~ ^[1-8]$ ]]; then
+  echo "JF_RUNTIME_SPECULATIVE_MAX_TOKENS must be between 1 and 8" >&2
+  exit 2
+fi
+for value in "$EXPECT_SPECULATIVE_DRAFT" "$EXPECT_SPECULATIVE_ROLLBACK"; do
+  if [[ "$value" != "true" && "$value" != "false" ]]; then
+    echo "speculative expectations must be true or false" >&2
+    exit 2
+  fi
+done
 case "$EXPECTED_FINISH_REASON" in
   ""|length|stop) ;;
   *)
@@ -202,6 +223,8 @@ start_node() {
     --runtime-listen "127.0.0.1:$runtime_port" \
     --runtime-stage-transport "$RUNTIME_STAGE_TRANSPORT" \
     --runtime-activation-encoding "$RUNTIME_ACTIVATION_ENCODING" \
+    --runtime-speculative-draft "$RUNTIME_SPECULATIVE_DRAFT" \
+    --runtime-speculative-max-tokens "$RUNTIME_SPECULATIVE_MAX_TOKENS" \
     --runtime-compute-backend "$RUNTIME_COMPUTE_BACKEND" \
     "${RUNTIME_CUDA_ACTIVE_ARGS[@]}" \
     --runtime-mode pipeline_parallel \
@@ -356,10 +379,13 @@ curl -fsS -X POST "http://127.0.0.1:$NODE0_PORT/v1/runtime/generate" \
     '{request_id:"phase1-runtime-generation",session_id:"phase1-runtime-session",model_id:$model,prompt:$prompt,max_tokens:$max_tokens,stages:$preview[0].stages}')" \
   >"$RUNTIME_GENERATION_FILE"
 
-jq -s -e \
+if ! jq -s -e \
   --argjson baseline "$BASELINE_TOKENS" \
   --arg finish_reason "$BASELINE_FINISH_REASON" \
   --argjson passes "$GENERATION_PASSES" \
+  --arg speculative_draft "$RUNTIME_SPECULATIVE_DRAFT" \
+  --argjson expect_draft "$EXPECT_SPECULATIVE_DRAFT" \
+  --argjson expect_rollback "$EXPECT_SPECULATIVE_ROLLBACK" \
   --argjson stage_count 2 '
   ([.[] | select(.type == "done")]) as $done |
   length == (($baseline | length) + 1) and
@@ -370,9 +396,26 @@ jq -s -e \
   $done[0].finish_reason == $finish_reason and
   $done[0].completion_tokens == ($baseline | length) and
   $done[0].sampled_tokens == $baseline and
-  $done[0].stage_calls == ($passes * $stage_count) and
-  $done[0].remote_stage_calls == ($passes * ($stage_count - 1))
-' "$RUNTIME_GENERATION_FILE" >/dev/null
+  if $speculative_draft == "none" then
+    $done[0].stage_calls == ($passes * $stage_count) and
+    $done[0].remote_stage_calls == ($passes * ($stage_count - 1)) and
+    ($done[0].speculative_draft_tokens // 0) == 0 and
+    ($done[0].rollback_stage_calls // 0) == 0
+  else
+    $done[0].stage_calls > 0 and
+    $done[0].stage_calls == ($done[0].remote_stage_calls * $stage_count) and
+    ($done[0].speculative_accepted_tokens // 0) <= ($done[0].speculative_draft_tokens // 0) and
+    (if $expect_draft then ($done[0].speculative_draft_tokens // 0) > 0 else true end) and
+    (if $expect_rollback then
+      ($done[0].rollback_stage_calls // 0) > 0 and
+      $done[0].rollback_stage_calls == (($done[0].remote_rollback_stage_calls // 0) * $stage_count)
+    else true end)
+  end
+' "$RUNTIME_GENERATION_FILE" >/dev/null; then
+  echo "runtime generation did not match the baseline or configured speculative expectations" >&2
+  cat "$RUNTIME_GENERATION_FILE" >&2
+  exit 1
+fi
 
 curl -fsS -X POST "http://127.0.0.1:$NODE0_PORT/v1/layer-split/run" \
   -H 'Content-Type: application/json' \
@@ -387,13 +430,18 @@ jq -e \
   --arg sha "$MODEL_SHA256" \
   --argjson baseline "$BASELINE_TOKENS" \
   --arg finish_reason "$BASELINE_FINISH_REASON" \
+  --arg speculative_draft "$RUNTIME_SPECULATIVE_DRAFT" \
   --argjson passes "$GENERATION_PASSES" '
   .runtime_identity.model_sha256 == $sha and
   .inter_stage_payload_kind == "activation" and
   .result.sampled_tokens == $baseline and
   .result.finish_reason == $finish_reason and
   .result.completion_tokens == ($baseline | length) and
-  (.result.stages | length) == (2 * $passes) and
+  (if $speculative_draft == "none" then
+    (.result.stages | length) == (2 * $passes)
+  else
+    (.result.stages | length) > 0 and ((.result.stages | length) % 2) == 0
+  end) and
   .result.stages as $traces |
   all($traces[];
     if .payload_kind_out == "activation" then
@@ -470,9 +518,14 @@ if [[ "$CHAT_FINISH_REASON" == "stop" ]]; then
   CHAT_GENERATION_PASSES=$((CHAT_GENERATION_PASSES + 1))
 fi
 if [[ ! "$STAGE_CALLS" =~ ^[0-9]+$ || ! "$REMOTE_STAGE_CALLS" =~ ^[0-9]+$ ||
-      "$STAGE_CALLS" -ne $((CHAT_GENERATION_PASSES * 2)) ||
-      "$REMOTE_STAGE_CALLS" -ne "$CHAT_GENERATION_PASSES" ]]; then
+      "$STAGE_CALLS" -ne $((REMOTE_STAGE_CALLS * 2)) ]]; then
   echo "invalid runtime-owned stage call evidence: stage_calls=$STAGE_CALLS remote_stage_calls=$REMOTE_STAGE_CALLS" >&2
+  exit 1
+fi
+if [[ "$RUNTIME_SPECULATIVE_DRAFT" == "none" &&
+      ( "$STAGE_CALLS" -ne $((CHAT_GENERATION_PASSES * 2)) ||
+        "$REMOTE_STAGE_CALLS" -ne "$CHAT_GENERATION_PASSES" ) ]]; then
+  echo "non-speculative chat used an unexpected number of stage calls: stage_calls=$STAGE_CALLS remote_stage_calls=$REMOTE_STAGE_CALLS" >&2
   exit 1
 fi
 jq -s -e '
@@ -506,6 +559,9 @@ jq -n \
   --arg baseline_finish_reason "$BASELINE_FINISH_REASON" \
   --arg chat_prompt "$CHAT_PROMPT" \
   --arg chat_duration_ms "$CHAT_DURATION_MS" \
+  --arg stage_transport "$RUNTIME_STAGE_TRANSPORT" \
+  --arg speculative_draft "$RUNTIME_SPECULATIVE_DRAFT" \
+  --argjson speculative_max_tokens "$RUNTIME_SPECULATIVE_MAX_TOKENS" \
   --argjson runtime0_memory "$RUNTIME0_MEMORY" \
   --argjson runtime1_memory "$RUNTIME1_MEMORY" \
   --argjson layer_count "$LAYER_COUNT" \
@@ -534,6 +590,11 @@ jq -n \
     topology: $preview[0],
     membership: $members[0].members,
     model_residency: [$runtime0[0].model_memory, $runtime1[0].model_memory],
+    runtime: {
+      stage_transport: $stage_transport,
+      speculative_draft: $speculative_draft,
+      speculative_max_tokens: $speculative_max_tokens
+    },
     process_memory: [$runtime0_memory, $runtime1_memory],
     correctness: {
       raw_prompt: $raw_prompt,

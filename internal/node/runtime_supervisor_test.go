@@ -20,7 +20,11 @@ func TestWaitForRuntimeHealthAttestsWireCompatibility(t *testing.T) {
 			"stage_transport":"http_binary_v1",
 			"activation_encoding":"f16",
 			"kv_cache_type":"q8_0",
-			"ubatch_size":128
+			"ubatch_size":128,
+			"parallel_sessions":4,
+			"decode_batch_size":2
+			,"speculative_draft":"prompt_lookup"
+			,"speculative_max_tokens":4
 		}`))
 	}))
 	defer server.Close()
@@ -32,6 +36,10 @@ func TestWaitForRuntimeHealthAttestsWireCompatibility(t *testing.T) {
 		RuntimeActivationEncoding: "f16",
 		RuntimeKVCacheType:        "q8_0",
 		RuntimeUBatchSize:         128,
+		RuntimeParallelSessions:   4,
+		RuntimeDecodeBatchSize:    2,
+		RuntimeSpeculativeDraft:   "prompt_lookup",
+		RuntimeSpeculativeMax:     4,
 	}
 	if err := waitForRuntimeHealth(
 		t.Context(),
@@ -53,7 +61,9 @@ func TestWaitForRuntimeHealthRejectsActivationEncodingMismatch(t *testing.T) {
 			"stage_transport":"http_binary_v1",
 			"activation_encoding":"f32",
 			"kv_cache_type":"q8_0",
-			"ubatch_size":128
+			"ubatch_size":128,
+			"parallel_sessions":4,
+			"decode_batch_size":2
 		}`))
 	}))
 	defer server.Close()
@@ -65,6 +75,8 @@ func TestWaitForRuntimeHealthRejectsActivationEncodingMismatch(t *testing.T) {
 		RuntimeActivationEncoding: "f16",
 		RuntimeKVCacheType:        "q8_0",
 		RuntimeUBatchSize:         128,
+		RuntimeParallelSessions:   4,
+		RuntimeDecodeBatchSize:    2,
 	}
 	err := waitForRuntimeHealth(t.Context(), server.URL+"/healthz", time.Second, cfg)
 	if err == nil || !strings.Contains(err.Error(), `activation_encoding="f32", want "f16"`) {
@@ -82,7 +94,9 @@ func TestWaitForRuntimeHealthRejectsKVCacheTypeMismatch(t *testing.T) {
 			"stage_transport":"http_binary_v1",
 			"activation_encoding":"f16",
 			"kv_cache_type":"f16",
-			"ubatch_size":128
+			"ubatch_size":128,
+			"parallel_sessions":4,
+			"decode_batch_size":2
 		}`))
 	}))
 	defer server.Close()
@@ -94,6 +108,8 @@ func TestWaitForRuntimeHealthRejectsKVCacheTypeMismatch(t *testing.T) {
 		RuntimeActivationEncoding: "f16",
 		RuntimeKVCacheType:        "q8_0",
 		RuntimeUBatchSize:         128,
+		RuntimeParallelSessions:   4,
+		RuntimeDecodeBatchSize:    2,
 	}
 	err := waitForRuntimeHealth(t.Context(), server.URL+"/healthz", time.Second, cfg)
 	if err == nil || !strings.Contains(err.Error(), `kv_cache_type="f16", want "q8_0"`) {
@@ -111,7 +127,9 @@ func TestWaitForRuntimeHealthRejectsUBatchSizeMismatch(t *testing.T) {
 			"stage_transport":"http_binary_v1",
 			"activation_encoding":"f16",
 			"kv_cache_type":"q8_0",
-			"ubatch_size":256
+			"ubatch_size":256,
+			"parallel_sessions":4,
+			"decode_batch_size":2
 		}`))
 	}))
 	defer server.Close()
@@ -123,6 +141,8 @@ func TestWaitForRuntimeHealthRejectsUBatchSizeMismatch(t *testing.T) {
 		RuntimeActivationEncoding: "f16",
 		RuntimeKVCacheType:        "q8_0",
 		RuntimeUBatchSize:         128,
+		RuntimeParallelSessions:   4,
+		RuntimeDecodeBatchSize:    2,
 	}
 	err := waitForRuntimeHealth(t.Context(), server.URL+"/healthz", time.Second, cfg)
 	if err == nil || !strings.Contains(err.Error(), "ubatch_size=256, want 128") {

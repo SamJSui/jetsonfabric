@@ -23,6 +23,7 @@ public:
 
     StageRunResult run(const protocol::StageRequest& request) const;
     StageRunResult close_session(const protocol::StageRequest& request) const;
+    StageRunResult rollback_session(const protocol::StageRequest& request) const;
 
 private:
     std::string node_name_;

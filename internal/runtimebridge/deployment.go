@@ -26,18 +26,20 @@ const (
 // DeploymentProxy exposes node-local runtime lifecycle operations without
 // making a loopback runtime address reachable from other physical hosts.
 type DeploymentProxy struct {
-	runtimeURL *url.URL
-	client     *http.Client
+	runtimeURL   *url.URL
+	clusterToken string
+	client       *http.Client
 }
 
-func NewDeploymentProxy(runtimeURL string) (*DeploymentProxy, error) {
-	parsed, err := parseRuntimeURL(runtimeURL)
+func NewDeploymentProxy(runtimeURL string, clusterToken string) (*DeploymentProxy, error) {
+	parsed, err := parseLocalRuntimeURL(runtimeURL)
 	if err != nil {
 		return nil, err
 	}
 	return &DeploymentProxy{
-		runtimeURL: parsed,
-		client:     &http.Client{Timeout: 10 * time.Minute},
+		runtimeURL:   parsed,
+		clusterToken: strings.TrimSpace(clusterToken),
+		client:       &http.Client{Timeout: 10 * time.Minute},
 	}, nil
 }
 
@@ -67,7 +69,7 @@ func (p *DeploymentProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	copyHeaders(outbound.Header, req.Header)
 	removeHopByHopHeaders(outbound.Header)
 	outbound.Header.Del(api.HeaderCoordinatorNodeID)
-	outbound.Header.Del(api.HeaderClusterToken)
+	outbound.Header.Set(api.HeaderClusterToken, p.clusterToken)
 	outbound.ContentLength = contentLength
 	outbound.TransferEncoding = append([]string(nil), req.TransferEncoding...)
 

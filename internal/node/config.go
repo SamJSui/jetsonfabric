@@ -2,6 +2,7 @@ package node
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -33,16 +34,22 @@ const (
 	DefaultRuntimeThreads            = 0
 	DefaultRuntimeHTTPWorkers        = 2
 	MaxRuntimeHTTPWorkers            = 64
-	DefaultRuntimeRevision           = "dev"
-	DefaultRuntimeLlamaCPPRevision   = "dev"
-
-	DefaultStageIndex = 0
-	DefaultStageCount = 1
-	DefaultLayerStart = 0
-	DefaultLayerEnd   = 28
+	DefaultRuntimeParallelSessions   = 2
+	DefaultRuntimeDecodeBatchSize    = 1
+	DefaultRuntimeSpeculativeDraft   = "none"
+	DefaultRuntimeSpeculativeMax     = 4
+	MaxRuntimeParallelSessions       = 64
+	DefaultStageIndex                = 0
+	DefaultStageCount                = 1
+	DefaultLayerStart                = 0
+	DefaultLayerEnd                  = 28
 )
 
-var defaultDiscoveryModes = []string{discovery.ModeMDNS}
+var (
+	DefaultRuntimeRevision         = "unknown"
+	DefaultRuntimeLlamaCPPRevision = "unknown"
+	defaultDiscoveryModes          = []string{discovery.ModeMDNS}
+)
 
 type Config struct {
 	ClusterID    string
@@ -69,6 +76,10 @@ type Config struct {
 	RuntimeNGPULayers         int
 	RuntimeThreads            int
 	RuntimeHTTPWorkers        int
+	RuntimeParallelSessions   int
+	RuntimeDecodeBatchSize    int
+	RuntimeSpeculativeDraft   string
+	RuntimeSpeculativeMax     int
 	RuntimeStartIdle          bool
 	RuntimeRevision           string
 	RuntimeLlamaCPPRevision   string
@@ -117,6 +128,10 @@ func DefaultConfigValue() Config {
 		RuntimeNGPULayers:         DefaultRuntimeNGPULayers,
 		RuntimeThreads:            DefaultRuntimeThreads,
 		RuntimeHTTPWorkers:        DefaultRuntimeHTTPWorkers,
+		RuntimeParallelSessions:   DefaultRuntimeParallelSessions,
+		RuntimeDecodeBatchSize:    DefaultRuntimeDecodeBatchSize,
+		RuntimeSpeculativeDraft:   DefaultRuntimeSpeculativeDraft,
+		RuntimeSpeculativeMax:     DefaultRuntimeSpeculativeMax,
 		RuntimeRevision:           DefaultRuntimeRevision,
 		RuntimeLlamaCPPRevision:   DefaultRuntimeLlamaCPPRevision,
 		StageIndex:                DefaultStageIndex,
@@ -196,6 +211,10 @@ func normalizeRuntimeConfig(cfg Config) Config {
 	if cfg.RuntimeStageTransport == "" {
 		cfg.RuntimeStageTransport = DefaultRuntimeStageTransport
 	}
+	if cfg.RuntimeStageTransport == cluster.StageTransportHTTPDirectV1 &&
+		cfg.RuntimeListen == DefaultRuntimeListen {
+		cfg.RuntimeListen = "0.0.0.0:0"
+	}
 	if cfg.RuntimeActivationEncoding == "" {
 		cfg.RuntimeActivationEncoding = DefaultRuntimeActivationEncoding
 	}
@@ -219,6 +238,18 @@ func normalizeRuntimeConfig(cfg Config) Config {
 	}
 	if cfg.RuntimeHTTPWorkers == 0 {
 		cfg.RuntimeHTTPWorkers = DefaultRuntimeHTTPWorkers
+	}
+	if cfg.RuntimeParallelSessions == 0 {
+		cfg.RuntimeParallelSessions = DefaultRuntimeParallelSessions
+	}
+	if cfg.RuntimeDecodeBatchSize == 0 {
+		cfg.RuntimeDecodeBatchSize = DefaultRuntimeDecodeBatchSize
+	}
+	if cfg.RuntimeSpeculativeDraft == "" {
+		cfg.RuntimeSpeculativeDraft = DefaultRuntimeSpeculativeDraft
+	}
+	if cfg.RuntimeSpeculativeMax == 0 {
+		cfg.RuntimeSpeculativeMax = DefaultRuntimeSpeculativeMax
 	}
 	if cfg.RuntimeRevision == "" {
 		cfg.RuntimeRevision = DefaultRuntimeRevision
@@ -270,8 +301,19 @@ func ValidateConfig(cfg Config) error {
 	if cfg.Engine == "" {
 		return fmt.Errorf("--engine is required")
 	}
-	if cfg.RuntimeStageTransport == "" {
-		return fmt.Errorf("--runtime-stage-transport is required")
+	if cfg.RuntimeStageTransport != cluster.StageTransportHTTPBinaryV1 &&
+		cfg.RuntimeStageTransport != cluster.StageTransportHTTPDirectV1 {
+		return fmt.Errorf(
+			"--runtime-stage-transport must be %q or %q",
+			cluster.StageTransportHTTPBinaryV1,
+			cluster.StageTransportHTTPDirectV1,
+		)
+	}
+	if cfg.RuntimeStageTransport == cluster.StageTransportHTTPDirectV1 && cfg.ClusterToken == "" {
+		return fmt.Errorf("--runtime-stage-transport=%s requires %s", cluster.StageTransportHTTPDirectV1, ClusterTokenEnv)
+	}
+	if err := validateRuntimeListenAuth(cfg.RuntimeListen, cfg.ClusterToken); err != nil {
+		return err
 	}
 	if cfg.RuntimeActivationEncoding == "" {
 		return fmt.Errorf("--runtime-activation-encoding is required")
@@ -285,6 +327,24 @@ func ValidateConfig(cfg Config) error {
 	}
 	if cfg.RuntimeHTTPWorkers < 1 || cfg.RuntimeHTTPWorkers > MaxRuntimeHTTPWorkers {
 		return fmt.Errorf("--runtime-http-workers must be between 1 and %d", MaxRuntimeHTTPWorkers)
+	}
+	if cfg.RuntimeParallelSessions < 1 || cfg.RuntimeParallelSessions > MaxRuntimeParallelSessions {
+		return fmt.Errorf("--runtime-parallel-sessions must be between 1 and %d", MaxRuntimeParallelSessions)
+	}
+	if cfg.RuntimeDecodeBatchSize < 1 || cfg.RuntimeDecodeBatchSize > cfg.RuntimeParallelSessions {
+		return fmt.Errorf("--runtime-decode-batch-size must be between 1 and --runtime-parallel-sessions")
+	}
+	if cfg.RuntimeDecodeBatchSize > cfg.RuntimeHTTPWorkers {
+		return fmt.Errorf("--runtime-decode-batch-size cannot exceed --runtime-http-workers")
+	}
+	if cfg.RuntimeSpeculativeDraft != "none" && cfg.RuntimeSpeculativeDraft != "prompt_lookup" {
+		return fmt.Errorf("--runtime-speculative-draft must be %q or %q", "none", "prompt_lookup")
+	}
+	if cfg.RuntimeSpeculativeMax < 1 || cfg.RuntimeSpeculativeMax > 8 {
+		return fmt.Errorf("--runtime-speculative-max-tokens must be between 1 and 8")
+	}
+	if cfg.RuntimeSpeculativeDraft != "none" && cfg.RuntimeDecodeBatchSize != 1 {
+		return fmt.Errorf("speculative decoding currently requires --runtime-decode-batch-size=1")
 	}
 	if cfg.RuntimeRevision == "" {
 		return fmt.Errorf("--runtime-revision is required")
@@ -319,6 +379,26 @@ func ValidateConfig(cfg Config) error {
 		return fmt.Errorf("--benchmarks is required")
 	}
 	return nil
+}
+
+func validateRuntimeListenAuth(listen, clusterToken string) error {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		return fmt.Errorf("--runtime-listen must be host:port: %w", err)
+	}
+	if clusterToken != "" || runtimeHostIsLoopback(host) {
+		return nil
+	}
+	return fmt.Errorf("non-loopback --runtime-listen requires %s", ClusterTokenEnv)
+}
+
+func runtimeHostIsLoopback(host string) bool {
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (cfg Config) RuntimeAuto() bool {

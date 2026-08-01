@@ -26,7 +26,7 @@ validation procedures.
 
 - [Runtime stage interface](runtime-stage-interface.md) - engine-neutral stage
   input, output, identity, and lifecycle boundary.
-- [Stagewire v1](stagewire-v1.md) - binary inter-stage frame and payload contract.
+- [Stagewire v2](stagewire-v2.md) - binary inter-stage frame, rollback, and payload contract.
 - [llama.cpp partial-layer execution](llama-cpp-partial-layer.md) - pinned engine
   integration and stage-range behavior.
 

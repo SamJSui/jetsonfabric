@@ -2,6 +2,7 @@
 
 #include "adapters/llama_cpp_adapter.hpp"
 #include "adapters/llama_cpp_model.hpp"
+#include "pipeline_parallel/continuous_batching_executor.hpp"
 #include "pipeline_parallel/llama_cpp_full_model_executor.hpp"
 #include "pipeline_parallel/llama_cpp_stage_executor.hpp"
 #include "pipeline_parallel/synthetic_activation_executor.hpp"
@@ -70,12 +71,17 @@ InferenceEngineParts create_llama_cpp_engine(const Config& config) {
     std::shared_ptr<adapters::LlamaCppModel> model = load_llama_model(config);
     const deployment::ModelResidency residency = describe_residency(*model);
     if (config.mode == ExecutionMode::PipelineParallel) {
-        return InferenceEngineParts{
-            .layer_executor = std::make_unique<pipeline_parallel::LlamaCppStageExecutor>(
+        std::unique_ptr<pipeline_parallel::LayerExecutor> executor =
+            std::make_unique<pipeline_parallel::LlamaCppStageExecutor>(
                 adapters::LlamaCppStageConfig{
                     .model = std::move(model),
                     .ctx_size = config.ctx_size,
                     .ubatch_size = config.ubatch_size,
+                    .decode_batch_size = config.decode_batch_size,
+                    .max_parallel_sessions = config.parallel_sessions,
+                    .speculative_max_tokens = config.speculative_draft == "none"
+                        ? 0
+                        : config.speculative_max_tokens,
                     .kv_cache_type = config.kv_cache_type,
                     .threads = config.threads,
                     .position = inference::StagePosition{
@@ -87,7 +93,17 @@ InferenceEngineParts create_llama_cpp_engine(const Config& config) {
                         .end = config.stage_assignment.layer_end,
                     },
                 }
-            ),
+            );
+        if (config.decode_batch_size > 1) {
+            executor = std::make_unique<pipeline_parallel::ContinuousBatchingExecutor>(
+                std::move(executor),
+                pipeline_parallel::ContinuousBatchingConfig{
+                    .max_batch_size = static_cast<std::size_t>(config.decode_batch_size),
+                }
+            );
+        }
+        return InferenceEngineParts{
+            .layer_executor = std::move(executor),
             .model_residency = residency,
         };
     }

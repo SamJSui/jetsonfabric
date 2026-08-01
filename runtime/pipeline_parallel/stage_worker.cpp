@@ -112,22 +112,28 @@ protocol::StageResponse to_stage_response(
     response.bytes_in = static_cast<std::int64_t>(request.payload.size());
     response.bytes_out = static_cast<std::int64_t>(response.payload.size());
     response.prompt_tokens = output.prompt_tokens;
+    response.prompt_token_ids = output.prompt_token_ids;
     response.completion_tokens = output.completion_tokens;
+    response.execution_batch_size = output.execution_batch_size;
+    response.verification_width = output.verification_width;
     response.latency_ms = elapsed_ms(timings.execution_us);
     response.execution_us = timings.execution_us;
     response.activation_decode_us = timings.activation_decode_us;
     response.activation_encode_us = timings.activation_encode_us;
     response.stage_total_us = timings.stage_total_us;
     response.message = output.token_text;
+    response.token_text_offsets = output.token_text_offsets;
+    response.token_eog = output.token_eog;
     return response;
 }
 
-protocol::StageResponse close_response(const protocol::StageRequest& request, int latency_ms) {
+protocol::StageResponse close_response(const protocol::StageRequest& request, std::int64_t duration_us) {
     protocol::StageResponse response = base_response(request);
     response.payload_kind = "text";
     response.encoding = "utf-8";
     response.bytes_in = static_cast<std::int64_t>(request.payload.size());
-    response.latency_ms = latency_ms;
+    response.latency_ms = elapsed_ms(duration_us);
+    response.stage_total_us = duration_us;
     return response;
 }
 
@@ -256,7 +262,36 @@ StageRunResult StageWorker::close_session(const protocol::StageRequest& request)
     StageRunResult result;
     result.ok = true;
     result.status = "200 OK";
-    result.response = close_response(request, elapsed_ms(elapsed_us(start)));
+    result.response = close_response(request, elapsed_us(start));
+    return result;
+}
+
+StageRunResult StageWorker::rollback_session(const protocol::StageRequest& request) const {
+    const std::string assignment_error = validate_stage_assignment(assignment_);
+    if (!assignment_error.empty()) {
+        return bad_request("invalid_stage_assignment", assignment_error);
+    }
+    const std::string request_error = validate_request(request);
+    if (!request_error.empty()) {
+        return bad_request("invalid_stage_request", request_error);
+    }
+    if (request.rollback_tokens <= 0) {
+        return bad_request("invalid_rollback", "rollback_tokens must be greater than zero");
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    try {
+        layer_executor_.rollback_session(request.session_id, request.rollback_tokens);
+    } catch (const std::invalid_argument& error) {
+        return bad_request("stage_session_rollback_rejected", error.what());
+    } catch (const std::exception& error) {
+        return error_result("502 Bad Gateway", "stage_session_rollback_failed", error.what());
+    }
+
+    StageRunResult result;
+    result.ok = true;
+    result.status = "200 OK";
+    result.response = close_response(request, elapsed_us(start));
     return result;
 }
 

@@ -30,6 +30,7 @@ type App struct {
 	mdnsAdvertiser      *discovery.MDNSAdvertiser
 	server              *http.Server
 	runtimeSupervisor   *RuntimeSupervisor
+	runtimePeerURL      string
 	coordinatorServer   *coordinator.Server
 }
 
@@ -70,10 +71,11 @@ func buildApp(cfg Config) (*App, error) {
 
 func newApp(cfg Config, nodeID string) *App {
 	app := &App{
-		cfg:       cfg,
-		nodeID:    nodeID,
-		startedAt: time.Now().UTC(),
-		store:     membership.NewStore(),
+		cfg:            cfg,
+		nodeID:         nodeID,
+		startedAt:      time.Now().UTC(),
+		store:          membership.NewStore(),
+		runtimePeerURL: cfg.RuntimeURL,
 	}
 	app.store.Upsert(app.selfMember(time.Now().UTC()))
 	return app
@@ -84,15 +86,15 @@ func (a *App) configureHTTPServer() error {
 	if err != nil {
 		return err
 	}
-	stageRunner, err := runtimebridge.NewStageProxy(a.cfg.RuntimeURL)
+	stageRunner, err := runtimebridge.NewStageProxy(a.cfg.RuntimeURL, a.cfg.ClusterToken)
 	if err != nil {
 		return err
 	}
-	runtimeDeployment, err := runtimebridge.NewDeploymentProxy(a.cfg.RuntimeURL)
+	runtimeDeployment, err := runtimebridge.NewDeploymentProxy(a.cfg.RuntimeURL, a.cfg.ClusterToken)
 	if err != nil {
 		return err
 	}
-	runtimeGeneration, err := runtimebridge.NewGenerationProxy(a.cfg.RuntimeURL)
+	runtimeGeneration, err := runtimebridge.NewGenerationProxy(a.cfg.RuntimeURL, a.cfg.ClusterToken)
 	if err != nil {
 		return err
 	}
@@ -165,13 +167,14 @@ func (a *App) Run(ctx context.Context) error {
 
 	a.cfg = a.cfg.WithBoundAPIURL(listener)
 
-	runtimeSupervisor, runtimeURL, err := StartRuntimeSupervisor(ctx, a.cfg)
+	runtimeSupervisor, runtimeURL, runtimePeerURL, err := StartRuntimeSupervisor(ctx, a.cfg)
 	if err != nil {
 		_ = listener.Close()
 		return err
 	}
 	a.runtimeSupervisor = runtimeSupervisor
 	a.cfg.RuntimeURL = runtimeURL
+	a.runtimePeerURL = runtimePeerURL
 
 	if err := a.configureHTTPServer(); err != nil {
 		_ = listener.Close()
@@ -254,10 +257,10 @@ func (a *App) shutdown(errCh <-chan error) error {
 }
 
 func (a *App) discoverySource(self discovery.SelfFunc) discovery.Source {
-	announcer := discovery.NewAnnounceClient(self)
+	announcer := discovery.NewAnnounceClient(self, a.cfg.ClusterToken)
 	sources := make([]discovery.Source, 0, 2)
 	if a.cfg.DiscoveryEnabled(discovery.ModeStatic) {
-		sources = append(sources, discovery.NewStaticSource(a.cfg.Seeds, self))
+		sources = append(sources, discovery.NewStaticSource(a.cfg.Seeds, self, a.cfg.ClusterToken))
 	}
 	if a.cfg.DiscoveryEnabled(discovery.ModeMDNS) {
 		sources = append(sources, a.hydratingMDNSSource(announcer))
@@ -341,7 +344,7 @@ func (a *App) selfMember(now time.Time) membership.Member {
 		Hostname:         snapshot.Hostname,
 		Role:             a.cfg.Role,
 		APIURL:           a.cfg.APIURL,
-		RuntimeURL:       a.cfg.RuntimeURL,
+		RuntimeURL:       a.runtimePeerURL,
 		LeaderPreference: a.cfg.LeaderPreference,
 		Arch:             snapshot.Arch,
 		OS:               snapshot.OS,

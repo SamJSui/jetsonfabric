@@ -29,7 +29,7 @@ OpenAI-compatible client
   -> stage-0 runtime GenerationRunner
   -> local assigned layers
   -> binary Stagewire activation
-  -> peer node facade and runtime
+  -> peer runtime directly, or peer node facade in relay mode
   -> final logits and sampled token
   -> buffered response or SSE stream
 ```
@@ -57,10 +57,13 @@ Implemented behavior includes:
 - dynamic load, activate, drain, and unload without restarting the node;
 - active-deployment repair after an empty runtime process restarts;
 - bounded runtime HTTP workers and persistent ordered connections to peer nodes;
+- selectable relay and direct runtime-to-runtime HTTP transports;
+- opt-in prompt-lookup speculative decoding with target verification and
+  distributed KV-cache rollback;
 - OpenAI-compatible buffered and streaming chat completions through any node.
 
 See [the architecture](docs/architecture.md) for component ownership and
-[Stagewire v1](docs/stagewire-v1.md) for the inter-stage frame contract.
+[Stagewire v2](docs/stagewire-v2.md) for the inter-stage frame contract.
 
 ## Measured Results
 
@@ -151,6 +154,9 @@ while median request latency rises only 3.0%.
 The detailed method, every suite, runtime timing decomposition, and claim
 boundaries are in the
 [serving matrix report](docs/benchmarks/2026-07-29-serving-matrix.md).
+
+Direct runtime transport and prompt-lookup speculation are evaluated in the
+[runtime transport report](docs/benchmarks/2026-07-31-runtime-transport-speculation.md).
 
 ## Quick Start
 

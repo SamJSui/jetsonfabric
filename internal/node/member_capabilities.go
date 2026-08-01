@@ -22,6 +22,10 @@ func (a *App) memberCapabilities(base map[string]any) map[string]any {
 	capabilities[cluster.CapabilityRuntimeActivationEncoding] = a.cfg.RuntimeActivationEncoding
 	capabilities[cluster.CapabilityRuntimeKVCacheType] = a.cfg.RuntimeKVCacheType
 	capabilities[cluster.CapabilityRuntimeUBatchSize] = a.cfg.RuntimeUBatchSize
+	capabilities[cluster.CapabilityRuntimeParallelSessions] = a.cfg.RuntimeParallelSessions
+	capabilities[cluster.CapabilityRuntimeDecodeBatchSize] = a.cfg.RuntimeDecodeBatchSize
+	capabilities[cluster.CapabilityRuntimeSpeculativeDraft] = a.cfg.RuntimeSpeculativeDraft
+	capabilities[cluster.CapabilityRuntimeSpeculativeMax] = a.cfg.RuntimeSpeculativeMax
 	capabilities[cluster.CapabilityRuntimeRevision] = a.cfg.RuntimeRevision
 	capabilities[cluster.CapabilityRuntimeLlamaCPPRevision] = a.cfg.RuntimeLlamaCPPRevision
 	capabilities[cluster.CapabilityRuntimeCUDAActive] = a.cfg.RuntimeCUDAActive

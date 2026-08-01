@@ -254,6 +254,10 @@ func (items membershipMembersForRun) members() []membership.Member {
 		member.Capabilities[cluster.CapabilityRuntimeStageTransport] = cluster.StageTransportHTTPBinaryV1
 		member.Capabilities[cluster.CapabilityRuntimeActivationEncoding] = cluster.ActivationEncodingF32
 		member.Capabilities[cluster.CapabilityRuntimeKVCacheType] = cluster.KVCacheTypeF16
+		member.Capabilities[cluster.CapabilityRuntimeSpeculativeDraft] = "none"
+		member.Capabilities[cluster.CapabilityRuntimeSpeculativeMax] = 4
+		member.Capabilities[cluster.CapabilityRuntimeParallelSessions] = 2
+		member.Capabilities[cluster.CapabilityRuntimeDecodeBatchSize] = 1
 		members = append(members, member)
 	}
 	return members

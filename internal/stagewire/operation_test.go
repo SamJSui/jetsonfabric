@@ -33,6 +33,20 @@ func TestFrameNormalizesExecuteOperation(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsMissingOperation(t *testing.T) {
+	encoded := stripMetadataFields(t, mustActivationFrame(t), "operation")
+	if _, err := Unmarshal(encoded); err == nil {
+		t.Fatal("StageWire v2 frame without an operation was accepted")
+	}
+}
+
+func TestDecodeRejectsExplicitZeroMaxTokens(t *testing.T) {
+	encoded := setMetadataField(t, mustActivationFrame(t), "max_tokens", 0)
+	if _, err := Unmarshal(encoded); err == nil {
+		t.Fatal("StageWire v2 frame with explicit zero max_tokens was accepted")
+	}
+}
+
 func TestCloseSessionOperationAllowsEmptyTextPayload(t *testing.T) {
 	frame := Frame{Metadata: Metadata{
 		Operation:   OperationCloseSession,

@@ -277,7 +277,8 @@ func buildCloseSessionRequest(sessionID string, model string, deployment stagewi
 }
 
 func validateStageResponseIdentity(request StageRequest, response StageResponse) error {
-	if response.SessionID != request.SessionID ||
+	if response.Operation != request.Operation ||
+		response.SessionID != request.SessionID ||
 		response.RequestID != request.RequestID ||
 		response.ModelID != request.ModelID ||
 		response.DeploymentIdentity != request.DeploymentIdentity ||

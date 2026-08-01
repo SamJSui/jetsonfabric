@@ -58,6 +58,25 @@ Payload text_payload(const std::string& text) {
     return payload;
 }
 
+Payload tokens_payload(const std::vector<std::int32_t>& tokens, PayloadKind kind) {
+    Payload payload;
+    payload.kind = kind;
+    payload.tensor = TensorDescriptor{
+        .dtype = "i32",
+        .shape = {static_cast<std::int64_t>(tokens.size())},
+        .byte_order = "little",
+        .layout = "row_major",
+    };
+    for (const std::int32_t token : tokens) {
+        const std::uint32_t bits = static_cast<std::uint32_t>(token);
+        payload.bytes.push_back(static_cast<std::uint8_t>(bits & 0xffU));
+        payload.bytes.push_back(static_cast<std::uint8_t>((bits >> 8U) & 0xffU));
+        payload.bytes.push_back(static_cast<std::uint8_t>((bits >> 16U) & 0xffU));
+        payload.bytes.push_back(static_cast<std::uint8_t>((bits >> 24U) & 0xffU));
+    }
+    return payload;
+}
+
 StageInput input_for(
     const std::string& session_id,
     const std::string& request_id,
@@ -90,6 +109,23 @@ std::int32_t sampled_token(const Payload& payload) {
         (static_cast<std::uint32_t>(payload.bytes[2]) << 16U) |
         (static_cast<std::uint32_t>(payload.bytes[3]) << 24U);
     return static_cast<std::int32_t>(bits);
+}
+
+std::vector<std::int32_t> sampled_tokens(const Payload& payload) {
+    if (payload.kind != PayloadKind::SampledTokens ||
+        payload.bytes.size() < 8U || payload.bytes.size() % 4U != 0U) {
+        throw std::runtime_error("expected multiple sampled tokens");
+    }
+    std::vector<std::int32_t> tokens;
+    for (std::size_t offset = 0; offset < payload.bytes.size(); offset += 4U) {
+        const std::uint32_t bits =
+            static_cast<std::uint32_t>(payload.bytes[offset]) |
+            (static_cast<std::uint32_t>(payload.bytes[offset + 1U]) << 8U) |
+            (static_cast<std::uint32_t>(payload.bytes[offset + 2U]) << 16U) |
+            (static_cast<std::uint32_t>(payload.bytes[offset + 3U]) << 24U);
+        tokens.push_back(static_cast<std::int32_t>(bits));
+    }
+    return tokens;
 }
 
 void require_success(const ExecutionResult& result, const char* step) {
@@ -155,6 +191,222 @@ void verify_single_stage_equivalence(
     }
 }
 
+void verify_batched_decode_equivalence(
+    const std::shared_ptr<LlamaCppModel>& model,
+    const std::string& prompt,
+    const std::vector<std::int32_t>& baseline_tokens
+) {
+    LlamaCppStageAdapter stage(LlamaCppStageConfig{
+        .model = model,
+        .ctx_size = 256,
+        .ubatch_size = 64,
+        .decode_batch_size = 2,
+        .max_parallel_sessions = 4,
+        .threads = 2,
+        .position = {.index = 0, .count = 1},
+        .layers = {.start = 0, .end = model->n_layer()},
+    });
+
+    std::vector<Payload> sampled;
+    const std::vector<std::string> sessions = {
+        "batch-a", "batch-b", "batch-c", "batch-d",
+    };
+    for (const std::string& session : sessions) {
+        ExecutionResult prefill = stage.execute(input_for(
+            session,
+            session + "-prefill",
+            Phase::Prefill,
+            0,
+            {.index = 0, .count = 1},
+            {.start = 0, .end = model->n_layer()},
+            text_payload(prompt)
+        ));
+        require_success(prefill, "batched session prefill");
+        if (sampled_token(prefill.output.payload) != baseline_tokens[0]) {
+            throw std::runtime_error("batched session prefill token differs from baseline");
+        }
+        sampled.push_back(std::move(prefill.output.payload));
+    }
+
+    for (std::size_t offset = 0; offset < sessions.size(); offset += 2U) {
+        std::vector<StageInput> decode_inputs;
+        for (std::size_t index = offset; index < offset + 2U; ++index) {
+            decode_inputs.push_back(input_for(
+                sessions[index],
+                sessions[index] + "-decode",
+                Phase::Decode,
+                1,
+                {.index = 0, .count = 1},
+                {.start = 0, .end = model->n_layer()},
+                std::move(sampled[index])
+            ));
+        }
+        const std::vector<ExecutionResult> results = stage.execute_batch(decode_inputs);
+        if (results.size() != 2U) {
+            throw std::runtime_error("batched decode returned the wrong result count");
+        }
+        for (const ExecutionResult& result : results) {
+            require_success(result, "batched decode");
+            if (sampled_token(result.output.payload) != baseline_tokens[1]) {
+                throw std::runtime_error("batched decode token differs from baseline");
+            }
+            if (result.output.execution_batch_size != 2) {
+                throw std::runtime_error("batched decode did not report its physical batch size");
+            }
+        }
+    }
+
+    for (const std::string& session : sessions) {
+        stage.close_session(session);
+    }
+    if (stage.session_count() != 0U) {
+        throw std::runtime_error("batched sessions were not released");
+    }
+}
+
+void verify_speculative_batch_and_rollback(
+    const std::shared_ptr<LlamaCppModel>& model,
+    const std::string& prompt,
+    const std::vector<std::int32_t>& baseline_tokens
+) {
+    LlamaCppStageAdapter stage(LlamaCppStageConfig{
+        .model = model,
+        .ctx_size = 256,
+        .ubatch_size = 64,
+        .decode_batch_size = 1,
+        .max_parallel_sessions = 1,
+        .speculative_max_tokens = 2,
+        .threads = 2,
+        .position = {.index = 0, .count = 1},
+        .layers = {.start = 0, .end = model->n_layer()},
+    });
+    const std::string session = "speculative-rollback";
+    ExecutionResult prefill = stage.execute(input_for(
+        session, "speculative-prefill", Phase::Prefill, 0,
+        {.index = 0, .count = 1}, {.start = 0, .end = model->n_layer()},
+        text_payload(prompt)
+    ));
+    require_success(prefill, "speculative prefill");
+    if (sampled_token(prefill.output.payload) != baseline_tokens[0]) {
+        throw std::runtime_error("speculative prefill token differs from baseline");
+    }
+
+    ExecutionResult verification = stage.execute(input_for(
+        session, "speculative-batch", Phase::Decode, 1,
+        {.index = 0, .count = 1}, {.start = 0, .end = model->n_layer()},
+        tokens_payload({baseline_tokens[0], baseline_tokens[1]}, PayloadKind::Tokens)
+    ));
+    require_success(verification, "speculative verification batch");
+    if (sampled_tokens(verification.output.payload) !=
+        std::vector<std::int32_t>({baseline_tokens[1], baseline_tokens[2]})) {
+        throw std::runtime_error("speculative verification tokens differ from baseline");
+    }
+
+    stage.rollback_session(session, 1);
+    ExecutionResult replay = stage.execute(input_for(
+        session, "speculative-replay", Phase::Decode, 2,
+        {.index = 0, .count = 1}, {.start = 0, .end = model->n_layer()},
+        tokens_payload({baseline_tokens[1]}, PayloadKind::SampledToken)
+    ));
+    require_success(replay, "speculative rollback replay");
+    if (sampled_token(replay.output.payload) != baseline_tokens[2]) {
+        throw std::runtime_error("KV rollback did not restore the expected target state");
+    }
+    stage.close_session(session);
+}
+
+void verify_wide_speculative_replay(
+    const std::shared_ptr<LlamaCppModel>& model,
+    const std::string& prompt,
+    const std::vector<std::int32_t>& baseline_tokens
+) {
+    if (baseline_tokens.size() < 7U) {
+        throw std::runtime_error("wide speculative replay requires seven baseline tokens");
+    }
+    const LlamaCppStageConfig config{
+        .model = model,
+        .ctx_size = 256,
+        .ubatch_size = 64,
+        .decode_batch_size = 1,
+        .max_parallel_sessions = 1,
+        .speculative_max_tokens = 4,
+        .threads = 2,
+        .position = {.index = 0, .count = 1},
+        .layers = {.start = 0, .end = model->n_layer()},
+    };
+    LlamaCppStageAdapter clean_stage(config);
+    ExecutionResult clean_prefill = clean_stage.execute(input_for(
+        "wide-clean", "wide-clean-prefill", Phase::Prefill, 0,
+        {.index = 0, .count = 1}, {.start = 0, .end = model->n_layer()},
+        text_payload(prompt)
+    ));
+    require_success(clean_prefill, "wide clean prefill");
+    ExecutionResult clean_batch = clean_stage.execute(input_for(
+        "wide-clean", "wide-clean-batch", Phase::Decode, 1,
+        {.index = 0, .count = 1}, {.start = 0, .end = model->n_layer()},
+        tokens_payload(
+            {baseline_tokens[0], baseline_tokens[1], baseline_tokens[2], baseline_tokens[3], baseline_tokens[4]},
+            PayloadKind::Tokens
+        )
+    ));
+    require_success(clean_batch, "wide clean batch");
+    if (sampled_tokens(clean_batch.output.payload) != std::vector<std::int32_t>(
+            baseline_tokens.begin() + 1,
+            baseline_tokens.begin() + 6)) {
+        throw std::runtime_error("wide speculative batch diverged before rollback");
+    }
+    clean_stage.close_session("wide-clean");
+
+    LlamaCppStageAdapter stage(config);
+    const std::string session = "wide-speculative-replay";
+    ExecutionResult prefill = stage.execute(input_for(
+        session, "wide-prefill", Phase::Prefill, 0,
+        {.index = 0, .count = 1}, {.start = 0, .end = model->n_layer()},
+        text_payload(prompt)
+    ));
+    require_success(prefill, "wide speculative prefill");
+
+    const std::int32_t wrong = baseline_tokens[0] == baseline_tokens[1]
+        ? baseline_tokens[2]
+        : baseline_tokens[0];
+    ExecutionResult rejected = stage.execute(input_for(
+        session, "wide-rejected", Phase::Decode, 1,
+        {.index = 0, .count = 1}, {.start = 0, .end = model->n_layer()},
+        tokens_payload({baseline_tokens[0], wrong, wrong, wrong}, PayloadKind::Tokens)
+    ));
+    require_success(rejected, "wide rejected speculative batch");
+    if (sampled_tokens(rejected.output.payload).front() != baseline_tokens[1]) {
+        throw std::runtime_error("wide rejected batch changed its correction token");
+    }
+    stage.rollback_session(session, 3);
+
+    ExecutionResult recovery = stage.execute(input_for(
+        session, "wide-recovery", Phase::Decode, 2,
+        {.index = 0, .count = 1}, {.start = 0, .end = model->n_layer()},
+        tokens_payload({baseline_tokens[1]}, PayloadKind::SampledToken)
+    ));
+    require_success(recovery, "wide single-token rollback recovery");
+    if (sampled_token(recovery.output.payload) != baseline_tokens[2]) {
+        throw std::runtime_error("single-token rollback recovery diverged from serial greedy decode");
+    }
+
+    ExecutionResult accepted = stage.execute(input_for(
+        session, "wide-accepted", Phase::Decode, 3,
+        {.index = 0, .count = 1}, {.start = 0, .end = model->n_layer()},
+        tokens_payload(
+            {baseline_tokens[2], baseline_tokens[3], baseline_tokens[4], baseline_tokens[5], baseline_tokens[6]},
+            PayloadKind::Tokens
+        )
+    ));
+    require_success(accepted, "wide accepted speculative batch");
+    if (sampled_tokens(accepted.output.payload) != std::vector<std::int32_t>(
+            baseline_tokens.begin() + 3,
+            baseline_tokens.begin() + 8)) {
+        throw std::runtime_error("wide speculative replay diverged from serial greedy decode");
+    }
+    stage.close_session(session);
+}
+
 void verify_idle_session_expiry(const std::shared_ptr<LlamaCppModel>& model, int split) {
     LlamaCppStageAdapter expiring_stage(LlamaCppStageConfig{
         .model = model,
@@ -196,6 +448,85 @@ std::vector<LayerRange> balanced_layer_ranges(int layer_count, int stage_count) 
         start = end;
     }
     return ranges;
+}
+
+void verify_two_stage_speculative_rollback(
+    const std::shared_ptr<LlamaCppModel>& model,
+    const std::string& model_path,
+    const std::string& prompt,
+    const std::vector<std::int32_t>& baseline_tokens
+) {
+    const std::vector<LayerRange> ranges = balanced_layer_ranges(model->n_layer(), 2);
+    std::vector<std::unique_ptr<LlamaCppStageAdapter>> stages;
+    for (int index = 0; index < 2; ++index) {
+        const LayerRange range = ranges[static_cast<std::size_t>(index)];
+        auto stage_model = std::make_shared<LlamaCppModel>(LlamaCppModelConfig{
+            .model_path = model_path,
+            .n_gpu_layers = 0,
+            .layer_start = range.start,
+            .layer_end = range.end,
+        });
+        stages.push_back(std::make_unique<LlamaCppStageAdapter>(LlamaCppStageConfig{
+            .model = std::move(stage_model),
+            .ctx_size = 256,
+            .ubatch_size = 64,
+            .decode_batch_size = 1,
+            .max_parallel_sessions = 1,
+            .speculative_max_tokens = 2,
+            .threads = 2,
+            .position = {.index = index, .count = 2},
+            .layers = range,
+        }));
+    }
+
+    const std::string session = "two-stage-speculative-rollback";
+    Payload payload = text_payload(prompt);
+    for (int stage_index = 0; stage_index < 2; ++stage_index) {
+        ExecutionResult result = stages[static_cast<std::size_t>(stage_index)]->execute(input_for(
+            session, "speculative-prefill-" + std::to_string(stage_index), Phase::Prefill, 0,
+            {.index = stage_index, .count = 2}, ranges[static_cast<std::size_t>(stage_index)],
+            std::move(payload)
+        ));
+        require_success(result, "two-stage speculative prefill");
+        payload = std::move(result.output.payload);
+    }
+    if (sampled_token(payload) != baseline_tokens[0]) {
+        throw std::runtime_error("two-stage speculative prefill differs from baseline");
+    }
+
+    payload = tokens_payload({baseline_tokens[0], baseline_tokens[1]}, PayloadKind::Tokens);
+    for (int stage_index = 0; stage_index < 2; ++stage_index) {
+        ExecutionResult result = stages[static_cast<std::size_t>(stage_index)]->execute(input_for(
+            session, "speculative-verify-" + std::to_string(stage_index), Phase::Decode, 1,
+            {.index = stage_index, .count = 2}, ranges[static_cast<std::size_t>(stage_index)],
+            std::move(payload)
+        ));
+        require_success(result, "two-stage speculative verification");
+        if (result.output.verification_width != 2) {
+            throw std::runtime_error("speculative verification width was not preserved across stages");
+        }
+        payload = std::move(result.output.payload);
+    }
+    if (sampled_tokens(payload) !=
+        std::vector<std::int32_t>({baseline_tokens[1], baseline_tokens[2]})) {
+        throw std::runtime_error("two-stage speculative verification differs from baseline");
+    }
+
+    for (const auto& stage : stages) stage->rollback_session(session, 1);
+    payload = tokens_payload({baseline_tokens[1]}, PayloadKind::SampledToken);
+    for (int stage_index = 0; stage_index < 2; ++stage_index) {
+        ExecutionResult result = stages[static_cast<std::size_t>(stage_index)]->execute(input_for(
+            session, "speculative-replay-" + std::to_string(stage_index), Phase::Decode, 2,
+            {.index = stage_index, .count = 2}, ranges[static_cast<std::size_t>(stage_index)],
+            std::move(payload)
+        ));
+        require_success(result, "two-stage speculative replay");
+        payload = std::move(result.output.payload);
+    }
+    if (sampled_token(payload) != baseline_tokens[2]) {
+        throw std::runtime_error("two-stage rollback did not restore the target token stream");
+    }
+    for (const auto& stage : stages) stage->close_session(session);
 }
 
 void verify_partition_residency(
@@ -325,6 +656,13 @@ int run_test(const std::shared_ptr<LlamaCppModel>& model, const std::string& mod
     }
 
     verify_single_stage_equivalence(model, prompt, baseline_response.token_ids);
+    verify_batched_decode_equivalence(model, prompt, baseline_response.token_ids);
+    verify_speculative_batch_and_rollback(model, prompt, baseline_response.token_ids);
+    const std::string rollback_prompt =
+        "alpha beta gamma delta alpha beta gamma delta alpha beta gamma WRONG alpha beta";
+    const auto wide_baseline = baseline.generate({.prompt = rollback_prompt, .max_tokens = 8});
+    verify_wide_speculative_replay(model, rollback_prompt, wide_baseline.token_ids);
+    verify_two_stage_speculative_rollback(model, model_path, prompt, baseline_response.token_ids);
     verify_pipeline_equivalence(model, model_path, prompt, baseline_response.token_ids, 2);
     verify_pipeline_equivalence(model, model_path, prompt, baseline_response.token_ids, 3);
 

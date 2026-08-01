@@ -27,6 +27,10 @@ struct Config {
     int n_gpu_layers = 999;
     int threads = 0;
     int http_workers = 2;
+    int parallel_sessions = 2;
+    int decode_batch_size = 1;
+    std::string speculative_draft = "none";
+    int speculative_max_tokens = 4;
 
     ExecutionMode mode = ExecutionMode::DataParallel;
     pipeline_parallel::StageAssignment stage_assignment;

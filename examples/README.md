@@ -27,6 +27,12 @@ object. Unsupported OpenAI fields are not included in the tracked example.
 concurrent serving benchmark. It is a reproducibility fixture, not a separate
 API contract.
 
+`layer-split-benchmark-request.json` exercises the diagnostic pipeline API.
+`speculative-benchmark-request.json` contains the equivalent rendered chat
+prompt for exact token comparisons, while `speculative-repetitive-request.json`
+is the intentionally repetitive workload used to measure prompt-lookup draft
+acceptance. It is not representative of normal prose.
+
 Run the checked-in benchmark suites against the active deployment:
 
 ```sh

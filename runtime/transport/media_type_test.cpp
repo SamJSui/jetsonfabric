@@ -13,18 +13,18 @@ void expect(bool condition, const std::string& message) {
 }
 
 void test_media_type_matching() {
-    constexpr const char* expected = "application/vnd.jetsonfabric.stage.v1+octet-stream";
+    constexpr const char* expected = "application/vnd.jetsonfabric.stage.v2+octet-stream";
     expect(runtime::transport::matches_media_type(expected, expected), "exact media type was rejected");
     expect(
         runtime::transport::matches_media_type(
-            "Application/Vnd.JetsonFabric.Stage.V1+Octet-Stream",
+            "Application/Vnd.JetsonFabric.Stage.V2+Octet-Stream",
             expected
         ),
         "case-normalized media type was rejected"
     );
     expect(
         runtime::transport::matches_media_type(
-            "application/vnd.jetsonfabric.stage.v1+octet-stream; charset=utf-8; version=\"1\"",
+            "application/vnd.jetsonfabric.stage.v2+octet-stream; charset=utf-8; version=\"2\"",
             expected
         ),
         "valid media type parameters were rejected"
@@ -32,14 +32,14 @@ void test_media_type_matching() {
 }
 
 void test_malformed_media_types_are_rejected() {
-    constexpr const char* expected = "application/vnd.jetsonfabric.stage.v1+octet-stream";
+    constexpr const char* expected = "application/vnd.jetsonfabric.stage.v2+octet-stream";
     const std::string invalid[] = {
-        "application/vnd.jetsonfabric.stage.v1+octet-stream-garbage",
-        "application/vnd.jetsonfabric.stage.v1+octet-stream;",
-        "application/vnd.jetsonfabric.stage.v1+octet-stream; charset",
-        "application/vnd.jetsonfabric.stage.v1+octet-stream; charset=",
-        "application/vnd.jetsonfabric.stage.v1+octet-stream; charset=\"unterminated",
-        "application/vnd.jetsonfabric.stage.v1+octet-stream; =utf-8",
+        "application/vnd.jetsonfabric.stage.v2+octet-stream-garbage",
+        "application/vnd.jetsonfabric.stage.v2+octet-stream;",
+        "application/vnd.jetsonfabric.stage.v2+octet-stream; charset",
+        "application/vnd.jetsonfabric.stage.v2+octet-stream; charset=",
+        "application/vnd.jetsonfabric.stage.v2+octet-stream; charset=\"unterminated",
+        "application/vnd.jetsonfabric.stage.v2+octet-stream; =utf-8",
     };
     for (const std::string& value : invalid) {
         expect(!runtime::transport::matches_media_type(value, expected), "malformed media type was accepted: " + value);

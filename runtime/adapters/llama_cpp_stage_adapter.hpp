@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace jetsonfabric::runtime::adapters {
 
@@ -15,6 +16,9 @@ struct LlamaCppStageConfig {
     std::shared_ptr<LlamaCppModel> model;
     int ctx_size = 4096;
     int ubatch_size = 512;
+    int decode_batch_size = 1;
+    int max_parallel_sessions = 1;
+    int speculative_max_tokens = 0;
     KVCacheType kv_cache_type = KVCacheType::F16;
     int threads = 0;
     inference::StagePosition position;
@@ -36,7 +40,11 @@ public:
     LlamaCppStageAdapter& operator=(const LlamaCppStageAdapter&) = delete;
 
     inference::ExecutionResult execute(const inference::StageInput& input) const;
+    std::vector<inference::ExecutionResult> execute_batch(
+        const std::vector<inference::StageInput>& inputs
+    ) const;
     void close_session(const std::string& session_id) const;
+    void rollback_session(const std::string& session_id, int token_count) const;
     std::size_t session_count() const;
 
 private:

@@ -56,12 +56,17 @@ client
   -> GenerationService
   -> GenerationRunner
       -> local ModelManager for stage 0
-      -> HTTPStageTransport -> authenticated peer node facade -> peer runtime
+      -> HTTPStageTransport -> authenticated peer runtime
+         or peer node facade when relay mode is selected
   -> NDJSON token and done events
   -> buffered OpenAI response or incremental SSE
 ```
 
-For prefill, the first stage accepts text or tokens. Non-final stages emit F32 hidden activations. The final stage keeps logits local and emits one sampled token. Decode repeats the same ordered stage path using persistent stage-local contexts.
+For prefill, the first stage accepts text or tokens. Non-final stages emit F32
+or F16 hidden activations. The final stage keeps logits local and emits sampled
+tokens. Decode repeats the same ordered stage path using persistent stage-local
+contexts. Prompt-lookup speculation can verify several candidate tokens in one
+pass; rejected suffixes trigger an authenticated rollback on every stage.
 
 `internal/stagewire` and `runtime/protocol` implement the matching versioned
 binary frame. `internal/runtimebridge` proxies generation and stage traffic

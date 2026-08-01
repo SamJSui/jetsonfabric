@@ -2,6 +2,8 @@ package clusterplan
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -19,6 +21,10 @@ type DeploymentCompatibility struct {
 	StageTransport     string                 `json:"stage_transport"`
 	ActivationEncoding string                 `json:"activation_encoding"`
 	KVCacheType        string                 `json:"kv_cache_type"`
+	SpeculativeDraft   string                 `json:"speculative_draft"`
+	SpeculativeMax     int                    `json:"speculative_max_tokens"`
+	ParallelSessions   int                    `json:"parallel_sessions"`
+	DecodeBatchSize    int                    `json:"decode_batch_size"`
 	ComputeBackend     cluster.ComputeBackend `json:"compute_backend,omitempty"`
 	CUDAActive         bool                   `json:"cuda_active"`
 }
@@ -187,7 +193,7 @@ func compatibleDeploymentMembers(
 	}
 	if selected == nil {
 		return nil, DeploymentCompatibility{}, fmt.Errorf(
-			"need %d fresh runtimes with matching architecture, runtime revision, engine revision, stage transport, activation encoding, KV cache type, execution mode, and compute compatibility",
+			"need %d fresh runtimes with matching architecture, runtime revision, engine revision, stage transport, activation encoding, KV cache type, session capacity, speculative configuration, execution mode, and compute compatibility",
 			requiredStages,
 		)
 	}
@@ -205,9 +211,28 @@ func memberDeploymentCompatibility(
 	stageTransport := capabilityText(member.Capabilities, cluster.CapabilityRuntimeStageTransport)
 	activationEncoding := capabilityText(member.Capabilities, cluster.CapabilityRuntimeActivationEncoding)
 	kvCacheType := capabilityText(member.Capabilities, cluster.CapabilityRuntimeKVCacheType)
+	speculativeDraft := capabilityText(member.Capabilities, cluster.CapabilityRuntimeSpeculativeDraft)
+	speculativeMax, speculativeMaxOK := intCapability(
+		member.Capabilities,
+		cluster.CapabilityRuntimeSpeculativeMax,
+	)
+	parallelSessions, parallelSessionsOK := intCapability(
+		member.Capabilities,
+		cluster.CapabilityRuntimeParallelSessions,
+	)
+	decodeBatchSize, decodeBatchSizeOK := intCapability(
+		member.Capabilities,
+		cluster.CapabilityRuntimeDecodeBatchSize,
+	)
 	backend := cluster.ComputeBackend(capabilityText(member.Capabilities, cluster.CapabilityRuntimeComputeBackend))
 	if architecture == "" || runtimeRevision == "" || stageTransport == "" ||
-		activationEncoding == "" || kvCacheType == "" {
+		activationEncoding == "" || kvCacheType == "" || speculativeDraft == "" ||
+		!speculativeMaxOK || speculativeMax < 1 ||
+		!parallelSessionsOK || parallelSessions < 1 ||
+		!decodeBatchSizeOK || decodeBatchSize < 1 || decodeBatchSize > parallelSessions {
+		return DeploymentCompatibility{}, false
+	}
+	if stageTransport == cluster.StageTransportHTTPDirectV1 && !validDirectRuntimeEndpoint(member) {
 		return DeploymentCompatibility{}, false
 	}
 	if cluster.Engine(capabilityText(member.Capabilities, cluster.CapabilityRuntimeEngine)) != engine {
@@ -242,6 +267,10 @@ func memberDeploymentCompatibility(
 		StageTransport:     stageTransport,
 		ActivationEncoding: activationEncoding,
 		KVCacheType:        kvCacheType,
+		SpeculativeDraft:   speculativeDraft,
+		SpeculativeMax:     speculativeMax,
+		ParallelSessions:   parallelSessions,
+		DecodeBatchSize:    decodeBatchSize,
 		ComputeBackend:     backend,
 		CUDAActive:         cudaActive,
 	}, true
@@ -261,9 +290,32 @@ func compatibilityKey(value DeploymentCompatibility, includeBackend bool) string
 		value.StageTransport,
 		value.ActivationEncoding,
 		value.KVCacheType,
+		value.SpeculativeDraft,
+		fmt.Sprintf("%d", value.SpeculativeMax),
+		fmt.Sprintf("%d", value.ParallelSessions),
+		fmt.Sprintf("%d", value.DecodeBatchSize),
 		backend,
 		cuda,
 	}, "|")
+}
+
+func validDirectRuntimeEndpoint(member membership.Member) bool {
+	apiURL, apiErr := url.Parse(strings.TrimSpace(member.APIURL))
+	runtimeURL, runtimeErr := url.Parse(strings.TrimSpace(member.RuntimeURL))
+	if apiErr != nil || runtimeErr != nil || apiURL.Scheme != "http" ||
+		runtimeURL.Scheme != "http" || apiURL.Hostname() == "" ||
+		runtimeURL.Hostname() == "" || runtimeURL.Port() == "" {
+		return false
+	}
+	if !strings.EqualFold(apiURL.Hostname(), runtimeURL.Hostname()) {
+		return false
+	}
+	host := runtimeURL.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip == nil || (!ip.IsLoopback() && !ip.IsUnspecified())
 }
 
 func capabilityText(capabilities map[string]any, key string) string {

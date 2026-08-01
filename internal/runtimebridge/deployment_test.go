@@ -24,8 +24,8 @@ func TestDeploymentProxyVerifiesArtifactBeforeForwardingLoad(t *testing.T) {
 	forwarded := 0
 	runtime := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		forwarded++
-		if request.Header.Get(api.HeaderCoordinatorNodeID) != "" || request.Header.Get(api.HeaderClusterToken) != "" {
-			t.Fatal("proxy forwarded node-internal authorization headers to the runtime")
+		if request.Header.Get(api.HeaderCoordinatorNodeID) != "" || request.Header.Get(api.HeaderClusterToken) != "cluster-secret" {
+			t.Fatal("proxy did not replace node authorization with runtime authorization")
 		}
 		payload, err := io.ReadAll(request.Body)
 		if err != nil {
@@ -43,7 +43,7 @@ func TestDeploymentProxyVerifiesArtifactBeforeForwardingLoad(t *testing.T) {
 	}))
 	defer runtime.Close()
 
-	proxy, err := NewDeploymentProxy(runtime.URL)
+	proxy, err := NewDeploymentProxy(runtime.URL, "cluster-secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestDeploymentProxyRejectsArtifactMismatchBeforeRuntimeLoad(t *testing.T) {
 	}))
 	defer runtime.Close()
 
-	proxy, err := NewDeploymentProxy(runtime.URL)
+	proxy, err := NewDeploymentProxy(runtime.URL, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestDeploymentProxyRejectsArtifactMismatchBeforeRuntimeLoad(t *testing.T) {
 }
 
 func TestDeploymentProxyRejectsIncompleteLoadIdentity(t *testing.T) {
-	proxy, err := NewDeploymentProxy("http://127.0.0.1:9090")
+	proxy, err := NewDeploymentProxy("http://127.0.0.1:9090", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestDeploymentProxyForwardsDrainRoute(t *testing.T) {
 		_, _ = w.Write([]byte(`{"drained":true}`))
 	}))
 	defer runtime.Close()
-	proxy, err := NewDeploymentProxy(runtime.URL)
+	proxy, err := NewDeploymentProxy(runtime.URL, "")
 	if err != nil {
 		t.Fatal(err)
 	}

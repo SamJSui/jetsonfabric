@@ -84,27 +84,41 @@ type RequestResult struct {
 }
 
 type RuntimeSummary struct {
-	StageCalls       int                  `json:"stage_calls"`
-	RemoteStageCalls int                  `json:"remote_stage_calls"`
-	BytesIn          int64                `json:"bytes_in"`
-	BytesOut         int64                `json:"bytes_out"`
-	StageTimings     []StageTimingSummary `json:"stage_timings,omitempty"`
+	StageCalls                int                  `json:"stage_calls"`
+	RemoteStageCalls          int                  `json:"remote_stage_calls"`
+	RollbackStageCalls        int                  `json:"rollback_stage_calls"`
+	RemoteRollbackStageCalls  int                  `json:"remote_rollback_stage_calls"`
+	RollbackStageUS           int64                `json:"rollback_stage_us"`
+	RollbackRemoteCallUS      int64                `json:"rollback_remote_call_us"`
+	BytesIn                   int64                `json:"bytes_in"`
+	BytesOut                  int64                `json:"bytes_out"`
+	StageTimings              []StageTimingSummary `json:"stage_timings,omitempty"`
+	TargetDecodePasses        int                  `json:"target_decode_passes"`
+	SpeculativeDraftTokens    int                  `json:"speculative_draft_tokens"`
+	SpeculativeAcceptedTokens int                  `json:"speculative_accepted_tokens"`
+	SpeculativeAcceptanceRate float64              `json:"speculative_acceptance_rate"`
 }
 
 type StageTimingSummary struct {
-	Phase            string           `json:"phase"`
-	StageIndex       int              `json:"stage_index"`
-	NodeName         string           `json:"node_name"`
-	Remote           bool             `json:"remote"`
-	Calls            int              `json:"calls"`
-	Execution        MicrosecondTotal `json:"execution"`
-	ActivationDecode MicrosecondTotal `json:"activation_decode"`
-	ActivationEncode MicrosecondTotal `json:"activation_encode"`
-	StageTotal       MicrosecondTotal `json:"stage_total"`
-	RemoteCall       MicrosecondTotal `json:"remote_call"`
-	RemoteOverhead   MicrosecondTotal `json:"remote_overhead"`
-	BytesIn          int64            `json:"bytes_in"`
-	BytesOut         int64            `json:"bytes_out"`
+	Phase                 string           `json:"phase"`
+	StageIndex            int              `json:"stage_index"`
+	NodeName              string           `json:"node_name"`
+	Remote                bool             `json:"remote"`
+	Calls                 int              `json:"calls"`
+	BatchItems            int              `json:"batch_items"`
+	MeanBatchSize         float64          `json:"mean_execution_batch_size"`
+	MaxBatchSize          int              `json:"max_execution_batch_size"`
+	VerificationItems     int              `json:"verification_items"`
+	MeanVerificationWidth float64          `json:"mean_verification_width"`
+	MaxVerificationWidth  int              `json:"max_verification_width"`
+	Execution             MicrosecondTotal `json:"execution"`
+	ActivationDecode      MicrosecondTotal `json:"activation_decode"`
+	ActivationEncode      MicrosecondTotal `json:"activation_encode"`
+	StageTotal            MicrosecondTotal `json:"stage_total"`
+	RemoteCall            MicrosecondTotal `json:"remote_call"`
+	RemoteOverhead        MicrosecondTotal `json:"remote_overhead"`
+	BytesIn               int64            `json:"bytes_in"`
+	BytesOut              int64            `json:"bytes_out"`
 }
 
 type MicrosecondTotal struct {
@@ -131,12 +145,19 @@ type chatCompletionChunk struct {
 	} `json:"choices"`
 	Usage *chat.Usage `json:"usage,omitempty"`
 	Trace *struct {
-		TokenIndex       *int               `json:"token_index,omitempty"`
-		StageCalls       int                `json:"stage_calls,omitempty"`
-		RemoteStageCalls int                `json:"remote_stage_calls,omitempty"`
-		BytesIn          int64              `json:"bytes_in,omitempty"`
-		BytesOut         int64              `json:"bytes_out,omitempty"`
-		StageTimings     []chat.StageTiming `json:"stage_timings,omitempty"`
+		TokenIndex                *int               `json:"token_index,omitempty"`
+		StageCalls                int                `json:"stage_calls,omitempty"`
+		RemoteStageCalls          int                `json:"remote_stage_calls,omitempty"`
+		RollbackStageCalls        int                `json:"rollback_stage_calls,omitempty"`
+		RemoteRollbackStageCalls  int                `json:"remote_rollback_stage_calls,omitempty"`
+		RollbackStageUS           int64              `json:"rollback_stage_us,omitempty"`
+		RollbackRemoteCallUS      int64              `json:"rollback_remote_call_us,omitempty"`
+		BytesIn                   int64              `json:"bytes_in,omitempty"`
+		BytesOut                  int64              `json:"bytes_out,omitempty"`
+		StageTimings              []chat.StageTiming `json:"stage_timings,omitempty"`
+		TargetDecodePasses        int                `json:"target_decode_passes,omitempty"`
+		SpeculativeDraftTokens    int                `json:"speculative_draft_tokens,omitempty"`
+		SpeculativeAcceptedTokens int                `json:"speculative_accepted_tokens,omitempty"`
 	} `json:"jetsonfabric,omitempty"`
 	Error *struct {
 		Message string `json:"message"`
@@ -478,11 +499,18 @@ func consumeSSE(reader io.Reader, startedAt time.Time, now func() time.Time) (st
 		}
 		if chunk.Trace != nil && len(chunk.Trace.StageTimings) > 0 {
 			metrics.Trace = &chat.RuntimeTrace{
-				StageCalls:       chunk.Trace.StageCalls,
-				RemoteStageCalls: chunk.Trace.RemoteStageCalls,
-				BytesIn:          chunk.Trace.BytesIn,
-				BytesOut:         chunk.Trace.BytesOut,
-				StageTimings:     append([]chat.StageTiming(nil), chunk.Trace.StageTimings...),
+				StageCalls:                chunk.Trace.StageCalls,
+				RemoteStageCalls:          chunk.Trace.RemoteStageCalls,
+				RollbackStageCalls:        chunk.Trace.RollbackStageCalls,
+				RemoteRollbackStageCalls:  chunk.Trace.RemoteRollbackStageCalls,
+				RollbackStageUS:           chunk.Trace.RollbackStageUS,
+				RollbackRemoteCallUS:      chunk.Trace.RollbackRemoteCallUS,
+				BytesIn:                   chunk.Trace.BytesIn,
+				BytesOut:                  chunk.Trace.BytesOut,
+				StageTimings:              append([]chat.StageTiming(nil), chunk.Trace.StageTimings...),
+				TargetDecodePasses:        chunk.Trace.TargetDecodePasses,
+				SpeculativeDraftTokens:    chunk.Trace.SpeculativeDraftTokens,
+				SpeculativeAcceptedTokens: chunk.Trace.SpeculativeAcceptedTokens,
 			}
 		}
 		if chunk.Trace != nil && chunk.Trace.TokenIndex != nil {
@@ -603,8 +631,15 @@ func summarizeRuntime(results []RequestResult) RuntimeSummary {
 		}
 		summary.StageCalls += result.Trace.StageCalls
 		summary.RemoteStageCalls += result.Trace.RemoteStageCalls
+		summary.RollbackStageCalls += result.Trace.RollbackStageCalls
+		summary.RemoteRollbackStageCalls += result.Trace.RemoteRollbackStageCalls
+		summary.RollbackStageUS += result.Trace.RollbackStageUS
+		summary.RollbackRemoteCallUS += result.Trace.RollbackRemoteCallUS
 		summary.BytesIn += result.Trace.BytesIn
 		summary.BytesOut += result.Trace.BytesOut
+		summary.TargetDecodePasses += result.Trace.TargetDecodePasses
+		summary.SpeculativeDraftTokens += result.Trace.SpeculativeDraftTokens
+		summary.SpeculativeAcceptedTokens += result.Trace.SpeculativeAcceptedTokens
 		for _, timing := range result.Trace.StageTimings {
 			key := fmt.Sprintf("%s:%d:%s", timing.Phase, timing.StageIndex, timing.NodeName)
 			index, exists := indexByKey[key]
@@ -620,6 +655,16 @@ func summarizeRuntime(results []RequestResult) RuntimeSummary {
 			}
 			aggregate := &timings[index]
 			aggregate.Calls += timing.Calls
+			aggregate.BatchItems += timing.BatchItems
+			aggregate.MaxExecutionBatch = max(
+				aggregate.MaxExecutionBatch,
+				timing.MaxExecutionBatch,
+			)
+			aggregate.VerificationItems += timing.VerificationItems
+			aggregate.MaxVerificationWidth = max(
+				aggregate.MaxVerificationWidth,
+				timing.MaxVerificationWidth,
+			)
 			aggregate.ExecutionUS += timing.ExecutionUS
 			aggregate.ActivationDecodeUS += timing.ActivationDecodeUS
 			aggregate.ActivationEncodeUS += timing.ActivationEncodeUS
@@ -631,21 +676,37 @@ func summarizeRuntime(results []RequestResult) RuntimeSummary {
 		}
 	}
 	for _, timing := range timings {
+		meanBatchSize := 0.0
+		meanVerificationWidth := 0.0
+		if timing.Calls > 0 {
+			meanBatchSize = float64(timing.BatchItems) / float64(timing.Calls)
+			meanVerificationWidth = float64(timing.VerificationItems) / float64(timing.Calls)
+		}
 		summary.StageTimings = append(summary.StageTimings, StageTimingSummary{
-			Phase:            timing.Phase,
-			StageIndex:       timing.StageIndex,
-			NodeName:         timing.NodeName,
-			Remote:           timing.Remote,
-			Calls:            timing.Calls,
-			Execution:        microsecondTotal(timing.ExecutionUS, timing.Calls),
-			ActivationDecode: microsecondTotal(timing.ActivationDecodeUS, timing.Calls),
-			ActivationEncode: microsecondTotal(timing.ActivationEncodeUS, timing.Calls),
-			StageTotal:       microsecondTotal(timing.StageTotalUS, timing.Calls),
-			RemoteCall:       microsecondTotal(timing.RemoteCallUS, timing.Calls),
-			RemoteOverhead:   microsecondTotal(timing.RemoteOverheadUS, timing.Calls),
-			BytesIn:          timing.BytesIn,
-			BytesOut:         timing.BytesOut,
+			Phase:                 timing.Phase,
+			StageIndex:            timing.StageIndex,
+			NodeName:              timing.NodeName,
+			Remote:                timing.Remote,
+			Calls:                 timing.Calls,
+			BatchItems:            timing.BatchItems,
+			MeanBatchSize:         meanBatchSize,
+			MaxBatchSize:          timing.MaxExecutionBatch,
+			VerificationItems:     timing.VerificationItems,
+			MeanVerificationWidth: meanVerificationWidth,
+			MaxVerificationWidth:  timing.MaxVerificationWidth,
+			Execution:             microsecondTotal(timing.ExecutionUS, timing.Calls),
+			ActivationDecode:      microsecondTotal(timing.ActivationDecodeUS, timing.Calls),
+			ActivationEncode:      microsecondTotal(timing.ActivationEncodeUS, timing.Calls),
+			StageTotal:            microsecondTotal(timing.StageTotalUS, timing.Calls),
+			RemoteCall:            microsecondTotal(timing.RemoteCallUS, timing.Calls),
+			RemoteOverhead:        microsecondTotal(timing.RemoteOverheadUS, timing.Calls),
+			BytesIn:               timing.BytesIn,
+			BytesOut:              timing.BytesOut,
 		})
+	}
+	if summary.SpeculativeDraftTokens > 0 {
+		summary.SpeculativeAcceptanceRate =
+			float64(summary.SpeculativeAcceptedTokens) / float64(summary.SpeculativeDraftTokens)
 	}
 	return summary
 }

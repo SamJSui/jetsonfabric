@@ -56,6 +56,7 @@ const (
 const (
 	DefaultEngineInstanceID    = "default"
 	StageTransportHTTPBinaryV1 = "http_binary_v1"
+	StageTransportHTTPDirectV1 = "http_direct_v1"
 	ActivationEncodingF32      = "f32"
 	ActivationEncodingF16      = "f16"
 )
@@ -82,6 +83,10 @@ const (
 	CapabilityRuntimeActivationEncoding = "runtime_activation_encoding"
 	CapabilityRuntimeKVCacheType        = "runtime_kv_cache_type"
 	CapabilityRuntimeUBatchSize         = "runtime_ubatch_size"
+	CapabilityRuntimeParallelSessions   = "runtime_parallel_sessions"
+	CapabilityRuntimeDecodeBatchSize    = "runtime_decode_batch_size"
+	CapabilityRuntimeSpeculativeDraft   = "runtime_speculative_draft"
+	CapabilityRuntimeSpeculativeMax     = "runtime_speculative_max_tokens"
 	CapabilityRuntimeRevision           = "runtime_revision"
 	CapabilityRuntimeLlamaCPPRevision   = "runtime_llama_cpp_revision"
 	CapabilityRuntimeCUDAActive         = "runtime_cuda_active"

@@ -106,6 +106,10 @@ func TestRuntimeArgsPassConfiguredStrategiesAndWorkerLimits(t *testing.T) {
 	cfg.RuntimeKVCacheType = cluster.KVCacheTypeQ8_0
 	cfg.RuntimeUBatchSize = 128
 	cfg.RuntimeHTTPWorkers = 3
+	cfg.RuntimeParallelSessions = 4
+	cfg.RuntimeDecodeBatchSize = 2
+	cfg.RuntimeSpeculativeDraft = "none"
+	cfg.RuntimeSpeculativeMax = 6
 
 	args := runtimeArgs(cfg, "127.0.0.1:9090")
 
@@ -114,6 +118,10 @@ func TestRuntimeArgsPassConfiguredStrategiesAndWorkerLimits(t *testing.T) {
 	hasKVCacheType := false
 	hasUBatchSize := false
 	hasHTTPWorkers := false
+	hasParallelSessions := false
+	hasDecodeBatchSize := false
+	hasSpeculativeDraft := false
+	hasSpeculativeMax := false
 	for index := 0; index+1 < len(args); index++ {
 		if args[index] == "--stage-transport" && args[index+1] == "test_transport" {
 			hasTransport = true
@@ -130,9 +138,62 @@ func TestRuntimeArgsPassConfiguredStrategiesAndWorkerLimits(t *testing.T) {
 		if args[index] == "--http-workers" && args[index+1] == "3" {
 			hasHTTPWorkers = true
 		}
+		if args[index] == "--parallel-sessions" && args[index+1] == "4" {
+			hasParallelSessions = true
+		}
+		if args[index] == "--decode-batch-size" && args[index+1] == "2" {
+			hasDecodeBatchSize = true
+		}
+		if args[index] == "--speculative-draft" && args[index+1] == "none" {
+			hasSpeculativeDraft = true
+		}
+		if args[index] == "--speculative-max-tokens" && args[index+1] == "6" {
+			hasSpeculativeMax = true
+		}
 	}
-	if !hasTransport || !hasActivationEncoding || !hasKVCacheType || !hasUBatchSize || !hasHTTPWorkers {
+	if !hasTransport || !hasActivationEncoding || !hasKVCacheType || !hasUBatchSize ||
+		!hasHTTPWorkers || !hasParallelSessions || !hasDecodeBatchSize ||
+		!hasSpeculativeDraft || !hasSpeculativeMax {
 		t.Fatalf("runtime args omitted strategy or worker-limit configuration: %v", args)
+	}
+}
+
+func TestValidateConfigRejectsIncompatibleSpeculativeDecoding(t *testing.T) {
+	cfg := NormalizeConfig(DefaultConfigValue())
+	cfg.RuntimeSpeculativeDraft = "prompt_lookup"
+	cfg.RuntimeDecodeBatchSize = 2
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatal("ValidateConfig accepted speculative decoding with continuous batching")
+	}
+
+	cfg = NormalizeConfig(DefaultConfigValue())
+	cfg.RuntimeSpeculativeDraft = "unknown"
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatal("ValidateConfig accepted an unknown speculative draft strategy")
+	}
+}
+
+func TestValidateConfigRejectsInvalidContinuousBatching(t *testing.T) {
+	tests := []struct {
+		name             string
+		httpWorkers      int
+		parallelSessions int
+		decodeBatchSize  int
+	}{
+		{name: "batch exceeds workers", httpWorkers: 1, parallelSessions: 2, decodeBatchSize: 2},
+		{name: "batch exceeds sessions", httpWorkers: 4, parallelSessions: 1, decodeBatchSize: 2},
+		{name: "no session capacity", httpWorkers: 2, parallelSessions: -1, decodeBatchSize: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := NormalizeConfig(DefaultConfigValue())
+			cfg.RuntimeHTTPWorkers = test.httpWorkers
+			cfg.RuntimeParallelSessions = test.parallelSessions
+			cfg.RuntimeDecodeBatchSize = test.decodeBatchSize
+			if err := ValidateConfig(cfg); err == nil {
+				t.Fatal("ValidateConfig accepted invalid continuous batching limits")
+			}
+		})
 	}
 }
 
@@ -153,6 +214,29 @@ func TestValidateConfigRejectsInvalidRuntimeHTTPWorkers(t *testing.T) {
 		if err := ValidateConfig(cfg); err == nil {
 			t.Fatalf("ValidateConfig accepted %d runtime HTTP workers", workers)
 		}
+	}
+}
+
+func TestValidateConfigRequiresTokenForExternallyBoundRuntime(t *testing.T) {
+	cfg := NormalizeConfig(DefaultConfigValue())
+	cfg.NodeName = "dopey"
+	cfg.DataDir = t.TempDir()
+	cfg.RuntimeStartIdle = true
+	cfg.RuntimeListen = "0.0.0.0:9090"
+	cfg.ClusterToken = ""
+	if err := ValidateConfig(cfg); err == nil {
+		t.Fatal("ValidateConfig accepted an externally bound runtime without a cluster token")
+	}
+
+	cfg.RuntimeListen = "127.0.0.1:9090"
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("ValidateConfig rejected an unauthenticated loopback runtime: %v", err)
+	}
+
+	cfg.RuntimeListen = "0.0.0.0:9090"
+	cfg.ClusterToken = "cluster-secret"
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("ValidateConfig rejected an authenticated external runtime: %v", err)
 	}
 }
 

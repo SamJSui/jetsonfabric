@@ -71,16 +71,16 @@ inference::Payload sampled_token_payload(const std::vector<std::uint8_t>& activa
 }
 
 inference::ExecutionResult activation_result(std::vector<std::uint8_t> activation) {
-    return inference::ExecutionResult::success(inference::StageOutput{
-        .payload = activation_payload(std::move(activation)),
-    });
+    inference::StageOutput output;
+    output.payload = activation_payload(std::move(activation));
+    return inference::ExecutionResult::success(std::move(output));
 }
 
 inference::ExecutionResult sampled_token_result(const std::vector<std::uint8_t>& activation) {
-    return inference::ExecutionResult::success(inference::StageOutput{
-        .payload = sampled_token_payload(activation),
-        .completion_tokens = 1,
-    });
+    inference::StageOutput output;
+    output.payload = sampled_token_payload(activation);
+    output.completion_tokens = 1;
+    return inference::ExecutionResult::success(std::move(output));
 }
 
 bool is_expected_activation(const inference::Payload& payload) {

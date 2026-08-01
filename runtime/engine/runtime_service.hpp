@@ -37,6 +37,10 @@ public:
     std::string activation_encoding() const override;
     std::string kv_cache_type() const override;
     int ubatch_size() const override;
+    int parallel_sessions() const override;
+    int decode_batch_size() const override;
+    std::string speculative_draft() const override;
+    int speculative_max_tokens() const override;
 
     RuntimeResponse deployment_status() const override;
     RuntimeResponse load_deployment(const std::string& request_body) override;

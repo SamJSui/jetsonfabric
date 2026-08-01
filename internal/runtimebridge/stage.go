@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -13,18 +14,20 @@ import (
 )
 
 type StageProxy struct {
-	runtimeURL *url.URL
-	client     *http.Client
+	runtimeURL   *url.URL
+	clusterToken string
+	client       *http.Client
 }
 
-func NewStageProxy(runtimeURL string) (*StageProxy, error) {
-	parsed, err := parseRuntimeURL(runtimeURL)
+func NewStageProxy(runtimeURL string, clusterToken string) (*StageProxy, error) {
+	parsed, err := parseLocalRuntimeURL(runtimeURL)
 	if err != nil {
 		return nil, err
 	}
 	return &StageProxy{
-		runtimeURL: parsed,
-		client:     &http.Client{Timeout: 2 * time.Minute},
+		runtimeURL:   parsed,
+		clusterToken: strings.TrimSpace(clusterToken),
+		client:       &http.Client{Timeout: 2 * time.Minute},
 	}, nil
 }
 
@@ -68,6 +71,19 @@ func parseRuntimeURL(runtimeURL string) (*url.URL, error) {
 	return parsed, nil
 }
 
+func parseLocalRuntimeURL(runtimeURL string) (*url.URL, error) {
+	parsed, err := parseRuntimeURL(runtimeURL)
+	if err != nil {
+		return nil, err
+	}
+	host := parsed.Hostname()
+	ip := net.ParseIP(host)
+	if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
+		return nil, fmt.Errorf("node-local runtime URL must use a loopback host")
+	}
+	return parsed, nil
+}
+
 func (p *StageProxy) newRuntimeRequest(req *http.Request) (*http.Request, error) {
 	target := *p.runtimeURL
 	target.Path = joinPath(target.Path, api.PathLayerSplitStage)
@@ -80,7 +96,7 @@ func (p *StageProxy) newRuntimeRequest(req *http.Request) (*http.Request, error)
 	copyHeaders(outbound.Header, req.Header)
 	removeHopByHopHeaders(outbound.Header)
 	outbound.Header.Del(api.HeaderCoordinatorNodeID)
-	outbound.Header.Del(api.HeaderClusterToken)
+	outbound.Header.Set(api.HeaderClusterToken, p.clusterToken)
 	outbound.ContentLength = req.ContentLength
 	outbound.TransferEncoding = append([]string(nil), req.TransferEncoding...)
 	return outbound, nil

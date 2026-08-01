@@ -1,0 +1,8 @@
+{
+  "request_id": "speculative-benchmark",
+  "model": "qwen2.5-coder-1.5b-q4",
+  "payload": "<|im_start|>system\nFollow the requested output format exactly.<|im_end|>\n<|im_start|>user\nWrite a detailed technical essay of at least 1000 words explaining transformer inference. Do not include a conclusion.<|im_end|>\n<|im_start|>assistant\n",
+  "max_tokens": 128,
+  "stage_count": 2,
+  "allow_colocated_stages": false
+}

@@ -1,5 +1,7 @@
 #include "worker/config.hpp"
 
+#include "protocol/stage.hpp"
+
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -36,6 +38,13 @@ int parse_int(const std::string& value, const std::string& flag) {
     }
 }
 
+bool is_loopback_host(std::string host) {
+    if (host.size() >= 2 && host.front() == '[' && host.back() == ']') {
+        host = host.substr(1, host.size() - 2);
+    }
+    return host == "localhost" || host == "127.0.0.1" || host == "::1";
+}
+
 void parse_listen(Config& cfg, const std::string& value) {
     const auto colon = value.rfind(':');
     if (colon == std::string::npos || colon == 0 || colon + 1 >= value.size()) fail("--listen must be host:port");
@@ -50,6 +59,11 @@ void validate_engine_config(const Config& cfg) {
     }
     if (cfg.stage_transport.empty()) {
         throw std::invalid_argument("--stage-transport must not be empty");
+    }
+    if (cfg.stage_transport == protocol::kDirectStageTransport && cfg.cluster_token.empty()) {
+        throw std::invalid_argument(
+            "http_direct_v1 requires JETSONFABRIC_CLUSTER_TOKEN"
+        );
     }
     if (cfg.activation_encoding.empty()) {
         throw std::invalid_argument("--activation-encoding must not be empty");
@@ -71,6 +85,35 @@ void validate_engine_config(const Config& cfg) {
     }
     if (cfg.http_workers <= 0 || cfg.http_workers > 64) {
         throw std::invalid_argument("--http-workers must be between 1 and 64");
+    }
+    if (cfg.parallel_sessions <= 0 || cfg.parallel_sessions > 64) {
+        throw std::invalid_argument("--parallel-sessions must be between 1 and 64");
+    }
+    if (cfg.decode_batch_size <= 0 || cfg.decode_batch_size > cfg.parallel_sessions) {
+        throw std::invalid_argument(
+            "--decode-batch-size must be between 1 and --parallel-sessions"
+        );
+    }
+    if (cfg.decode_batch_size > cfg.http_workers) {
+        throw std::invalid_argument(
+            "--decode-batch-size cannot exceed --http-workers"
+        );
+    }
+    if (cfg.speculative_draft != "none" && cfg.speculative_draft != "prompt_lookup") {
+        throw std::invalid_argument("--speculative-draft must be none or prompt_lookup");
+    }
+    if (cfg.speculative_max_tokens <= 0 || cfg.speculative_max_tokens > 8) {
+        throw std::invalid_argument("--speculative-max-tokens must be between 1 and 8");
+    }
+    if (cfg.speculative_draft != "none" && cfg.decode_batch_size != 1) {
+        throw std::invalid_argument(
+            "speculative decoding currently requires --decode-batch-size 1"
+        );
+    }
+    if (cfg.speculative_draft != "none" && cfg.engine != "llama.cpp") {
+        throw std::invalid_argument(
+            "speculative decoding requires an engine with multi-token verification and KV rollback"
+        );
     }
 }
 
@@ -110,6 +153,11 @@ void validate_runtime_config(const Config& cfg) {
     if (cfg.cluster_token.find_first_of("\r\n") != std::string::npos) {
         throw std::invalid_argument("JETSONFABRIC_CLUSTER_TOKEN must not contain newlines");
     }
+    if (!is_loopback_host(cfg.host) && cfg.cluster_token.empty()) {
+        throw std::invalid_argument(
+            "non-loopback --listen requires JETSONFABRIC_CLUSTER_TOKEN"
+        );
+    }
     validate_engine_config(cfg);
     if (!cfg.start_idle) {
         validate_deployment_config(cfg);
@@ -139,7 +187,11 @@ void print_help() {
         << "  --kv-cache-type type     llama.cpp KV cache type: f16 or q8_0\n"
         << "  --n-gpu-layers n         llama.cpp GPU layers, default 999\n"
         << "  --threads n              CPU threads, default 0\n"
-        << "  --http-workers n         bounded HTTP worker count, default 2\n";
+        << "  --http-workers n         bounded HTTP worker count, default 2\n"
+        << "  --parallel-sessions n    resident session capacity when batching, default 2\n"
+        << "  --decode-batch-size n    continuous decode batch size, default 1 (disabled)\n"
+        << "  --speculative-draft n    none or prompt_lookup, default none\n"
+        << "  --speculative-max-tokens maximum drafted tokens per target pass, default 4\n";
 }
 
 Config parse_args(int argc, char** argv) {
@@ -199,6 +251,14 @@ Config parse_args(int argc, char** argv) {
             cfg.threads = parse_int(require_value(i, argc, argv, arg), arg);
         } else if (arg == "--http-workers") {
             cfg.http_workers = parse_int(require_value(i, argc, argv, arg), arg);
+        } else if (arg == "--parallel-sessions") {
+            cfg.parallel_sessions = parse_int(require_value(i, argc, argv, arg), arg);
+        } else if (arg == "--decode-batch-size") {
+            cfg.decode_batch_size = parse_int(require_value(i, argc, argv, arg), arg);
+        } else if (arg == "--speculative-draft") {
+            cfg.speculative_draft = require_value(i, argc, argv, arg);
+        } else if (arg == "--speculative-max-tokens") {
+            cfg.speculative_max_tokens = parse_int(require_value(i, argc, argv, arg), arg);
         } else if (arg == "--help" || arg == "-h") {
             print_help();
             std::exit(0);
@@ -223,7 +283,11 @@ Config parse_args(int argc, char** argv) {
         << " ctx_size=" << cfg.ctx_size
         << " ubatch_size=" << cfg.ubatch_size
         << " kv_cache_type=" << kv_cache_type_string(cfg.kv_cache_type)
-        << " http_workers=" << cfg.http_workers;
+        << " http_workers=" << cfg.http_workers
+        << " parallel_sessions=" << cfg.parallel_sessions
+        << " decode_batch_size=" << cfg.decode_batch_size
+        << " speculative_draft=" << cfg.speculative_draft
+        << " speculative_max_tokens=" << cfg.speculative_max_tokens;
     if (!cfg.start_idle) {
         std::cerr
             << " stage=" << cfg.stage_assignment.stage_index << "/" << cfg.stage_assignment.stage_count

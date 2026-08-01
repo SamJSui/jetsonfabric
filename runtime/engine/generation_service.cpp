@@ -21,12 +21,16 @@ GenerationService::GenerationService(
     std::string node_name,
     ExecutionMode execution_mode,
     const deployment::ModelManager& model_manager,
-    const transport::StageTransport& stage_transport
+    const transport::StageTransport& stage_transport,
+    std::shared_ptr<const speculative::DraftStrategy> draft_strategy,
+    int speculative_max_tokens
 )
     : node_name_(std::move(node_name)),
       execution_mode_(execution_mode),
       model_manager_(model_manager),
-      stage_transport_(stage_transport) {}
+      stage_transport_(stage_transport),
+      draft_strategy_(std::move(draft_strategy)),
+      speculative_max_tokens_(speculative_max_tokens) {}
 
 pipeline_parallel::GenerationResult GenerationService::generate(
     const protocol::GenerationRequest& request,
@@ -46,7 +50,9 @@ pipeline_parallel::GenerationResult GenerationService::generate(
             pipeline_parallel::StageOperation operation
         ) {
             return invoke_stage(stage, stage_request, operation);
-        }
+        },
+        draft_strategy_,
+        speculative_max_tokens_
     );
     return runner.run(request, sink);
 }
@@ -114,9 +120,13 @@ pipeline_parallel::StageRunResult GenerationService::invoke_stage(
     pipeline_parallel::StageOperation operation
 ) const {
     if (stage.stage_index == 0) {
-        return operation == pipeline_parallel::StageOperation::CloseSession
-            ? model_manager_.close_session(request)
-            : model_manager_.run_stage(request);
+        if (operation == pipeline_parallel::StageOperation::CloseSession) {
+            return model_manager_.close_session(request);
+        }
+        if (operation == pipeline_parallel::StageOperation::RollbackSession) {
+            return model_manager_.rollback_session(request);
+        }
+        return model_manager_.run_stage(request);
     }
     return stage_transport_.invoke(stage, request, operation);
 }

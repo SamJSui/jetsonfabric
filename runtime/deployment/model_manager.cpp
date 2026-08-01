@@ -412,6 +412,25 @@ public:
         return deployment->execution->stage_worker.close_session(request);
     }
 
+    pipeline_parallel::StageRunResult rollback_session(
+        const protocol::StageRequest& request
+    ) const {
+        std::shared_ptr<const ResidentDeployment> deployment;
+        bool any_active = false;
+        {
+            const std::lock_guard lock(mutex_);
+            deployment = deployment_for(request);
+            any_active = has_active_deployment_locked();
+        }
+        if (deployment == nullptr) return unavailable_for(request, any_active);
+        if (pipeline_parallel::StageRunResult mismatch =
+                validate_stage_deployment(deployment->identity, request);
+            !mismatch.ok) {
+            return mismatch;
+        }
+        return deployment->execution->stage_worker.rollback_session(request);
+    }
+
 private:
     struct ResidentExecution {
         ResidentExecution(
@@ -933,6 +952,12 @@ pipeline_parallel::StageRunResult ModelManager::close_session(
     const protocol::StageRequest& request
 ) const {
     return impl_->close_session(request);
+}
+
+pipeline_parallel::StageRunResult ModelManager::rollback_session(
+    const protocol::StageRequest& request
+) const {
+    return impl_->rollback_session(request);
 }
 
 } // namespace jetsonfabric::runtime::deployment

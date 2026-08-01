@@ -45,6 +45,10 @@ std::string health_body(const RuntimeAPI& runtime) {
          << "\"activation_encoding\":\"" << runtime.activation_encoding() << "\","
          << "\"kv_cache_type\":\"" << runtime.kv_cache_type() << "\","
          << "\"ubatch_size\":" << runtime.ubatch_size() << ","
+         << "\"parallel_sessions\":" << runtime.parallel_sessions() << ","
+         << "\"decode_batch_size\":" << runtime.decode_batch_size() << ","
+         << "\"speculative_draft\":\"" << runtime.speculative_draft() << "\","
+         << "\"speculative_max_tokens\":" << runtime.speculative_max_tokens() << ","
          << "\"model\":\"" << runtime.model() << "\""
          << "}";
     return body.str();
@@ -59,6 +63,52 @@ std::string lower(std::string value) {
         return static_cast<char>(std::tolower(ch));
     });
     return value;
+}
+
+std::optional<std::string> header_value(
+    const std::string& request,
+    const std::string& name
+) {
+    const std::size_t header_end = request.find("\r\n\r\n");
+    if (header_end == std::string::npos) return std::nullopt;
+    std::istringstream lines(request.substr(0, header_end));
+    std::string line;
+    const std::string normalized_name = lower(name);
+    while (std::getline(lines, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const std::size_t colon = line.find(':');
+        if (colon == std::string::npos || lower(line.substr(0, colon)) != normalized_name) {
+            continue;
+        }
+        std::string value = line.substr(colon + 1);
+        const std::size_t first = value.find_first_not_of(" \t");
+        const std::size_t last = value.find_last_not_of(" \t");
+        return first == std::string::npos
+            ? std::string{}
+            : value.substr(first, last - first + 1);
+    }
+    return std::nullopt;
+}
+
+bool constant_time_equal(const std::string& left, const std::string& right) {
+    std::size_t difference = left.size() ^ right.size();
+    const std::size_t length = std::max(left.size(), right.size());
+    for (std::size_t index = 0; index < length; ++index) {
+        const unsigned char left_value = index < left.size()
+            ? static_cast<unsigned char>(left[index])
+            : 0;
+        const unsigned char right_value = index < right.size()
+            ? static_cast<unsigned char>(right[index])
+            : 0;
+        difference |= left_value ^ right_value;
+    }
+    return difference == 0;
+}
+
+bool runtime_write_authorized(const std::string& request, const Config& config) {
+    if (config.cluster_token.empty()) return true;
+    const auto provided = header_value(request, "x-jetsonfabric-cluster-token");
+    return provided.has_value() && constant_time_equal(*provided, config.cluster_token);
 }
 
 std::optional<std::size_t> content_length(const std::string& headers) {
@@ -354,7 +404,12 @@ void HttpServer::handle_client(int client_fd) const {
             if (!wire_request.has_value()) break;
             const std::string& request = *wire_request;
             const std::string body = request_body(request);
-            if (starts_with(request, "POST /v1/generate ")) {
+            if (starts_with(request, "POST ") && !runtime_write_authorized(request, config_)) {
+                response = json_response(
+                    "401 Unauthorized",
+                    "{\"error\":\"runtime_auth_failed\",\"message\":\"runtime writes require the configured cluster token\"}"
+                );
+            } else if (starts_with(request, "POST /v1/generate ")) {
                 if (!send_generation_headers(client_fd)) break;
                 const RuntimeResponse final_event = runtime_.generate(
                     body,
@@ -367,33 +422,34 @@ void HttpServer::handle_client(int client_fd) const {
                 }
                 (void) send_all(client_fd, "0\r\n\r\n");
                 break;
-            }
-            response = not_found_response();
-            if (starts_with(request, "GET /healthz ")) {
-                response = json_response("200 OK", health_body(runtime_));
-            } else if (starts_with(request, "GET /v1/deployment ")) {
-                const RuntimeResponse runtime_response = runtime_.deployment_status();
-                response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
-            } else if (starts_with(request, "POST /v1/deployment/load ")) {
-                const RuntimeResponse runtime_response = runtime_.load_deployment(body);
-                response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
-            } else if (starts_with(request, "POST /v1/deployment/activate ")) {
-                const RuntimeResponse runtime_response = runtime_.activate_deployment(body);
-                response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
-            } else if (starts_with(request, "POST /v1/deployment/drain ")) {
-                const RuntimeResponse runtime_response = runtime_.drain_deployment(body);
-                response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
-            } else if (starts_with(request, "POST /v1/deployment/unload ")) {
-                const RuntimeResponse runtime_response = runtime_.unload_deployment(body);
-                response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
-            } else if (starts_with(request, "POST /v1/chat/completions ")) {
-                const RuntimeResponse runtime_response = runtime_.chat_completion(body);
-                response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
-            } else if (starts_with(request, "POST /v1/layer-split/stage ")) {
-                const RuntimeResponse runtime_response = runtime_.run_stage(body);
-                response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
-                keep_alive = requests_stage_keep_alive(request);
-                response.close_connection = !keep_alive;
+            } else {
+                response = not_found_response();
+                if (starts_with(request, "GET /healthz ")) {
+                    response = json_response("200 OK", health_body(runtime_));
+                } else if (starts_with(request, "GET /v1/deployment ")) {
+                    const RuntimeResponse runtime_response = runtime_.deployment_status();
+                    response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+                } else if (starts_with(request, "POST /v1/deployment/load ")) {
+                    const RuntimeResponse runtime_response = runtime_.load_deployment(body);
+                    response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+                } else if (starts_with(request, "POST /v1/deployment/activate ")) {
+                    const RuntimeResponse runtime_response = runtime_.activate_deployment(body);
+                    response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+                } else if (starts_with(request, "POST /v1/deployment/drain ")) {
+                    const RuntimeResponse runtime_response = runtime_.drain_deployment(body);
+                    response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+                } else if (starts_with(request, "POST /v1/deployment/unload ")) {
+                    const RuntimeResponse runtime_response = runtime_.unload_deployment(body);
+                    response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+                } else if (starts_with(request, "POST /v1/chat/completions ")) {
+                    const RuntimeResponse runtime_response = runtime_.chat_completion(body);
+                    response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+                } else if (starts_with(request, "POST /v1/layer-split/stage ")) {
+                    const RuntimeResponse runtime_response = runtime_.run_stage(body);
+                    response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+                    keep_alive = requests_stage_keep_alive(request);
+                    response.close_connection = !keep_alive;
+                }
             }
         } catch (const std::exception& err) {
             response = json_response(

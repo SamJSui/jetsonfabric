@@ -17,6 +17,7 @@ struct GenerationStage {
     std::string node_id;
     std::string node_name;
     std::string api_url;
+    std::string runtime_url;
     int layer_start = 0;
     int layer_end = 0;
 };
@@ -37,6 +38,10 @@ struct GenerationStageTiming {
     std::string node_name;
     bool remote = false;
     int calls = 0;
+    int batch_items = 0;
+    int max_execution_batch_size = 1;
+    int verification_items = 0;
+    int max_verification_width = 1;
     std::int64_t execution_us = 0;
     std::int64_t activation_decode_us = 0;
     std::int64_t activation_encode_us = 0;
@@ -60,9 +65,16 @@ std::string encode_generation_done_event(
     const std::vector<std::uint32_t>& sampled_tokens,
     int stage_calls,
     int remote_stage_calls,
+    int rollback_stage_calls,
+    int remote_rollback_stage_calls,
+    std::int64_t rollback_stage_us,
+    std::int64_t rollback_remote_call_us,
     std::int64_t bytes_in,
     std::int64_t bytes_out,
-    const std::vector<GenerationStageTiming>& stage_timings
+    const std::vector<GenerationStageTiming>& stage_timings,
+    int target_decode_passes,
+    int speculative_draft_tokens,
+    int speculative_accepted_tokens
 );
 std::string encode_generation_error_event(const std::string& code, const std::string& message);
 

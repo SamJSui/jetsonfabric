@@ -43,10 +43,14 @@ func TestRunBenchmarkRecordsSuccessfulRequests(t *testing.T) {
 				LatencyMS:        3,
 			},
 			Trace: &chat.RuntimeTrace{
-				StageCalls: 1,
+				StageCalls:                1,
+				TargetDecodePasses:        1,
+				SpeculativeDraftTokens:    2,
+				SpeculativeAcceptedTokens: 1,
 				StageTimings: []chat.StageTiming{{
 					Phase: "decode", StageIndex: 0, NodeName: "desktop-agent-1",
-					Calls: 2, ExecutionUS: 400, StageTotalUS: 500,
+					Calls: 2, BatchItems: 4, MaxExecutionBatch: 2,
+					ExecutionUS: 400, StageTotalUS: 500,
 				}},
 			},
 		})
@@ -86,8 +90,17 @@ func TestRunBenchmarkRecordsSuccessfulRequests(t *testing.T) {
 	}
 	if summary.Runtime.StageCalls != 3 || len(summary.Runtime.StageTimings) != 1 ||
 		summary.Runtime.StageTimings[0].Calls != 6 ||
-		summary.Runtime.StageTimings[0].Execution.AvgUS != 200 {
+		summary.Runtime.StageTimings[0].Execution.AvgUS != 200 ||
+		summary.Runtime.StageTimings[0].BatchItems != 12 ||
+		summary.Runtime.StageTimings[0].MeanBatchSize != 2 ||
+		summary.Runtime.StageTimings[0].MaxBatchSize != 2 {
 		t.Fatalf("runtime timings were not summarized: %+v", summary.Runtime)
+	}
+	if summary.Runtime.TargetDecodePasses != 3 ||
+		summary.Runtime.SpeculativeDraftTokens != 6 ||
+		summary.Runtime.SpeculativeAcceptedTokens != 3 ||
+		summary.Runtime.SpeculativeAcceptanceRate != 0.5 {
+		t.Fatalf("speculative telemetry was not summarized: %+v", summary.Runtime)
 	}
 }
 

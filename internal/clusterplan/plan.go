@@ -70,6 +70,7 @@ type Placement struct {
 	Hostname       string `json:"hostname,omitempty"`
 	PhysicalHostID string `json:"physical_host_id"`
 	APIURL         string `json:"api_url"`
+	RuntimeURL     string `json:"runtime_url,omitempty"`
 	Valid          bool   `json:"valid"`
 	MemoryOK       bool   `json:"memory_ok"`
 	ComputeOK      bool   `json:"compute_ok"`
@@ -90,6 +91,7 @@ type Stage struct {
 	Hostname       string `json:"hostname,omitempty"`
 	PhysicalHostID string `json:"physical_host_id"`
 	APIURL         string `json:"api_url"`
+	RuntimeURL     string `json:"runtime_url,omitempty"`
 	LayerStart     int    `json:"layer_start"`
 	LayerEnd       int    `json:"layer_end"`
 }
@@ -263,6 +265,7 @@ func placementForMember(model cluster.ModelProfile, member membership.Member) Pl
 		Hostname:       member.Hostname,
 		PhysicalHostID: PhysicalHostID(member),
 		APIURL:         member.APIURL,
+		RuntimeURL:     member.RuntimeURL,
 		Valid:          memoryOK && computeOK,
 		MemoryOK:       memoryOK,
 		ComputeOK:      computeOK,
@@ -463,6 +466,7 @@ func buildStages(placements []Placement, layerCount int, stageLayerCounts ...[]i
 			Hostname:       placement.Hostname,
 			PhysicalHostID: placement.PhysicalHostID,
 			APIURL:         placement.APIURL,
+			RuntimeURL:     placement.RuntimeURL,
 			LayerStart:     layerStart,
 			LayerEnd:       layerEnd,
 		})

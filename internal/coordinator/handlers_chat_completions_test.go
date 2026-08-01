@@ -328,6 +328,26 @@ func TestConsumeGenerationEventsAccountsForNaturalStopPass(t *testing.T) {
 	}
 }
 
+func TestConsumeGenerationEventsAccountsForSpeculativeTargetPasses(t *testing.T) {
+	stream := strings.NewReader(
+		"{\"type\":\"token\",\"token\":7,\"text\":\"a\",\"index\":0}\n" +
+			"{\"type\":\"token\",\"token\":8,\"text\":\"b\",\"index\":1}\n" +
+			"{\"type\":\"token\",\"token\":9,\"text\":\"c\",\"index\":2}\n" +
+			"{\"type\":\"done\",\"finish_reason\":\"length\",\"completion_tokens\":3," +
+			"\"sampled_tokens\":[7,8,9],\"stage_calls\":4,\"remote_stage_calls\":2," +
+			"\"target_decode_passes\":1,\"speculative_draft_tokens\":2," +
+			"\"speculative_accepted_tokens\":1}\n",
+	)
+	result, err := consumeGenerationEvents(stream, 2, nil)
+	if err != nil {
+		t.Fatalf("consume speculative result: %v", err)
+	}
+	if result.TargetDecodePasses != 1 || result.SpeculativeDraftTokens != 2 ||
+		result.SpeculativeAcceptedTokens != 1 {
+		t.Fatalf("unexpected speculative telemetry: %+v", result)
+	}
+}
+
 func TestChatCompletionsReturnsOpenAIErrorShape(t *testing.T) {
 	server := NewServer(coordinatorTestRegistry())
 	request := httptest.NewRequest(http.MethodPost, api.PathChatCompletions, strings.NewReader(`{"messages":[]}`))

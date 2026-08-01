@@ -22,7 +22,7 @@ func TestHydratingSourceUsesAnnounceResponse(t *testing.T) {
 	defer server.Close()
 
 	lightPeer := testMember("peer", "peer", server.URL)
-	source := NewHydratingSource(staticMembers{lightPeer}, NewAnnounceClient(func() membership.Member { return self }))
+	source := NewHydratingSource(staticMembers{lightPeer}, NewAnnounceClient(func() membership.Member { return self }, ""))
 
 	members, err := source.Discover(t.Context())
 	if err != nil {
@@ -39,7 +39,7 @@ func TestHydratingSourceUsesAnnounceResponse(t *testing.T) {
 func TestHydratingSourceKeepsLightweightPeerOnFailure(t *testing.T) {
 	self := testMember("self", "self", "http://self.local:52415")
 	peer := testMember("peer", "peer", "http://127.0.0.1:1")
-	source := NewHydratingSource(staticMembers{peer}, NewAnnounceClient(func() membership.Member { return self }))
+	source := NewHydratingSource(staticMembers{peer}, NewAnnounceClient(func() membership.Member { return self }, ""))
 
 	members, err := source.Discover(t.Context())
 	if err != nil {

@@ -116,6 +116,9 @@ func (c *DeploymentController) preparePlan(
 	if err := c.loadPlan(ctx, build.result.Plan, build.model, build.members, spec); err != nil {
 		return fmt.Errorf("prepare deployment: %w", err)
 	}
+	if err := probeDirectRuntimeEndpoints(ctx, build.result.Plan); err != nil {
+		return fmt.Errorf("prepare deployment: %w", err)
+	}
 	if err := c.activatePlan(ctx, build.result.Plan); err != nil {
 		return fmt.Errorf("activate deployment: %w", err)
 	}

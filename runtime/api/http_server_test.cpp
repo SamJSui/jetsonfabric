@@ -158,6 +158,10 @@ public:
     std::string activation_encoding() const override { return "test-encoding"; }
     std::string kv_cache_type() const override { return "test-kv-cache"; }
     int ubatch_size() const override { return 128; }
+    int parallel_sessions() const override { return 4; }
+    int decode_batch_size() const override { return 2; }
+    std::string speculative_draft() const override { return "prompt_lookup"; }
+    int speculative_max_tokens() const override { return 4; }
 
     jetsonfabric::runtime::RuntimeResponse deployment_status() const override {
         return ok();
@@ -230,6 +234,7 @@ int main() {
     config.host = "127.0.0.1";
     config.port = port;
     config.http_workers = 2;
+    config.cluster_token = "test-token";
     std::atomic_bool running{true};
     BlockingRuntime runtime;
     HttpServer server(config, runtime, running);
@@ -241,6 +246,7 @@ int main() {
             port,
             "POST /v1/generate HTTP/1.1\r\n"
             "Host: 127.0.0.1\r\n"
+            "X-JetsonFabric-Cluster-Token: test-token\r\n"
             "Content-Length: 2\r\n"
             "Connection: close\r\n\r\n{}"
         );
@@ -265,6 +271,7 @@ int main() {
     const std::string stage_request =
         "POST /v1/layer-split/stage HTTP/1.1\r\n"
         "Host: 127.0.0.1\r\n"
+        "X-JetsonFabric-Cluster-Token: test-token\r\n"
         "Content-Length: 2\r\n"
         "Connection: keep-alive\r\n\r\n{}";
     send_wire(persistent_fd, stage_request);
@@ -277,6 +284,22 @@ int main() {
     send_wire(pipelined_fd, stage_request + stage_request);
     const std::string pipelined_responses = read_responses(pipelined_fd, 2);
     close(pipelined_fd);
+
+    const std::string unauthorized_response = request(
+        port,
+        "POST /v1/layer-split/stage HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "Content-Length: 2\r\n"
+        "Connection: close\r\n\r\n{}"
+    );
+    const std::string wrong_token_response = request(
+        port,
+        "POST /v1/layer-split/stage HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "X-JetsonFabric-Cluster-Token: wrong-token\r\n"
+        "Content-Length: 2\r\n"
+        "Connection: close\r\n\r\n{}"
+    );
 
     const int idle_fd = connect_with_retry(port);
     std::this_thread::sleep_for(50ms);
@@ -316,6 +339,16 @@ int main() {
             pipelined_responses.rfind("HTTP/1.1 200 OK") !=
                 pipelined_responses.find("HTTP/1.1 200 OK"),
         "pipelined stage requests did not both receive responses"
+    );
+    expect(
+        unauthorized_response.find("401 Unauthorized") != std::string::npos &&
+            unauthorized_response.find("runtime_auth_failed") != std::string::npos,
+        "runtime accepted a write without its configured token"
+    );
+    expect(
+        wrong_token_response.find("401 Unauthorized") != std::string::npos &&
+            wrong_token_response.find("runtime_auth_failed") != std::string::npos,
+        "runtime accepted a write with the wrong configured token"
     );
     expect(
         shutdown_elapsed < 1s,

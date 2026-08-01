@@ -81,6 +81,9 @@ public:
     pipeline_parallel::StageRunResult close_session(
         const protocol::StageRequest& request
     ) const;
+    pipeline_parallel::StageRunResult rollback_session(
+        const protocol::StageRequest& request
+    ) const;
 
 private:
     class Impl;

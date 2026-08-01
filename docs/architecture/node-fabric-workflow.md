@@ -58,7 +58,12 @@ node.discoveryLoop
        notify coordinator reconciler (coalesced)
 ```
 
-mDNS only bootstraps peer addresses. HTTP announce hydrates the full member record through `/v1/cluster/announce`.
+mDNS only bootstraps peer addresses. HTTP announce hydrates the full member
+record through `/v1/cluster/announce`. When a cluster token is configured, the
+sender signs a fresh nonce, timestamp, and exact request body with HMAC-SHA256.
+The responder signs the exact cluster view against the same nonce before it is
+hydrated. The token is not sent to an untrusted mDNS candidate, responses are
+size-limited, and redirects are rejected.
 
 ## Leader selection sequence
 

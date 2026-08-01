@@ -28,6 +28,10 @@ public:
     virtual std::string activation_encoding() const = 0;
     virtual std::string kv_cache_type() const = 0;
     virtual int ubatch_size() const = 0;
+    virtual int parallel_sessions() const = 0;
+    virtual int decode_batch_size() const = 0;
+    virtual std::string speculative_draft() const = 0;
+    virtual int speculative_max_tokens() const = 0;
 
     virtual RuntimeResponse deployment_status() const = 0;
     virtual RuntimeResponse load_deployment(const std::string& request_body) = 0;
