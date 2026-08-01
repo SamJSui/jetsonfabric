@@ -38,6 +38,7 @@ reports/
 models/
 *.gguf
 *.gguf.*
+!runtime/engines/native/tests/fixtures/jfm-v2-golden/metadata.gguf.hex
 *.safetensors
 *.pt
 *.pth
