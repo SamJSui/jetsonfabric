@@ -10,8 +10,8 @@
       "stage_count": 2,
       "node_id": "dopey-pipeline-stage",
       "node_name": "dopey",
-      "api_url": "http://192.168.1.147:52521",
-      "runtime_url": "http://192.168.1.147:52521",
+      "api_url": "http://dopey.local:52521",
+      "runtime_url": "http://dopey.local:52521",
       "layer_start": 0,
       "layer_end": 24
     },
@@ -20,8 +20,8 @@
       "stage_count": 2,
       "node_id": "grumpy-pipeline-stage",
       "node_name": "grumpy",
-      "api_url": "http://192.168.1.65:52522",
-      "runtime_url": "http://192.168.1.65:52522",
+      "api_url": "http://grumpy.local:52522",
+      "runtime_url": "http://grumpy.local:52522",
       "layer_start": 24,
       "layer_end": 48
     }

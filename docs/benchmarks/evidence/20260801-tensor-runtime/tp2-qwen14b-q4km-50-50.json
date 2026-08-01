@@ -1,6 +1,6 @@
 {
   "name": "tp2-qwen14b-q4km",
-  "url": "http://192.168.1.147:52521/v1/generate",
+  "url": "http://dopey.local:52521/v1/generate",
   "request_count": 3,
   "warmup_count": 1,
   "started_at": "2026-08-01T05:46:45.063432+00:00",

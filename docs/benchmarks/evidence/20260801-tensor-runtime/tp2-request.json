@@ -10,8 +10,8 @@
       "stage_count": 1,
       "node_id": "dopey-tensor-driver",
       "node_name": "dopey",
-      "api_url": "http://192.168.1.147:52521",
-      "runtime_url": "http://192.168.1.147:52521",
+      "api_url": "http://dopey.local:52521",
+      "runtime_url": "http://dopey.local:52521",
       "layer_start": 0,
       "layer_end": 48
     }
