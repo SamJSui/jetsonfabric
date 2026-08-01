@@ -118,9 +118,12 @@ median request latency doubled:
 | One node | 2,128 ms | 4,287 ms | 30.07 | 29.85 |
 | Two nodes | 2,786 ms | 5,589 ms | 22.97 | 22.87 |
 
-ITL remained 24 ms on one node and 31 ms on two nodes. The current runtime
-serializes or queues sessions; it does not gain throughput from two concurrent
-requests.
+ITL remained 24 ms on one node and 31 ms on two nodes. At the time of this
+benchmark, the runtime serialized or queued sessions and did not gain
+throughput from two concurrent requests. The subsequent
+[concurrent-serving optimization](2026-07-28-concurrent-serving.md) added
+bounded overlap and measured a different concurrency result; it does not
+retroactively change this baseline.
 
 ## Q4_K_M Model Scaling
 

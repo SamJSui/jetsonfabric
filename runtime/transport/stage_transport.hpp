@@ -9,6 +9,7 @@ namespace jetsonfabric::runtime::transport {
 class StageTransport {
 public:
     virtual ~StageTransport() = default;
+    virtual void shutdown() const {}
 
     virtual pipeline_parallel::StageRunResult invoke(
         const protocol::GenerationStage& stage,

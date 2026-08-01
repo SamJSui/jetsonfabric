@@ -30,6 +30,7 @@ type App struct {
 	mdnsAdvertiser      *discovery.MDNSAdvertiser
 	server              *http.Server
 	runtimeSupervisor   *RuntimeSupervisor
+	runtimePeerURL      string
 	coordinatorServer   *coordinator.Server
 }
 
@@ -70,10 +71,11 @@ func buildApp(cfg Config) (*App, error) {
 
 func newApp(cfg Config, nodeID string) *App {
 	app := &App{
-		cfg:       cfg,
-		nodeID:    nodeID,
-		startedAt: time.Now().UTC(),
-		store:     membership.NewStore(),
+		cfg:            cfg,
+		nodeID:         nodeID,
+		startedAt:      time.Now().UTC(),
+		store:          membership.NewStore(),
+		runtimePeerURL: cfg.RuntimeURL,
 	}
 	app.store.Upsert(app.selfMember(time.Now().UTC()))
 	return app
@@ -84,23 +86,19 @@ func (a *App) configureHTTPServer() error {
 	if err != nil {
 		return err
 	}
-	stageRunner, err := a.stageRunner()
+	stageRunner, err := runtimebridge.NewStageProxy(a.cfg.RuntimeURL, a.cfg.ClusterToken)
 	if err != nil {
 		return err
 	}
-	runtimeDeployment, err := a.runtimeDeploymentGateway()
+	runtimeDeployment, err := runtimebridge.NewDeploymentProxy(a.cfg.RuntimeURL, a.cfg.ClusterToken)
 	if err != nil {
 		return err
 	}
-	runtimeGeneration, err := a.runtimeGenerationGateway()
+	runtimeGeneration, err := runtimebridge.NewGenerationProxy(a.cfg.RuntimeURL, a.cfg.ClusterToken)
 	if err != nil {
 		return err
 	}
-	publicRouter, err := a.publicRouter(coordinatorRouter)
-	if err != nil {
-		return err
-	}
-	a.server = a.httpServer(publicRouter, stageRunner, runtimeDeployment, runtimeGeneration)
+	a.server = a.httpServer(coordinatorRouter, stageRunner, runtimeDeployment, runtimeGeneration)
 	return nil
 }
 
@@ -123,24 +121,6 @@ func (a *App) coordinatorRouter() (http.Handler, error) {
 	)
 	a.coordinatorServer = server
 	return server.Router(), nil
-}
-
-func (a *App) stageRunner() (http.Handler, error) {
-	return runtimebridge.NewStageProxy(a.cfg.RuntimeURL)
-}
-
-func (a *App) runtimeDeploymentGateway() (http.Handler, error) {
-	return runtimebridge.NewDeploymentProxy(a.cfg.RuntimeURL)
-}
-
-func (a *App) runtimeGenerationGateway() (http.Handler, error) {
-	return runtimebridge.NewGenerationProxy(a.cfg.RuntimeURL)
-}
-
-func (a *App) publicRouter(coordinatorRouter http.Handler) (http.Handler, error) {
-	// All public APIs, including /v1/chat/completions, are coordinator-owned.
-	// Followers proxy them to the elected leader through the facade router.
-	return coordinatorRouter, nil
 }
 
 func (a *App) configureDiscovery() {
@@ -187,13 +167,14 @@ func (a *App) Run(ctx context.Context) error {
 
 	a.cfg = a.cfg.WithBoundAPIURL(listener)
 
-	runtimeSupervisor, runtimeURL, err := StartRuntimeSupervisor(ctx, a.cfg)
+	runtimeSupervisor, runtimeURL, runtimePeerURL, err := StartRuntimeSupervisor(ctx, a.cfg)
 	if err != nil {
 		_ = listener.Close()
 		return err
 	}
 	a.runtimeSupervisor = runtimeSupervisor
 	a.cfg.RuntimeURL = runtimeURL
+	a.runtimePeerURL = runtimePeerURL
 
 	if err := a.configureHTTPServer(); err != nil {
 		_ = listener.Close()
@@ -276,10 +257,10 @@ func (a *App) shutdown(errCh <-chan error) error {
 }
 
 func (a *App) discoverySource(self discovery.SelfFunc) discovery.Source {
-	announcer := discovery.NewAnnounceClient(self)
+	announcer := discovery.NewAnnounceClient(self, a.cfg.ClusterToken)
 	sources := make([]discovery.Source, 0, 2)
 	if a.cfg.DiscoveryEnabled(discovery.ModeStatic) {
-		sources = append(sources, discovery.NewStaticSource(a.cfg.Seeds, self))
+		sources = append(sources, discovery.NewStaticSource(a.cfg.Seeds, self, a.cfg.ClusterToken))
 	}
 	if a.cfg.DiscoveryEnabled(discovery.ModeMDNS) {
 		sources = append(sources, a.hydratingMDNSSource(announcer))
@@ -363,7 +344,7 @@ func (a *App) selfMember(now time.Time) membership.Member {
 		Hostname:         snapshot.Hostname,
 		Role:             a.cfg.Role,
 		APIURL:           a.cfg.APIURL,
-		RuntimeURL:       a.cfg.RuntimeURL,
+		RuntimeURL:       a.runtimePeerURL,
 		LeaderPreference: a.cfg.LeaderPreference,
 		Arch:             snapshot.Arch,
 		OS:               snapshot.OS,

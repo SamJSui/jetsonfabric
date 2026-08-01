@@ -1,0 +1,14 @@
+{
+  "model": "qwen2.5-coder-1.5b-q4",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Continue the supplied token pattern exactly. Output only the pattern."
+    },
+    {
+      "role": "user",
+      "content": "alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta"
+    }
+  ],
+  "max_tokens": 128
+}

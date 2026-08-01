@@ -71,3 +71,47 @@ func TestSelectPipelineRuntimeMembersRejectsDifferentStageTransports(t *testing.
 		t.Fatal("expected different stage transports to be rejected")
 	}
 }
+
+func TestSelectPipelineRuntimeMembersRejectsDifferentActivationEncodings(t *testing.T) {
+	model, ok := coordinatorTestRegistry().Find("qwen2.5-coder-1.5b-q4")
+	if !ok {
+		t.Fatal("test model missing")
+	}
+	members := membershipMembersForRun{
+		{nodeID: "node-a", apiURL: "http://node-a"},
+		{nodeID: "node-b", apiURL: "http://node-b"},
+	}.members()
+	members[1].Capabilities[cluster.CapabilityRuntimeActivationEncoding] = cluster.ActivationEncodingF16
+
+	if _, _, err := selectPipelineRuntimeMembers(
+		model,
+		members,
+		coordinatorTestNow(),
+		time.Minute,
+		2,
+	); err == nil {
+		t.Fatal("expected different activation encodings to be rejected")
+	}
+}
+
+func TestSelectPipelineRuntimeMembersRejectsDifferentKVCacheTypes(t *testing.T) {
+	model, ok := coordinatorTestRegistry().Find("qwen2.5-coder-1.5b-q4")
+	if !ok {
+		t.Fatal("test model missing")
+	}
+	members := membershipMembersForRun{
+		{nodeID: "node-a", apiURL: "http://node-a"},
+		{nodeID: "node-b", apiURL: "http://node-b"},
+	}.members()
+	members[1].Capabilities[cluster.CapabilityRuntimeKVCacheType] = cluster.KVCacheTypeQ8_0
+
+	if _, _, err := selectPipelineRuntimeMembers(
+		model,
+		members,
+		coordinatorTestNow(),
+		time.Minute,
+		2,
+	); err == nil {
+		t.Fatal("selectPipelineRuntimeMembers() accepted mixed KV cache types")
+	}
+}

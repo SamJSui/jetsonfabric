@@ -3,7 +3,7 @@ package node
 import "github.com/SamJSui/jetsonfabric/internal/cluster"
 
 func (a *App) memberCapabilities(base map[string]any) map[string]any {
-	capabilities := make(map[string]any, len(base)+14)
+	capabilities := make(map[string]any, len(base)+15)
 	for key, value := range base {
 		capabilities[key] = value
 	}
@@ -19,6 +19,13 @@ func (a *App) memberCapabilities(base map[string]any) map[string]any {
 	capabilities[cluster.CapabilityRuntimeComputeBackend] = a.cfg.RuntimeComputeBackend
 	capabilities[cluster.CapabilityRuntimeExecutionMode] = a.cfg.RuntimeMode
 	capabilities[cluster.CapabilityRuntimeStageTransport] = a.cfg.RuntimeStageTransport
+	capabilities[cluster.CapabilityRuntimeActivationEncoding] = a.cfg.RuntimeActivationEncoding
+	capabilities[cluster.CapabilityRuntimeKVCacheType] = a.cfg.RuntimeKVCacheType
+	capabilities[cluster.CapabilityRuntimeUBatchSize] = a.cfg.RuntimeUBatchSize
+	capabilities[cluster.CapabilityRuntimeParallelSessions] = a.cfg.RuntimeParallelSessions
+	capabilities[cluster.CapabilityRuntimeDecodeBatchSize] = a.cfg.RuntimeDecodeBatchSize
+	capabilities[cluster.CapabilityRuntimeSpeculativeDraft] = a.cfg.RuntimeSpeculativeDraft
+	capabilities[cluster.CapabilityRuntimeSpeculativeMax] = a.cfg.RuntimeSpeculativeMax
 	capabilities[cluster.CapabilityRuntimeRevision] = a.cfg.RuntimeRevision
 	capabilities[cluster.CapabilityRuntimeLlamaCPPRevision] = a.cfg.RuntimeLlamaCPPRevision
 	capabilities[cluster.CapabilityRuntimeCUDAActive] = a.cfg.RuntimeCUDAActive

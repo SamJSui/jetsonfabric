@@ -31,6 +31,15 @@ std::string require_string(const nlohmann::json& body, const char* field) {
     return parsed;
 }
 
+std::string optional_string(const nlohmann::json& body, const char* field) {
+    const auto value = body.find(field);
+    if (value == body.end() || value->is_null()) return {};
+    if (!value->is_string()) {
+        throw std::invalid_argument(std::string(field) + " must be a string");
+    }
+    return value->get<std::string>();
+}
+
 int require_int(const nlohmann::json& body, const char* field) {
     const nlohmann::json& value = require_field(body, field);
     if (!value.is_number_integer() && !value.is_number_unsigned()) {
@@ -87,6 +96,7 @@ GenerationStage decode_stage(const nlohmann::json& body) {
         .node_id = require_string(body, "node_id"),
         .node_name = require_string(body, "node_name"),
         .api_url = require_string(body, "api_url"),
+        .runtime_url = optional_string(body, "runtime_url"),
         .layer_start = require_int(body, "layer_start"),
         .layer_end = require_int(body, "layer_end"),
     };
@@ -109,6 +119,9 @@ void validate_stages(const std::vector<GenerationStage>& stages) {
         }
         if (stage.api_url.rfind("http://", 0) != 0) {
             throw std::invalid_argument("generation stage api_url must use http://");
+        }
+        if (!stage.runtime_url.empty() && stage.runtime_url.rfind("http://", 0) != 0) {
+            throw std::invalid_argument("generation stage runtime_url must use http://");
         }
         if (stage.layer_start != expected_start || stage.layer_end <= stage.layer_start) {
             throw std::invalid_argument("generation stages must contain contiguous non-empty layer ranges");
@@ -178,9 +191,39 @@ std::string encode_generation_done_event(
     const std::vector<std::uint32_t>& sampled_tokens,
     int stage_calls,
     int remote_stage_calls,
+    int rollback_stage_calls,
+    int remote_rollback_stage_calls,
+    std::int64_t rollback_stage_us,
+    std::int64_t rollback_remote_call_us,
     std::int64_t bytes_in,
-    std::int64_t bytes_out
+    std::int64_t bytes_out,
+    const std::vector<GenerationStageTiming>& stage_timings,
+    int target_decode_passes,
+    int speculative_draft_tokens,
+    int speculative_accepted_tokens
 ) {
+    nlohmann::ordered_json timings = nlohmann::ordered_json::array();
+    for (const GenerationStageTiming& timing : stage_timings) {
+        timings.push_back({
+            {"phase", timing.phase},
+            {"stage_index", timing.stage_index},
+            {"node_name", timing.node_name},
+            {"remote", timing.remote},
+            {"calls", timing.calls},
+            {"batch_items", timing.batch_items},
+            {"max_execution_batch_size", timing.max_execution_batch_size},
+            {"verification_items", timing.verification_items},
+            {"max_verification_width", timing.max_verification_width},
+            {"execution_us", timing.execution_us},
+            {"activation_decode_us", timing.activation_decode_us},
+            {"activation_encode_us", timing.activation_encode_us},
+            {"stage_total_us", timing.stage_total_us},
+            {"remote_call_us", timing.remote_call_us},
+            {"remote_overhead_us", timing.remote_overhead_us},
+            {"bytes_in", timing.bytes_in},
+            {"bytes_out", timing.bytes_out},
+        });
+    }
     return nlohmann::ordered_json{
         {"type", "done"},
         {"finish_reason", finish_reason},
@@ -189,8 +232,16 @@ std::string encode_generation_done_event(
         {"sampled_tokens", sampled_tokens},
         {"stage_calls", stage_calls},
         {"remote_stage_calls", remote_stage_calls},
+        {"rollback_stage_calls", rollback_stage_calls},
+        {"remote_rollback_stage_calls", remote_rollback_stage_calls},
+        {"rollback_stage_us", rollback_stage_us},
+        {"rollback_remote_call_us", rollback_remote_call_us},
         {"bytes_in", bytes_in},
         {"bytes_out", bytes_out},
+        {"stage_timings", std::move(timings)},
+        {"target_decode_passes", target_decode_passes},
+        {"speculative_draft_tokens", speculative_draft_tokens},
+        {"speculative_accepted_tokens", speculative_accepted_tokens},
     }.dump();
 }
 

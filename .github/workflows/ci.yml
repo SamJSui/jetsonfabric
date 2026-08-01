@@ -233,6 +233,33 @@ jobs:
           bash scripts/local/validate-colocated-pipeline.sh \
             2>&1 | tee .ci-logs/natural-stop/step.log
 
+      - name: Run direct speculative two-node CPU E2E
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p .ci-logs/direct-speculative
+          MODEL_PATH="$CI_QWEN_MODEL_PATH" \
+          MODEL_ID=ci-qwen2.5-0.5b-instruct \
+          RUNTIME_BUILD_DIR="$CI_RUNTIME_BUILD_DIR" \
+          RUNTIME_BIN=dist/jetsonfabric-runtime-worker-ci-cpu \
+          NODE_BIN=dist/jetsonfabric-node \
+          JF_SKIP_BUILD=true \
+          JF_NODE0_PORT=18580 \
+          JF_NODE1_PORT=18581 \
+          JF_RUNTIME0_PORT=18590 \
+          JF_RUNTIME1_PORT=18591 \
+          JF_RUNTIME_STAGE_TRANSPORT=http_direct_v1 \
+          JF_RUNTIME_SPECULATIVE_DRAFT=prompt_lookup \
+          JF_RUNTIME_SPECULATIVE_MAX_TOKENS=4 \
+          JF_EXPECT_SPECULATIVE_DRAFT=true \
+          JF_EXPECT_SPECULATIVE_ROLLBACK=true \
+          JF_RAW_PROMPT='alpha beta gamma delta alpha beta gamma delta alpha beta gamma WRONG alpha beta' \
+          JF_CHAT_PROMPT='Continue this pattern: alpha beta gamma delta alpha beta gamma delta alpha beta gamma WRONG alpha beta' \
+          JF_MAX_TOKENS=8 \
+          JF_REPORT_PATH=.ci-logs/direct-speculative/report.json \
+          bash scripts/local/validate-colocated-pipeline.sh \
+            2>&1 | tee .ci-logs/direct-speculative/step.log
+
       - name: Run native runtime unit tests
         run: ctest --test-dir "$CI_RUNTIME_BUILD_DIR" --output-on-failure
 
@@ -240,7 +267,13 @@ jobs:
         run: CI_MODEL_PATH="$CI_QWEN_MODEL_PATH" "$CI_RUNTIME_BUILD_DIR/jetsonfabric-llama-stage-test"
 
       - name: Run two-node binary activation E2E
-        run: bash scripts/ci/smoke-binary-activation.sh
+        run: |
+          CI_ACTIVATION_ENCODING=f32 \
+            bash scripts/ci/smoke-binary-activation.sh
+          CI_ACTIVATION_ENCODING=f16 \
+            CI_ACTIVATION_NODE0_PORT=18282 \
+            CI_ACTIVATION_NODE1_PORT=18283 \
+            bash scripts/ci/smoke-binary-activation.sh
 
       - name: Upload CI diagnostics
         if: always()

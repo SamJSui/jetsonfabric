@@ -3,6 +3,7 @@ package clusterplan
 const (
 	ReasonInvalidLayerCount            Reason = "invalid_layer_count"
 	ReasonInvalidStageCount            Reason = "invalid_stage_count"
+	ReasonInvalidStageLayerCounts      Reason = "invalid_stage_layer_counts"
 	ReasonStageCountExceedsLayers      Reason = "stage_count_exceeds_layers"
 	ReasonInvalidStageIndices          Reason = "invalid_stage_indices"
 	ReasonInvalidLayerRanges           Reason = "invalid_layer_ranges"
@@ -18,6 +19,36 @@ func validatePlanningRequest(layerCount int, requestedStageCount int) Reason {
 	}
 	if requestedStageCount > layerCount {
 		return ReasonStageCountExceedsLayers
+	}
+	return ""
+}
+
+func policyStageCount(policy Policy) int {
+	if policy.StageCount != 0 {
+		return policy.StageCount
+	}
+	if len(policy.StageLayerCounts) > 0 {
+		return len(policy.StageLayerCounts)
+	}
+	return 0
+}
+
+func validateStageLayerCounts(layerCount int, stageCount int, counts []int) Reason {
+	if len(counts) == 0 {
+		return ""
+	}
+	if stageCount != len(counts) {
+		return ReasonInvalidStageLayerCounts
+	}
+	total := 0
+	for _, count := range counts {
+		if count <= 0 {
+			return ReasonInvalidStageLayerCounts
+		}
+		total += count
+	}
+	if total != layerCount {
+		return ReasonInvalidStageLayerCounts
 	}
 	return ""
 }

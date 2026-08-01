@@ -2,6 +2,8 @@ package clusterplan
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -13,12 +15,18 @@ import (
 // DeploymentCompatibility records the runtime facts that were required to
 // agree before a deployment plan was accepted.
 type DeploymentCompatibility struct {
-	Architecture     string                 `json:"architecture"`
-	RuntimeRevision  string                 `json:"runtime_revision"`
-	LlamaCPPRevision string                 `json:"llama_cpp_revision,omitempty"`
-	StageTransport   string                 `json:"stage_transport"`
-	ComputeBackend   cluster.ComputeBackend `json:"compute_backend,omitempty"`
-	CUDAActive       bool                   `json:"cuda_active"`
+	Architecture       string                 `json:"architecture"`
+	RuntimeRevision    string                 `json:"runtime_revision"`
+	LlamaCPPRevision   string                 `json:"llama_cpp_revision,omitempty"`
+	StageTransport     string                 `json:"stage_transport"`
+	ActivationEncoding string                 `json:"activation_encoding"`
+	KVCacheType        string                 `json:"kv_cache_type"`
+	SpeculativeDraft   string                 `json:"speculative_draft"`
+	SpeculativeMax     int                    `json:"speculative_max_tokens"`
+	ParallelSessions   int                    `json:"parallel_sessions"`
+	DecodeBatchSize    int                    `json:"decode_batch_size"`
+	ComputeBackend     cluster.ComputeBackend `json:"compute_backend,omitempty"`
+	CUDAActive         bool                   `json:"cuda_active"`
 }
 
 type DeploymentBuildRequest struct {
@@ -97,12 +105,14 @@ func BuildDeploymentPlan(req DeploymentBuildRequest) (DeploymentBuildResult, err
 	plan, err := NewDeploymentPlan(DeploymentPlanSpec{
 		Identity: req.Identity,
 		Model: DeploymentModelIdentity{
-			ModelID:        model.ID,
-			ModelSHA256:    model.ArtifactSHA256,
-			Engine:         engine,
-			ExecutionMode:  cluster.ExecutionModePipelineParallel,
-			StageTransport: compatibility.StageTransport,
-			LayerCount:     model.LayerCount,
+			ModelID:            model.ID,
+			ModelSHA256:        model.ArtifactSHA256,
+			Engine:             engine,
+			ExecutionMode:      cluster.ExecutionModePipelineParallel,
+			StageTransport:     compatibility.StageTransport,
+			ActivationEncoding: compatibility.ActivationEncoding,
+			KVCacheType:        compatibility.KVCacheType,
+			LayerCount:         model.LayerCount,
 		},
 		Stages: preview.Stages,
 	})
@@ -128,8 +138,8 @@ func selectDeploymentEngine(model cluster.ModelProfile) (cluster.Engine, error) 
 }
 
 func requiredDeploymentStages(policy Policy) int {
-	if policy.StageCount > 0 {
-		return policy.StageCount
+	if stageCount := policyStageCount(policy); stageCount > 0 {
+		return stageCount
 	}
 	return 1
 }
@@ -183,7 +193,7 @@ func compatibleDeploymentMembers(
 	}
 	if selected == nil {
 		return nil, DeploymentCompatibility{}, fmt.Errorf(
-			"need %d fresh runtimes with matching architecture, runtime revision, engine revision, stage transport, execution mode, and compute compatibility",
+			"need %d fresh runtimes with matching architecture, runtime revision, engine revision, stage transport, activation encoding, KV cache type, session capacity, speculative configuration, execution mode, and compute compatibility",
 			requiredStages,
 		)
 	}
@@ -199,8 +209,30 @@ func memberDeploymentCompatibility(
 	runtimeRevision := capabilityText(member.Capabilities, cluster.CapabilityRuntimeRevision)
 	llamaRevision := capabilityText(member.Capabilities, cluster.CapabilityRuntimeLlamaCPPRevision)
 	stageTransport := capabilityText(member.Capabilities, cluster.CapabilityRuntimeStageTransport)
+	activationEncoding := capabilityText(member.Capabilities, cluster.CapabilityRuntimeActivationEncoding)
+	kvCacheType := capabilityText(member.Capabilities, cluster.CapabilityRuntimeKVCacheType)
+	speculativeDraft := capabilityText(member.Capabilities, cluster.CapabilityRuntimeSpeculativeDraft)
+	speculativeMax, speculativeMaxOK := intCapability(
+		member.Capabilities,
+		cluster.CapabilityRuntimeSpeculativeMax,
+	)
+	parallelSessions, parallelSessionsOK := intCapability(
+		member.Capabilities,
+		cluster.CapabilityRuntimeParallelSessions,
+	)
+	decodeBatchSize, decodeBatchSizeOK := intCapability(
+		member.Capabilities,
+		cluster.CapabilityRuntimeDecodeBatchSize,
+	)
 	backend := cluster.ComputeBackend(capabilityText(member.Capabilities, cluster.CapabilityRuntimeComputeBackend))
-	if architecture == "" || runtimeRevision == "" || stageTransport == "" {
+	if architecture == "" || runtimeRevision == "" || stageTransport == "" ||
+		activationEncoding == "" || kvCacheType == "" || speculativeDraft == "" ||
+		!speculativeMaxOK || speculativeMax < 1 ||
+		!parallelSessionsOK || parallelSessions < 1 ||
+		!decodeBatchSizeOK || decodeBatchSize < 1 || decodeBatchSize > parallelSessions {
+		return DeploymentCompatibility{}, false
+	}
+	if stageTransport == cluster.StageTransportHTTPDirectV1 && !validDirectRuntimeEndpoint(member) {
 		return DeploymentCompatibility{}, false
 	}
 	if cluster.Engine(capabilityText(member.Capabilities, cluster.CapabilityRuntimeEngine)) != engine {
@@ -229,12 +261,18 @@ func memberDeploymentCompatibility(
 		}
 	}
 	return DeploymentCompatibility{
-		Architecture:     architecture,
-		RuntimeRevision:  runtimeRevision,
-		LlamaCPPRevision: llamaRevision,
-		StageTransport:   stageTransport,
-		ComputeBackend:   backend,
-		CUDAActive:       cudaActive,
+		Architecture:       architecture,
+		RuntimeRevision:    runtimeRevision,
+		LlamaCPPRevision:   llamaRevision,
+		StageTransport:     stageTransport,
+		ActivationEncoding: activationEncoding,
+		KVCacheType:        kvCacheType,
+		SpeculativeDraft:   speculativeDraft,
+		SpeculativeMax:     speculativeMax,
+		ParallelSessions:   parallelSessions,
+		DecodeBatchSize:    decodeBatchSize,
+		ComputeBackend:     backend,
+		CUDAActive:         cudaActive,
 	}, true
 }
 
@@ -250,9 +288,34 @@ func compatibilityKey(value DeploymentCompatibility, includeBackend bool) string
 		value.RuntimeRevision,
 		value.LlamaCPPRevision,
 		value.StageTransport,
+		value.ActivationEncoding,
+		value.KVCacheType,
+		value.SpeculativeDraft,
+		fmt.Sprintf("%d", value.SpeculativeMax),
+		fmt.Sprintf("%d", value.ParallelSessions),
+		fmt.Sprintf("%d", value.DecodeBatchSize),
 		backend,
 		cuda,
 	}, "|")
+}
+
+func validDirectRuntimeEndpoint(member membership.Member) bool {
+	apiURL, apiErr := url.Parse(strings.TrimSpace(member.APIURL))
+	runtimeURL, runtimeErr := url.Parse(strings.TrimSpace(member.RuntimeURL))
+	if apiErr != nil || runtimeErr != nil || apiURL.Scheme != "http" ||
+		runtimeURL.Scheme != "http" || apiURL.Hostname() == "" ||
+		runtimeURL.Hostname() == "" || runtimeURL.Port() == "" {
+		return false
+	}
+	if !strings.EqualFold(apiURL.Hostname(), runtimeURL.Hostname()) {
+		return false
+	}
+	host := runtimeURL.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip == nil || (!ip.IsLoopback() && !ip.IsUnspecified())
 }
 
 func capabilityText(capabilities map[string]any, key string) string {

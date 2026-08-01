@@ -12,7 +12,17 @@ RUNTIME_BUILD_DIR="${CI_RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build-ci-cpu}"
 RUNTIME_BIN="$RUNTIME_BUILD_DIR/jetsonfabric-runtime-worker"
 NODE0_PORT="${CI_ACTIVATION_NODE0_PORT:-18280}"
 NODE1_PORT="${CI_ACTIVATION_NODE1_PORT:-18281}"
+ACTIVATION_ENCODING="${CI_ACTIVATION_ENCODING:-f32}"
 CLUSTER_TOKEN="${JF_CLUSTER_TOKEN:-jetsonfabric-ci-activation-token}"
+
+case "$ACTIVATION_ENCODING" in
+  f32) EXPECTED_ACTIVATION_BYTES=256 ;;
+  f16) EXPECTED_ACTIVATION_BYTES=128 ;;
+  *)
+    echo "CI_ACTIVATION_ENCODING must be f32 or f16" >&2
+    exit 2
+    ;;
+esac
 
 PIDS=()
 cleanup() {
@@ -88,6 +98,7 @@ start_node() {
     --runtime-url auto \
     --runtime-bin "$RUNTIME_BIN" \
     --runtime-listen 127.0.0.1:0 \
+    --runtime-activation-encoding "$ACTIVATION_ENCODING" \
     --runtime-compute-backend cpu \
     --runtime-mode pipeline_parallel \
     --engine synthetic \
@@ -134,8 +145,11 @@ if [[ "$http_code" != "200" ]]; then
   exit 1
 fi
 
-jq -e '
+jq -e \
+  --arg activation_encoding "$ACTIVATION_ENCODING" \
+  --argjson expected_activation_bytes "$EXPECTED_ACTIVATION_BYTES" '
   .inter_stage_payload_kind == "activation" and
+  .runtime_identity.activation_encoding == $activation_encoding and
   .plan.mode == "pipeline_parallel" and
   .plan.stage_count == 2 and
   .result.payload_kind == "sampled_token" and
@@ -144,14 +158,14 @@ jq -e '
   (.result.stages | length) == 2 and
   .result.stages[0].payload_kind_in == "text" and
   .result.stages[0].payload_kind_out == "activation" and
-  .result.stages[0].payload_out == 256 and
+  .result.stages[0].payload_out == $expected_activation_bytes and
   .result.stages[0].transport == "http_binary_v1" and
   .result.stages[1].payload_kind_in == "activation" and
   .result.stages[1].payload_kind_out == "sampled_token" and
-  .result.stages[1].payload_in == 256 and
+  .result.stages[1].payload_in == $expected_activation_bytes and
   .result.stages[1].transport == "http_binary_v1" and
   .result.stages[0].payload_crc32_out == .result.stages[1].payload_crc32_in
 ' "$response_file" >/dev/null
 
-echo "Two-node binary activation E2E passed"
+echo "Two-node binary activation E2E passed ($ACTIVATION_ENCODING)"
 jq '{inter_stage_payload_kind, sampled_token: .result.sampled_token, stages: .result.stages}' "$response_file"

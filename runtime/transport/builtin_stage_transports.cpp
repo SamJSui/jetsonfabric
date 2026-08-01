@@ -15,6 +15,15 @@ std::shared_ptr<const StageTransportFactory> make_default_stage_transport_factor
             return std::make_shared<HTTPStageTransport>(config.cluster_token);
         }
     );
+    factory->register_transport(
+        protocol::kDirectStageTransport,
+        [](const Config& config) {
+            return std::make_shared<HTTPStageTransport>(
+                config.cluster_token,
+                HTTPStageTarget::Runtime
+            );
+        }
+    );
     return factory;
 }
 

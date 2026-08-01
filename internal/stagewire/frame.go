@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	Version          uint16 = 1
+	Version          uint16 = 2
 	HeaderSize              = 20
 	MaxMetadataBytes        = 1 << 20
 	MaxPayloadBytes  int64  = 512 << 20
@@ -121,14 +121,37 @@ func Decode(r io.Reader) (Frame, error) {
 	if err := decoder.Decode(&metadata); err != nil {
 		return Frame{}, fmt.Errorf("decode stagewire metadata: %w", err)
 	}
+	if err := validateEncodedMaxTokens(metadataBytes); err != nil {
+		return Frame{}, err
+	}
 	frame := Frame{Metadata: metadata, Payload: payload}
 	if metadata.ProtocolVersion != version {
 		return Frame{}, fmt.Errorf("metadata protocol_version %d does not match frame version %d", metadata.ProtocolVersion, version)
 	}
+	frame = normalizeTelemetryDefaults(frame)
 	if err := Validate(frame); err != nil {
 		return Frame{}, err
 	}
 	return frame, nil
+}
+
+func validateEncodedMaxTokens(metadata []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(metadata, &fields); err != nil {
+		return fmt.Errorf("decode stagewire metadata fields: %w", err)
+	}
+	raw, present := fields["max_tokens"]
+	if !present {
+		return nil
+	}
+	var value int
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return fmt.Errorf("decode max_tokens: %w", err)
+	}
+	if value == 0 {
+		return errors.New("max_tokens must be omitted or between 1 and 1024")
+	}
+	return nil
 }
 
 func Validate(frame Frame) error {
@@ -138,6 +161,31 @@ func Validate(frame Frame) error {
 	}
 	if !m.Operation.Valid() {
 		return fmt.Errorf("invalid operation %q", m.Operation)
+	}
+	if m.Operation == OperationRollback && m.RollbackTokens <= 0 {
+		return errors.New("rollback_session requires positive rollback_tokens")
+	}
+	if m.Operation != OperationRollback && m.RollbackTokens != 0 {
+		return errors.New("rollback_tokens is only valid for rollback_session")
+	}
+	if m.MaxTokens != 0 && (m.MaxTokens < 1 || m.MaxTokens > 1024) {
+		return errors.New("max_tokens must be between 1 and 1024")
+	}
+	if m.ExecutionBatchSize < 1 {
+		return errors.New("execution_batch_size must be positive")
+	}
+	if m.VerificationWidth < 1 {
+		return errors.New("verification_width must be positive")
+	}
+	for _, value := range m.TokenEOG {
+		if value > 1 {
+			return errors.New("token_eog values must be 0 or 1")
+		}
+	}
+	for _, value := range m.MessageBytes {
+		if value < 0 || value > 255 {
+			return errors.New("message_bytes values must be between 0 and 255")
+		}
 	}
 	if strings.TrimSpace(m.SessionID) == "" {
 		return errors.New("session_id is required")
@@ -195,9 +243,13 @@ func validateDeploymentIdentity(identity DeploymentIdentity) error {
 }
 
 func normalizeFrame(frame Frame) Frame {
+	frame = normalizeTelemetryDefaults(frame)
 	frame.ProtocolVersion = Version
 	if frame.Operation == "" {
 		frame.Operation = OperationExecute
+	}
+	if frame.Operation == OperationExecute && frame.MaxTokens == 0 {
+		frame.MaxTokens = 128
 	}
 	if frame.Phase == "" {
 		if frame.DecodeStep == 0 {
@@ -223,6 +275,16 @@ func normalizeFrame(frame Frame) Frame {
 	return frame
 }
 
+func normalizeTelemetryDefaults(frame Frame) Frame {
+	if frame.ExecutionBatchSize == 0 {
+		frame.ExecutionBatchSize = 1
+	}
+	if frame.VerificationWidth == 0 {
+		frame.VerificationWidth = 1
+	}
+	return frame
+}
+
 func validatePayloadMetadata(m Metadata, payload []byte) error {
 	if m.Error != "" {
 		return nil
@@ -235,7 +297,7 @@ func validatePayloadMetadata(m Metadata, payload []byte) error {
 		if len(m.Shape) != 0 || m.DType != "" || m.ByteOrder != "" || m.Layout != "" {
 			return errors.New("text payload must not declare tensor metadata")
 		}
-	case PayloadKindTokens, PayloadKindActivation, PayloadKindSampledToken:
+	case PayloadKindTokens, PayloadKindActivation, PayloadKindSampledToken, PayloadKindSampledTokens:
 		if strings.TrimSpace(m.DType) == "" {
 			return errors.New("tensor payload dtype is required")
 		}
@@ -292,7 +354,8 @@ func tensorByteLength(dtype string, shape []int64) (int64, error) {
 }
 
 func isTensorKind(kind PayloadKind) bool {
-	return kind == PayloadKindTokens || kind == PayloadKindActivation || kind == PayloadKindSampledToken
+	return kind == PayloadKindTokens || kind == PayloadKindActivation ||
+		kind == PayloadKindSampledToken || kind == PayloadKindSampledTokens
 }
 
 func writeAll(w io.Writer, data []byte) error {

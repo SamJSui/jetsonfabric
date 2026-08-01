@@ -153,9 +153,12 @@ procedure captures the evidence required for that claim.
 
 ## Security Boundary
 
-The current implementation assumes a trusted LAN. The shared cluster token
-authenticates coordinator lifecycle and generation calls plus peer Stagewire
-requests, but HTTP does not encrypt the token or other traffic.
+The current implementation assumes a trusted LAN. Peer announcements use a
+nonce-bound, timestamped HMAC in both directions so discovery neither transmits
+the shared secret nor trusts a forged cluster view. Coordinator lifecycle,
+generation, and peer Stagewire calls still use the token as a bearer credential.
+A runtime cannot bind a non-loopback address without the token, but HTTP does
+not encrypt those credentials or other traffic.
 Hostnames, node names, and persisted node IDs are not authentication. Before
 exposing a cluster across untrusted networks, add authenticated node enrollment
 and mutually authenticated transport; do not expose the current node APIs

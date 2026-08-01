@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/api"
+	"github.com/SamJSui/jetsonfabric/internal/chat"
 	"github.com/SamJSui/jetsonfabric/internal/clusterplan"
 )
 
@@ -33,20 +34,28 @@ type GenerationRequest struct {
 }
 
 type GenerationEvent struct {
-	Type             string   `json:"type"`
-	Token            *uint32  `json:"token,omitempty"`
-	Text             string   `json:"text,omitempty"`
-	Index            int      `json:"index,omitempty"`
-	FinishReason     string   `json:"finish_reason,omitempty"`
-	PromptTokens     int      `json:"prompt_tokens,omitempty"`
-	CompletionTokens int      `json:"completion_tokens,omitempty"`
-	SampledTokens    []uint32 `json:"sampled_tokens,omitempty"`
-	StageCalls       int      `json:"stage_calls,omitempty"`
-	RemoteStageCalls int      `json:"remote_stage_calls,omitempty"`
-	BytesIn          int64    `json:"bytes_in,omitempty"`
-	BytesOut         int64    `json:"bytes_out,omitempty"`
-	Code             string   `json:"code,omitempty"`
-	Message          string   `json:"message,omitempty"`
+	Type                      string             `json:"type"`
+	Token                     *uint32            `json:"token,omitempty"`
+	Text                      string             `json:"text,omitempty"`
+	Index                     int                `json:"index,omitempty"`
+	FinishReason              string             `json:"finish_reason,omitempty"`
+	PromptTokens              int                `json:"prompt_tokens,omitempty"`
+	CompletionTokens          int                `json:"completion_tokens,omitempty"`
+	SampledTokens             []uint32           `json:"sampled_tokens,omitempty"`
+	StageCalls                int                `json:"stage_calls,omitempty"`
+	RemoteStageCalls          int                `json:"remote_stage_calls,omitempty"`
+	RollbackStageCalls        int                `json:"rollback_stage_calls,omitempty"`
+	RemoteRollbackStageCalls  int                `json:"remote_rollback_stage_calls,omitempty"`
+	RollbackStageUS           int64              `json:"rollback_stage_us,omitempty"`
+	RollbackRemoteCallUS      int64              `json:"rollback_remote_call_us,omitempty"`
+	BytesIn                   int64              `json:"bytes_in,omitempty"`
+	BytesOut                  int64              `json:"bytes_out,omitempty"`
+	StageTimings              []chat.StageTiming `json:"stage_timings,omitempty"`
+	TargetDecodePasses        int                `json:"target_decode_passes,omitempty"`
+	SpeculativeDraftTokens    int                `json:"speculative_draft_tokens,omitempty"`
+	SpeculativeAcceptedTokens int                `json:"speculative_accepted_tokens,omitempty"`
+	Code                      string             `json:"code,omitempty"`
+	Message                   string             `json:"message,omitempty"`
 }
 
 type GenerationStream struct {
@@ -137,18 +146,20 @@ func generationTarget(nodeURL string) (string, error) {
 }
 
 type GenerationProxy struct {
-	runtimeURL *url.URL
-	client     *http.Client
+	runtimeURL   *url.URL
+	clusterToken string
+	client       *http.Client
 }
 
-func NewGenerationProxy(runtimeURL string) (*GenerationProxy, error) {
-	parsed, err := parseRuntimeURL(runtimeURL)
+func NewGenerationProxy(runtimeURL string, clusterToken string) (*GenerationProxy, error) {
+	parsed, err := parseLocalRuntimeURL(runtimeURL)
 	if err != nil {
 		return nil, err
 	}
 	return &GenerationProxy{
-		runtimeURL: parsed,
-		client:     &http.Client{Timeout: 30 * time.Minute},
+		runtimeURL:   parsed,
+		clusterToken: strings.TrimSpace(clusterToken),
+		client:       &http.Client{Timeout: 30 * time.Minute},
 	}, nil
 }
 
@@ -172,7 +183,7 @@ func (p *GenerationProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	copyHeaders(outbound.Header, req.Header)
 	removeHopByHopHeaders(outbound.Header)
 	outbound.Header.Del(api.HeaderCoordinatorNodeID)
-	outbound.Header.Del(api.HeaderClusterToken)
+	outbound.Header.Set(api.HeaderClusterToken, p.clusterToken)
 	outbound.ContentLength = req.ContentLength
 
 	response, err := p.client.Do(outbound)

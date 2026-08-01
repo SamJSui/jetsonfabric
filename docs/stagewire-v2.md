@@ -1,11 +1,11 @@
-# Stagewire v1
+# Stagewire v2
 
 `stagewire` is JetsonFabric's versioned contract for one stage operation. It carries metadata plus raw payload bytes between logical nodes and their runtime workers. Tensor payloads are never base64-encoded or represented as JSON arrays.
 
 ## Media type
 
 ```text
-application/vnd.jetsonfabric.stage.v1+octet-stream
+application/vnd.jetsonfabric.stage.v2+octet-stream
 ```
 
 ## Frame layout
@@ -15,7 +15,7 @@ All integer fields in the fixed header use network byte order.
 | Offset | Size | Field |
 |---:|---:|---|
 | 0 | 4 | magic bytes `JFST` |
-| 4 | 2 | protocol version, currently `1` |
+| 4 | 2 | protocol version, currently `2` |
 | 6 | 2 | flags, currently `0` |
 | 8 | 4 | metadata JSON length |
 | 12 | 8 | raw payload length |
@@ -29,6 +29,7 @@ A request or response body contains exactly one frame. Unsupported versions, ove
 Stage metadata includes:
 
 - protocol version;
+- operation: execute, close session, or rollback session;
 - session, request, model, and node identity;
 - optional managed deployment ID, positive epoch, and 64-character model
   SHA-256, which must be present as a complete set;
@@ -38,18 +39,20 @@ Stage metadata includes:
 - text encoding or tensor dtype/shape/byte order/layout;
 - payload byte length and CRC32;
 - transport identifier;
-- request limits, token counts, byte counts, latency, and optional error details.
+- request limits, rollback count, prompt token IDs, token batches, byte counts,
+  stage timings, verification width, and optional error details.
 
 Stage position remains count-based. There is no first, intermediate, or final role string on the wire.
 
 ## Transport authentication
 
-Node facades require `X-JetsonFabric-Cluster-Token` on Stagewire requests. Go
-diagnostic clients and the C++ runtime peer client both attach the configured
-`JETSONFABRIC_CLUSTER_TOKEN`; the node-local runtime proxy removes the header
-before forwarding the frame over loopback. This is shared-secret authentication,
-not transport security: Stagewire remains plaintext HTTP until TLS and per-node
-identity are implemented.
+Node facades and runtime workers require `X-JetsonFabric-Cluster-Token` on
+Stagewire writes. Go diagnostic clients and the C++ runtime peer client attach
+the configured `JETSONFABRIC_CLUSTER_TOKEN`. Relay mode sends traffic through
+the peer node facade; direct mode sends it to the peer runtime after deployment
+admission verifies the advertised endpoint. This is shared-secret
+authentication, not transport security: Stagewire remains plaintext HTTP until
+TLS and per-node identity are implemented.
 
 ## Payloads
 
@@ -58,7 +61,8 @@ Supported semantic payload kinds are:
 - `text`: UTF-8 prompt bytes;
 - `tokens`: typed token-ID bytes;
 - `activation`: typed hidden-state tensor bytes;
-- `sampled_token`: one typed token ID.
+- `sampled_token`: one typed token ID;
+- `sampled_tokens`: a target-verified token batch.
 
 Tensor payloads require:
 
@@ -67,9 +71,10 @@ byte_order = little
 layout     = row_major
 ```
 
-Supported v1 dtype labels are `u8`, `i8`, `f16`, `bf16`, `i32`, `u32`, `f32`, `i64`, `u64`, and `f64`. The product of shape dimensions and dtype width must match the payload length exactly.
+Supported v2 dtype labels are `u8`, `i8`, `f16`, `bf16`, `i32`, `u32`, `f32`, `i64`, `u64`, and `f64`. The product of shape dimensions and dtype width must match the payload length exactly.
 
-The current llama.cpp pipeline uses F32 activations with shape `[sequence_length, hidden_size]` and one little-endian 32-bit sampled token.
+The llama.cpp pipeline supports F32 and F16 activations with shape
+`[sequence_length, hidden_size]` and little-endian 32-bit sampled tokens.
 
 ## Ownership
 
@@ -101,6 +106,7 @@ Two complementary tests exercise the same wire contract:
 2. The real-model integration sends llama.cpp hidden activations between assigned layer ranges during prefill and decode, verifies byte and CRC continuity, requires authenticated peer calls, and requires the runtime-owned greedy token stream to match a one-runtime baseline.
 
 These tests prove binary activation transport, real partial-layer execution,
-partitioned stage-local weight residency, and runtime-initiated peer transport
-that bypasses the coordinator. They do not yet prove physical multi-Jetson CUDA
-transport or a distributed performance improvement.
+partitioned stage-local weight residency, target-verified token batches, and
+distributed KV-cache rollback. Physical two-Jetson CUDA validation separately
+proves both relay and direct runtime transport; performance remains workload
+dependent.

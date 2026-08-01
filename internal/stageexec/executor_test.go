@@ -106,6 +106,29 @@ func TestRunPipelinePassRejectsInvalidTransition(t *testing.T) {
 	}
 }
 
+func TestRunPipelinePassRejectsMismatchedResponseOperation(t *testing.T) {
+	stage0 := newFrameServer(t, func(req StageRequest) StageResponse {
+		response := StageResponse{Metadata: responseMetadata(req, stagewire.PayloadKindActivation), Payload: make([]byte, 256)}
+		response.Operation = stagewire.OperationRollback
+		response.RollbackTokens = 1
+		return response
+	})
+	defer stage0.Close()
+	stage1 := newFrameServer(t, func(StageRequest) StageResponse {
+		t.Fatal("second stage should not be called")
+		return StageResponse{}
+	})
+	defer stage1.Close()
+
+	_, err := New(Config{ClusterToken: testClusterToken}).RunPipelinePass(context.Background(), Request{
+		RequestID: "request-1", SessionID: "session-1", Model: "model", Payload: "prompt",
+		Plan: testPlan(stage0.URL, stage1.URL),
+	})
+	if err == nil || !strings.Contains(err.Error(), "response identity") {
+		t.Fatalf("unexpected response mismatch result: %v", err)
+	}
+}
+
 func TestRunPipelinePassStopsAfterJSONFailure(t *testing.T) {
 	stage0 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

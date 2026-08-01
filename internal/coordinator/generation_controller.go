@@ -2,8 +2,11 @@ package coordinator
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"sync/atomic"
 	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/cluster"
@@ -67,6 +70,8 @@ type GenerationController struct {
 	now              func() time.Time
 	deployments      *DeploymentController
 	runtimeClient    runtimebridge.GenerationClient
+	idPrefix         string
+	idCounter        atomic.Uint64
 }
 
 type modelRegistry interface {
@@ -88,6 +93,7 @@ func newGenerationController(
 		now:              now,
 		deployments:      deployments,
 		runtimeClient:    runtimeClient,
+		idPrefix:         generationIDPrefix(now),
 	}
 }
 
@@ -124,8 +130,7 @@ func (c *GenerationController) Start(
 	if err != nil {
 		return nil, err
 	}
-	requestID := fmt.Sprintf("chatcmpl-%d", c.now().UnixNano())
-	sessionID := fmt.Sprintf("session-%d", c.now().UnixNano())
+	requestID, sessionID := c.nextGenerationIDs()
 	request := runtimeGenerationRequest(requestID, sessionID, model.ID, spec, plan, identity)
 
 	stream, err := c.runtimeClient.Start(ctx, plan.Stages[0].APIURL, request)
@@ -143,6 +148,20 @@ func (c *GenerationController) Start(
 		Body:      stream.Body,
 		release:   admission.Release,
 	}, nil
+}
+
+func generationIDPrefix(now func() time.Time) string {
+	random := make([]byte, 8)
+	if _, err := rand.Read(random); err == nil {
+		return hex.EncodeToString(random)
+	}
+	return fmt.Sprintf("%x", now().UnixNano())
+}
+
+func (c *GenerationController) nextGenerationIDs() (string, string) {
+	sequence := c.idCounter.Add(1)
+	suffix := fmt.Sprintf("%s-%d", c.idPrefix, sequence)
+	return "chatcmpl-" + suffix, "session-" + suffix
 }
 
 func (c *GenerationController) resolvePlan(

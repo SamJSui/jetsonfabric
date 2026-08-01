@@ -1,4 +1,5 @@
 #include "protocol/stage.hpp"
+#include "protocol/stage_control.hpp"
 #include "protocol/utf8.hpp"
 
 #include <algorithm>
@@ -153,6 +154,29 @@ std::string extract_byte_string(const nlohmann::json& body, const char* field) {
     return result;
 }
 
+template <typename T>
+std::vector<T> extract_unsigned_array(
+    const nlohmann::json& body,
+    const char* field,
+    std::uint64_t maximum
+) {
+    const nlohmann::json* value = optional_field(body, field);
+    if (value == nullptr) return {};
+    if (!value->is_array()) {
+        throw std::invalid_argument(std::string(field) + " must be an array");
+    }
+    std::vector<T> result;
+    result.reserve(value->size());
+    for (const auto& item : *value) {
+        const std::int64_t parsed = json_int64_value(item, field);
+        if (parsed < 0 || static_cast<std::uint64_t>(parsed) > maximum) {
+            throw std::invalid_argument(std::string(field) + " contains an out-of-range value");
+        }
+        result.push_back(static_cast<T>(parsed));
+    }
+    return result;
+}
+
 void validate_deployment_identity(
     const std::string& deployment_id,
     std::uint64_t deployment_epoch,
@@ -218,7 +242,8 @@ void validate_tensor_metadata(
         }
         return;
     }
-    if (kind != "tokens" && kind != "activation" && kind != "sampled_token") {
+    if (kind != "tokens" && kind != "activation" &&
+        kind != "sampled_token" && kind != "sampled_tokens") {
         throw std::invalid_argument("invalid payload_kind: " + kind);
     }
     if (dtype.empty() || shape.empty()) {
@@ -314,9 +339,11 @@ std::string encode_frame(nlohmann::ordered_json metadata, const std::vector<std:
     return out;
 }
 
-int normalize_max_tokens(int value) {
-    if (value <= 0) return 128;
-    return value > 1024 ? 1024 : value;
+int validate_max_tokens(int value) {
+    if (value <= 0 || value > kMaxStageTokens) {
+        throw std::invalid_argument("max_tokens must be between 1 and 1024");
+    }
+    return value;
 }
 
 } // namespace
@@ -379,13 +406,16 @@ StageRequest decode_stage_request(const std::string& frame) {
     request.payload_bytes = request.payload.size();
     request.payload_crc32 = payload_crc32(request.payload);
     request.transport = extract_string(body, "transport");
-    request.max_tokens = normalize_max_tokens(extract_int(body, "max_tokens", 128));
+    request.max_tokens = validate_max_tokens(extract_int(body, "max_tokens", 128));
+    request.rollback_tokens = extract_int(body, "rollback_tokens");
     validate_tensor_metadata(request.payload_kind, request.encoding, request.dtype, request.shape,
                              request.byte_order, request.layout, request.payload.size());
     return request;
 }
 
 std::string encode_stage_request(StageRequest request, const std::string& operation) {
+    validate_stage_operation(operation, request.rollback_tokens);
+    request.max_tokens = validate_max_tokens(request.max_tokens);
     request.protocol_version = kStageWireVersion;
     request.payload_bytes = request.payload.size();
     request.payload_crc32 = payload_crc32(request.payload);
@@ -426,6 +456,7 @@ std::string encode_stage_request(StageRequest request, const std::string& operat
     body["payload_crc32"] = request.payload_crc32;
     body["transport"] = request.transport;
     body["max_tokens"] = request.max_tokens;
+    if (request.rollback_tokens != 0) body["rollback_tokens"] = request.rollback_tokens;
     return encode_frame(std::move(body), request.payload);
 }
 
@@ -434,6 +465,8 @@ StageResponse decode_stage_response(const std::string& frame) {
     const nlohmann::json& body = decoded.metadata;
     StageResponse response;
     response.protocol_version = static_cast<std::uint16_t>(extract_int(body, "protocol_version"));
+    response.operation = extract_string(body, "operation");
+    validate_stage_operation_name(response.operation);
     response.session_id = extract_string(body, "session_id");
     response.request_id = extract_string(body, "request_id");
     response.model_id = extract_string(body, "model_id");
@@ -465,13 +498,33 @@ StageResponse decode_stage_response(const std::string& frame) {
     response.bytes_in = extract_int64(body, "bytes_in");
     response.bytes_out = extract_int64(body, "bytes_out");
     response.prompt_tokens = extract_int(body, "prompt_tokens");
+    response.prompt_token_ids = extract_unsigned_array<std::uint32_t>(
+        body,
+        "prompt_token_ids",
+        std::numeric_limits<std::uint32_t>::max()
+    );
     response.completion_tokens = extract_int(body, "completion_tokens");
+    response.execution_batch_size = extract_int(body, "execution_batch_size", 1);
+    response.verification_width = extract_int(body, "verification_width", 1);
+    if (response.execution_batch_size <= 0 || response.verification_width <= 0) {
+        throw std::invalid_argument("stage response batch and verification widths must be positive");
+    }
     response.latency_ms = extract_int(body, "latency_ms");
+    response.execution_us = extract_int64(body, "execution_us");
+    response.activation_decode_us = extract_int64(body, "activation_decode_us");
+    response.activation_encode_us = extract_int64(body, "activation_encode_us");
+    response.stage_total_us = extract_int64(body, "stage_total_us");
     response.error = extract_string(body, "error");
     response.message = extract_byte_string(body, "message_bytes");
     if (response.message.empty()) {
         response.message = extract_string(body, "message");
     }
+    response.token_text_offsets = extract_unsigned_array<std::uint32_t>(
+        body,
+        "token_text_offsets",
+        std::numeric_limits<std::uint32_t>::max()
+    );
+    response.token_eog = extract_unsigned_array<std::uint8_t>(body, "token_eog", 1);
     if (response.error.empty()) {
         validate_tensor_metadata(response.payload_kind, response.encoding, response.dtype, response.shape,
                                  response.byte_order, response.layout, response.payload.size());
@@ -480,6 +533,10 @@ StageResponse decode_stage_response(const std::string& frame) {
 }
 
 std::string encode_stage_response(StageResponse response) {
+    validate_stage_operation_name(response.operation);
+    if (response.execution_batch_size <= 0 || response.verification_width <= 0) {
+        throw std::invalid_argument("stage response batch and verification widths must be positive");
+    }
     response.protocol_version = kStageWireVersion;
     response.payload_bytes = response.payload.size();
     response.payload_crc32 = payload_crc32(response.payload);
@@ -496,6 +553,7 @@ std::string encode_stage_response(StageResponse response) {
 
     nlohmann::ordered_json body;
     body["protocol_version"] = response.protocol_version;
+    body["operation"] = response.operation;
     body["session_id"] = response.session_id;
     body["request_id"] = response.request_id;
     body["model_id"] = response.model_id;
@@ -523,8 +581,23 @@ std::string encode_stage_response(StageResponse response) {
     if (response.bytes_in != 0) body["bytes_in"] = response.bytes_in;
     if (response.bytes_out != 0) body["bytes_out"] = response.bytes_out;
     if (response.prompt_tokens != 0) body["prompt_tokens"] = response.prompt_tokens;
+    if (!response.prompt_token_ids.empty()) body["prompt_token_ids"] = response.prompt_token_ids;
     if (response.completion_tokens != 0) body["completion_tokens"] = response.completion_tokens;
+    if (response.execution_batch_size != 1) {
+        body["execution_batch_size"] = response.execution_batch_size;
+    }
+    if (response.verification_width != 1) {
+        body["verification_width"] = response.verification_width;
+    }
     if (response.latency_ms != 0) body["latency_ms"] = response.latency_ms;
+    if (response.execution_us != 0) body["execution_us"] = response.execution_us;
+    if (response.activation_decode_us != 0) {
+        body["activation_decode_us"] = response.activation_decode_us;
+    }
+    if (response.activation_encode_us != 0) {
+        body["activation_encode_us"] = response.activation_encode_us;
+    }
+    if (response.stage_total_us != 0) body["stage_total_us"] = response.stage_total_us;
     if (!response.error.empty()) body["error"] = response.error;
     if (!response.message.empty()) {
         if (is_valid_utf8(response.message)) {
@@ -536,6 +609,10 @@ std::string encode_stage_response(StageResponse response) {
             );
         }
     }
+    if (!response.token_text_offsets.empty()) {
+        body["token_text_offsets"] = response.token_text_offsets;
+    }
+    if (!response.token_eog.empty()) body["token_eog"] = response.token_eog;
     return encode_frame(std::move(body), response.payload);
 }
 

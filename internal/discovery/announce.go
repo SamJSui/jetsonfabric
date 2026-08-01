@@ -3,16 +3,24 @@ package discovery
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/SamJSui/jetsonfabric/internal/clusterauth"
 	"github.com/SamJSui/jetsonfabric/internal/membership"
 )
 
-const pathClusterAnnounce = "/v1/cluster/announce"
+const (
+	pathClusterAnnounce         = "/v1/cluster/announce"
+	maxAnnouncementResponseSize = 1 << 20
+	announcementNonceBytes      = 16
+)
 
 type AnnounceResponse struct {
 	Leader  *membership.Member  `json:"leader,omitempty"`
@@ -20,14 +28,16 @@ type AnnounceResponse struct {
 }
 
 type AnnounceClient struct {
-	Self   SelfFunc
-	Client *http.Client
+	Self         SelfFunc
+	ClusterToken string
+	Client       *http.Client
 }
 
-func NewAnnounceClient(self SelfFunc) *AnnounceClient {
+func NewAnnounceClient(self SelfFunc, clusterToken string) *AnnounceClient {
 	return &AnnounceClient{
-		Self:   self,
-		Client: &http.Client{Timeout: 5 * time.Second},
+		Self:         self,
+		ClusterToken: strings.TrimSpace(clusterToken),
+		Client:       announcementHTTPClient(),
 	}
 }
 
@@ -62,7 +72,7 @@ func (c *AnnounceClient) postAnnounce(ctx context.Context, baseURL string, self 
 		return nil, fmt.Errorf("encode announce payload: %w", err)
 	}
 
-	resp, err := c.send(ctx, baseURL+pathClusterAnnounce, payload)
+	resp, nonce, err := c.send(ctx, baseURL+pathClusterAnnounce, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -71,31 +81,82 @@ func (c *AnnounceClient) postAnnounce(ctx context.Context, baseURL string, self 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("announce to %s failed: %s", baseURL, resp.Status)
 	}
-	return decodeAnnounceResponse(resp)
+	return decodeAnnounceResponse(resp, c.ClusterToken, nonce)
 }
 
-func (c *AnnounceClient) send(ctx context.Context, target string, payload []byte) (*http.Response, error) {
+func (c *AnnounceClient) send(ctx context.Context, target string, payload []byte) (*http.Response, string, error) {
+	nonce, err := newAnnouncementNonce()
+	if err != nil {
+		return nil, "", fmt.Errorf("create announce nonce: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(payload))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	return c.client().Do(req)
+	if c.ClusterToken != "" {
+		timestamp, signature := clusterauth.SignAnnouncementRequest(
+			c.ClusterToken,
+			time.Now().UTC(),
+			nonce,
+			payload,
+		)
+		req.Header.Set(clusterauth.HeaderAnnouncementNonce, nonce)
+		req.Header.Set(clusterauth.HeaderAnnouncementTimestamp, timestamp)
+		req.Header.Set(clusterauth.HeaderAnnouncementSignature, signature)
+	}
+	client := *c.client()
+	client.CheckRedirect = rejectAnnouncementRedirect
+	resp, err := client.Do(req)
+	return resp, nonce, err
 }
 
 func (c *AnnounceClient) client() *http.Client {
 	if c.Client != nil {
 		return c.Client
 	}
-	return &http.Client{Timeout: 5 * time.Second}
+	return announcementHTTPClient()
 }
 
-func decodeAnnounceResponse(resp *http.Response) ([]membership.Member, error) {
+func announcementHTTPClient() *http.Client {
+	return &http.Client{Timeout: 5 * time.Second, CheckRedirect: rejectAnnouncementRedirect}
+}
+
+func rejectAnnouncementRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+func decodeAnnounceResponse(resp *http.Response, clusterToken, nonce string) ([]membership.Member, error) {
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, maxAnnouncementResponseSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("read announce response: %w", err)
+	}
+	if len(payload) > maxAnnouncementResponseSize {
+		return nil, fmt.Errorf("announce response exceeds 1 MiB")
+	}
+	if clusterToken != "" && !clusterauth.VerifyAnnouncementResponse(
+		clusterToken,
+		resp.Header.Get(clusterauth.HeaderAnnouncementResponseTimestamp),
+		nonce,
+		resp.Header.Get(clusterauth.HeaderAnnouncementResponseSignature),
+		payload,
+		time.Now().UTC(),
+	) {
+		return nil, fmt.Errorf("announce response signature is invalid")
+	}
 	var decoded AnnounceResponse
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(payload)).Decode(&decoded); err != nil {
 		return nil, fmt.Errorf("decode announce response: %w", err)
 	}
 	return announceMembers(decoded), nil
+}
+
+func newAnnouncementNonce() (string, error) {
+	nonce := make([]byte, announcementNonceBytes)
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(nonce), nil
 }
 
 func announceMembers(decoded AnnounceResponse) []membership.Member {

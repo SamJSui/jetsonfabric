@@ -29,6 +29,7 @@ func (intent deploymentIntent) spec() deploymentSpec {
 	spec := deploymentSpec{
 		ModelID:              intent.ModelID,
 		StageCount:           intent.Policy.StageCount,
+		StageLayerCounts:     append([]int(nil), intent.Policy.StageLayerCounts...),
 		AllowColocatedStages: intent.Policy.AllowColocatedStages,
 		ContextSize:          intent.ContextSize,
 		Threads:              intent.Threads,

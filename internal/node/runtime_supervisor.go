@@ -2,32 +2,67 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/SamJSui/jetsonfabric/internal/cluster"
 )
 
 const runtimeHealthTimeout = 45 * time.Second
+const maxRuntimeHealthBody = 64 << 10
 
-type RuntimeSupervisor struct {
-	cmd *exec.Cmd
-	URL string
+type runtimeHealth struct {
+	Status             string `json:"status"`
+	Engine             string `json:"engine"`
+	Mode               string `json:"mode"`
+	StageTransport     string `json:"stage_transport"`
+	ActivationEncoding string `json:"activation_encoding"`
+	KVCacheType        string `json:"kv_cache_type"`
+	UBatchSize         int    `json:"ubatch_size"`
+	ParallelSessions   int    `json:"parallel_sessions"`
+	DecodeBatchSize    int    `json:"decode_batch_size"`
+	SpeculativeDraft   string `json:"speculative_draft"`
+	SpeculativeMax     int    `json:"speculative_max_tokens"`
 }
 
-func StartRuntimeSupervisor(ctx context.Context, cfg Config) (*RuntimeSupervisor, string, error) {
+type RuntimeSupervisor struct {
+	cmd     *exec.Cmd
+	URL     string
+	PeerURL string
+}
+
+func StartRuntimeSupervisor(ctx context.Context, cfg Config) (*RuntimeSupervisor, string, string, error) {
 	if !cfg.RuntimeAuto() {
-		return nil, cfg.RuntimeURL, nil
+		err := waitForRuntimeHealth(
+			ctx,
+			strings.TrimRight(cfg.RuntimeURL, "/")+"/healthz",
+			runtimeHealthTimeout,
+			cfg,
+		)
+		if err != nil {
+			return nil, cfg.RuntimeURL, "", err
+		}
+		peerURL, err := advertisedRuntimeURL(cfg, cfg.RuntimeURL)
+		return nil, cfg.RuntimeURL, peerURL, err
 	}
 
 	listen, runtimeURL, err := resolveRuntimeListen(cfg.RuntimeListen)
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
+	}
+	peerURL, err := advertisedRuntimeURL(cfg, runtimeURL)
+	if err != nil {
+		return nil, "", "", err
 	}
 
 	args := runtimeArgs(cfg, listen)
@@ -36,20 +71,21 @@ func StartRuntimeSupervisor(ctx context.Context, cfg Config) (*RuntimeSupervisor
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
-		return nil, "", fmt.Errorf("start runtime worker: %w", err)
+		return nil, "", "", fmt.Errorf("start runtime worker: %w", err)
 	}
 
 	supervisor := &RuntimeSupervisor{
-		cmd: cmd,
-		URL: runtimeURL,
+		cmd:     cmd,
+		URL:     runtimeURL,
+		PeerURL: peerURL,
 	}
 
-	if err := waitForRuntimeHealth(ctx, runtimeURL+"/healthz", runtimeHealthTimeout); err != nil {
+	if err := waitForRuntimeHealth(ctx, runtimeURL+"/healthz", runtimeHealthTimeout, cfg); err != nil {
 		_ = supervisor.Stop(context.Background())
-		return nil, "", err
+		return nil, "", "", err
 	}
 
-	return supervisor, runtimeURL, nil
+	return supervisor, runtimeURL, peerURL, nil
 }
 
 func runtimeArgs(cfg Config, listen string) []string {
@@ -58,13 +94,20 @@ func runtimeArgs(cfg Config, listen string) []string {
 		"--node-name", cfg.NodeName,
 		"--engine", string(cfg.Engine),
 		"--stage-transport", cfg.RuntimeStageTransport,
+		"--activation-encoding", cfg.RuntimeActivationEncoding,
+		"--kv-cache-type", cfg.RuntimeKVCacheType,
 		"--compute-backend", cfg.RuntimeComputeBackend,
 		"--model", cfg.Model,
 		"--model-path", cfg.ModelPath,
 		"--ctx-size", strconv.Itoa(cfg.RuntimeCtxSize),
+		"--ubatch-size", strconv.Itoa(cfg.RuntimeUBatchSize),
 		"--n-gpu-layers", strconv.Itoa(cfg.RuntimeNGPULayers),
 		"--threads", strconv.Itoa(cfg.RuntimeThreads),
 		"--http-workers", strconv.Itoa(cfg.RuntimeHTTPWorkers),
+		"--parallel-sessions", strconv.Itoa(cfg.RuntimeParallelSessions),
+		"--decode-batch-size", strconv.Itoa(cfg.RuntimeDecodeBatchSize),
+		"--speculative-draft", cfg.RuntimeSpeculativeDraft,
+		"--speculative-max-tokens", strconv.Itoa(cfg.RuntimeSpeculativeMax),
 		"--mode", cfg.RuntimeMode,
 		"--stage-index", strconv.Itoa(cfg.StageIndex),
 		"--stage-count", strconv.Itoa(cfg.StageCount),
@@ -149,7 +192,28 @@ func runtimeURLFromListen(listen string) string {
 	return "http://" + net.JoinHostPort(host, port)
 }
 
-func waitForRuntimeHealth(ctx context.Context, healthURL string, timeout time.Duration) error {
+func advertisedRuntimeURL(cfg Config, localURL string) (string, error) {
+	if cfg.RuntimeStageTransport != cluster.StageTransportHTTPDirectV1 {
+		return localURL, nil
+	}
+	local, err := url.Parse(localURL)
+	if err != nil || local.Scheme != "http" || local.Port() == "" {
+		return "", fmt.Errorf("derive runtime advertise URL from %q", localURL)
+	}
+	advertisedAPI, err := url.Parse(cfg.APIURL)
+	if err != nil || advertisedAPI.Hostname() == "" {
+		return "", fmt.Errorf("derive runtime advertise host from node URL %q", cfg.APIURL)
+	}
+	local.Host = net.JoinHostPort(advertisedAPI.Hostname(), local.Port())
+	return strings.TrimRight(local.String(), "/"), nil
+}
+
+func waitForRuntimeHealth(
+	ctx context.Context,
+	healthURL string,
+	timeout time.Duration,
+	cfg Config,
+) error {
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -167,10 +231,18 @@ func waitForRuntimeHealth(ctx context.Context, healthURL string, timeout time.Du
 
 		resp, err := client.Do(req)
 		if err == nil {
-			_ = resp.Body.Close()
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				health, decodeErr := decodeRuntimeHealth(resp.Body)
+				_ = resp.Body.Close()
+				if decodeErr != nil {
+					return fmt.Errorf("decode runtime health at %s: %w", healthURL, decodeErr)
+				}
+				if err := validateRuntimeHealth(health, cfg); err != nil {
+					return fmt.Errorf("runtime compatibility check at %s: %w", healthURL, err)
+				}
 				return nil
 			}
+			_ = resp.Body.Close()
 			lastErr = fmt.Errorf("runtime health returned %s", resp.Status)
 		} else {
 			lastErr = err
@@ -185,4 +257,45 @@ func waitForRuntimeHealth(ctx context.Context, healthURL string, timeout time.Du
 		case <-ticker.C:
 		}
 	}
+}
+
+func decodeRuntimeHealth(reader io.Reader) (runtimeHealth, error) {
+	var health runtimeHealth
+	decoder := json.NewDecoder(io.LimitReader(reader, maxRuntimeHealthBody))
+	if err := decoder.Decode(&health); err != nil {
+		return runtimeHealth{}, err
+	}
+	return health, nil
+}
+
+func validateRuntimeHealth(health runtimeHealth, cfg Config) error {
+	expected := map[string][2]string{
+		"engine":              {health.Engine, string(cfg.Engine)},
+		"mode":                {health.Mode, cfg.RuntimeMode},
+		"stage_transport":     {health.StageTransport, cfg.RuntimeStageTransport},
+		"activation_encoding": {health.ActivationEncoding, cfg.RuntimeActivationEncoding},
+		"kv_cache_type":       {health.KVCacheType, cfg.RuntimeKVCacheType},
+		"speculative_draft":   {health.SpeculativeDraft, cfg.RuntimeSpeculativeDraft},
+	}
+	for field, values := range expected {
+		if values[0] != values[1] {
+			return fmt.Errorf("%s=%q, want %q", field, values[0], values[1])
+		}
+	}
+	if health.Status != "ok" {
+		return fmt.Errorf("status=%q, want %q", health.Status, "ok")
+	}
+	if health.UBatchSize != cfg.RuntimeUBatchSize {
+		return fmt.Errorf("ubatch_size=%d, want %d", health.UBatchSize, cfg.RuntimeUBatchSize)
+	}
+	if health.ParallelSessions != cfg.RuntimeParallelSessions {
+		return fmt.Errorf("parallel_sessions=%d, want %d", health.ParallelSessions, cfg.RuntimeParallelSessions)
+	}
+	if health.DecodeBatchSize != cfg.RuntimeDecodeBatchSize {
+		return fmt.Errorf("decode_batch_size=%d, want %d", health.DecodeBatchSize, cfg.RuntimeDecodeBatchSize)
+	}
+	if health.SpeculativeMax != cfg.RuntimeSpeculativeMax {
+		return fmt.Errorf("speculative_max_tokens=%d, want %d", health.SpeculativeMax, cfg.RuntimeSpeculativeMax)
+	}
+	return nil
 }

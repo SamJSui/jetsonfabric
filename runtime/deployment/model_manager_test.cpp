@@ -491,6 +491,64 @@ void test_in_flight_execution_survives_unload() {
     );
 }
 
+void test_loading_deployment_can_be_canceled() {
+    runtime::deployment::ModelManager manager;
+    std::mutex builder_mutex;
+    std::condition_variable builder_changed;
+    bool builder_started = false;
+    bool release_builder = false;
+    runtime::deployment::LoadDeploymentResult load_result;
+
+    std::thread loader([&]() {
+        load_result = manager.load_resident_deployment(
+            "node-a",
+            managed_identity(),
+            assignment(),
+            [&]() {
+                std::unique_lock lock(builder_mutex);
+                builder_started = true;
+                builder_changed.notify_all();
+                builder_changed.wait(lock, [&]() { return release_builder; });
+                return runtime::InferenceEngineParts{
+                    .layer_executor = std::make_unique<RecordingExecutor>(),
+                    .model_residency = std::nullopt,
+                };
+            }
+        );
+    });
+
+    {
+        std::unique_lock lock(builder_mutex);
+        builder_changed.wait(lock, [&]() { return builder_started; });
+    }
+    expect(
+        manager.drain_resident_deployment(managed_identity()).ok,
+        "loading deployment rejected rollback drain"
+    );
+    expect(
+        manager.unload_resident_deployment(managed_identity()).ok,
+        "loading deployment rejected rollback unload"
+    );
+    expect(
+        !manager.deployment_status(managed_identity()).resident,
+        "canceled load remained visible as a resident deployment"
+    );
+
+    {
+        const std::lock_guard lock(builder_mutex);
+        release_builder = true;
+    }
+    builder_changed.notify_all();
+    loader.join();
+
+    expect(!load_result.ok, "canceled builder published a ready deployment");
+    expect(
+        load_result.error_code == "deployment_load_canceled",
+        "canceled builder returned the wrong error"
+    );
+    expect(!manager.has_resident_deployment(), "canceled builder restored a removed deployment");
+}
+
 void test_invalid_identity_rejected() {
     const auto rejected = [](runtime::deployment::DeploymentIdentity identity) {
         try {
@@ -545,6 +603,7 @@ int main() {
     test_loaded_manager();
     test_guarded_unload();
     test_in_flight_execution_survives_unload();
+    test_loading_deployment_can_be_canceled();
     test_invalid_identity_rejected();
     test_missing_executor_rejected();
 

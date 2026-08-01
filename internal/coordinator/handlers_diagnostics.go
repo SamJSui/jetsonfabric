@@ -76,40 +76,10 @@ func (s *Server) handleLayerSplitRun(w http.ResponseWriter, r *http.Request) {
 	}
 	defer admission.Release()
 
-	var plan clusterplan.RoutePreview
-	var identity pipelineRuntimeIdentity
-	if admission.Plan != nil {
-		plan = admission.Plan.RoutePreview()
-		identity = runtimeIdentityForDeployment(*admission.Plan)
-	} else {
-		policy := s.routePreviewPolicy(r)
-		if runReq.AllowColocatedStages {
-			policy.AllowColocatedStages = true
-		}
-		if runReq.StageCount != nil {
-			policy.StageCount = *runReq.StageCount
-		}
-		requiredStages := policy.StageCount
-		if requiredStages <= 0 {
-			requiredStages = 1
-			policy.StageCount = requiredStages
-		}
-		members, legacyIdentity, err := selectPipelineRuntimeMembers(
-			model,
-			s.memberSource.List(),
-			s.now(),
-			s.memberStaleAfter,
-			requiredStages,
-		)
-		if err != nil {
-			writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, err.Error(), nil, nil)
-			return
-		}
-		identity = legacyIdentity
-		plan = clusterplan.PreviewPipeline(clusterplan.Request{
-			Model: model, Members: members, Now: s.now(),
-			StaleAfter: s.memberStaleAfter, Policy: policy,
-		})
+	plan, identity, err := s.resolveDiagnosticPlan(r, runReq, model, admission)
+	if err != nil {
+		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, err.Error(), nil, nil)
+		return
 	}
 	if !plan.Valid {
 		writeLayerSplitRunError(w, http.StatusServiceUnavailable, errorNoPipelineParallelRoute, fmt.Sprintf("no valid pipeline route: %s", plan.Reason), &plan, nil)
@@ -120,20 +90,12 @@ func (s *Server) handleLayerSplitRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var deployment stagewire.DeploymentIdentity
-	if identity.DeploymentID != "" {
-		deployment = stagewire.DeploymentIdentity{
-			DeploymentID: identity.DeploymentID,
-			Epoch:        identity.Epoch,
-			ModelSHA256:  identity.ModelSHA256,
-		}
-	}
 	result, err := stageexec.New(stageexec.Config{ClusterToken: s.clusterToken}).Generate(r.Context(), stageexec.Request{
 		RequestID:  runReq.RequestID,
 		Model:      model.ID,
 		Payload:    runReq.Payload,
 		MaxTokens:  runReq.MaxTokens,
-		Deployment: deployment,
+		Deployment: diagnosticDeploymentIdentity(identity),
 		Plan:       plan,
 	})
 	if err != nil {
@@ -143,16 +105,45 @@ func (s *Server) handleLayerSplitRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, newLayerSplitRunResponse(identity, plan, result))
 }
 
+func (s *Server) resolveDiagnosticPlan(
+	r *http.Request,
+	runReq layerSplitRunRequest,
+	model cluster.ModelProfile,
+	admission deploymentAdmission,
+) (clusterplan.RoutePreview, pipelineRuntimeIdentity, error) {
+	policy := s.routePreviewPolicy(r)
+	if runReq.AllowColocatedStages {
+		policy.AllowColocatedStages = true
+	}
+	if runReq.StageCount != nil {
+		policy.StageCount = *runReq.StageCount
+	}
+	return s.generations.resolvePlan(model, policy, admission)
+}
+
+func diagnosticDeploymentIdentity(identity pipelineRuntimeIdentity) stagewire.DeploymentIdentity {
+	if identity.DeploymentID == "" {
+		return stagewire.DeploymentIdentity{}
+	}
+	return stagewire.DeploymentIdentity{
+		DeploymentID: identity.DeploymentID,
+		Epoch:        identity.Epoch,
+		ModelSHA256:  identity.ModelSHA256,
+	}
+}
+
 func runtimeIdentityForDeployment(plan clusterplan.DeploymentPlan) pipelineRuntimeIdentity {
 	model := plan.Model()
 	return pipelineRuntimeIdentity{
-		Engine:         model.Engine,
-		ModelID:        model.ModelID,
-		ModelSHA256:    model.ModelSHA256,
-		ExecutionMode:  model.ExecutionMode,
-		StageTransport: model.StageTransport,
-		DeploymentID:   plan.Identity().DeploymentID,
-		Epoch:          plan.Identity().Epoch,
+		Engine:             model.Engine,
+		ModelID:            model.ModelID,
+		ModelSHA256:        model.ModelSHA256,
+		ExecutionMode:      model.ExecutionMode,
+		StageTransport:     model.StageTransport,
+		ActivationEncoding: model.ActivationEncoding,
+		KVCacheType:        model.KVCacheType,
+		DeploymentID:       plan.Identity().DeploymentID,
+		Epoch:              plan.Identity().Epoch,
 	}
 }
 

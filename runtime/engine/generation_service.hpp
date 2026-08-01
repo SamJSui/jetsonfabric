@@ -4,6 +4,7 @@
 #include "pipeline_parallel/generation_runner.hpp"
 #include "protocol/execution_mode.hpp"
 #include "transport/stage_transport.hpp"
+#include "speculative/draft_strategy.hpp"
 
 #include <optional>
 #include <string>
@@ -18,7 +19,9 @@ public:
         std::string node_name,
         ExecutionMode execution_mode,
         const deployment::ModelManager& model_manager,
-        const transport::StageTransport& stage_transport
+        const transport::StageTransport& stage_transport,
+        std::shared_ptr<const speculative::DraftStrategy> draft_strategy = nullptr,
+        int speculative_max_tokens = 4
     );
 
     pipeline_parallel::GenerationResult generate(
@@ -44,6 +47,8 @@ private:
     ExecutionMode execution_mode_;
     const deployment::ModelManager& model_manager_;
     const transport::StageTransport& stage_transport_;
+    std::shared_ptr<const speculative::DraftStrategy> draft_strategy_;
+    int speculative_max_tokens_;
 };
 
 } // namespace jetsonfabric::runtime

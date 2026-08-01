@@ -208,15 +208,16 @@ func (p StagePosition) IsIntermediate() bool {
 type PayloadKind string
 
 const (
-	PayloadKindText         PayloadKind = "text"
-	PayloadKindTokens       PayloadKind = "tokens"
-	PayloadKindActivation   PayloadKind = "activation"
-	PayloadKindSampledToken PayloadKind = "sampled_token"
+	PayloadKindText          PayloadKind = "text"
+	PayloadKindTokens        PayloadKind = "tokens"
+	PayloadKindActivation    PayloadKind = "activation"
+	PayloadKindSampledToken  PayloadKind = "sampled_token"
+	PayloadKindSampledTokens PayloadKind = "sampled_tokens"
 )
 
 func (k PayloadKind) Valid() bool {
 	switch k {
-	case PayloadKindText, PayloadKindTokens, PayloadKindActivation, PayloadKindSampledToken:
+	case PayloadKindText, PayloadKindTokens, PayloadKindActivation, PayloadKindSampledToken, PayloadKindSampledTokens:
 		return true
 	default:
 		return false

@@ -1,5 +1,6 @@
 #include "deployment/model_manager.hpp"
 
+#include "activation/activation_codec_factory.hpp"
 #include "pipeline_parallel/stage_worker.hpp"
 
 #include <cctype>
@@ -25,9 +26,17 @@ class ModelManager::Impl {
 public:
     using EngineBuilder = std::function<InferenceEngineParts()>;
 
-    Impl() = default;
+    Impl()
+        : activation_codec_(
+              activation::make_default_activation_codec_factory()->create_codec("f32")
+          ) {}
 
-    Impl(const Config& config, const InferenceEngineFactory& engine_factory) {
+    Impl(
+        const Config& config,
+        const InferenceEngineFactory& engine_factory,
+        std::shared_ptr<const activation::ActivationCodec> activation_codec
+    )
+        : activation_codec_(require_activation_codec(std::move(activation_codec))) {
         if (!config.start_idle) {
             insert_active(
                 config.node_name,
@@ -48,7 +57,10 @@ public:
         DeploymentIdentity identity,
         pipeline_parallel::StageAssignment assignment,
         InferenceEngineParts engine_parts
-    ) {
+    )
+        : activation_codec_(
+              activation::make_default_activation_codec_factory()->create_codec("f32")
+          ) {
         insert_active(
             std::move(node_name),
             std::move(identity),
@@ -180,9 +192,13 @@ public:
                     std::move(node_name),
                     resident->identity.model_id,
                     assignment,
-                    std::move(engine_parts)
+                    std::move(engine_parts),
+                    activation_codec_
                 );
             const std::lock_guard lock(mutex_);
+            if (resident->cancel_requested || find_key(key) != resident) {
+                return canceled_load(*resident);
+            }
             resident->model_residency = model_residency;
             resident->execution = std::move(execution);
             transition(*resident, ResidentDeploymentState::Ready);
@@ -193,6 +209,9 @@ public:
             );
         } catch (const std::invalid_argument& error) {
             const std::lock_guard lock(mutex_);
+            if (resident->cancel_requested || find_key(key) != resident) {
+                return canceled_load(*resident);
+            }
             transition(*resident, ResidentDeploymentState::Failed);
             return operation_error(
                 "400 Bad Request",
@@ -203,6 +222,9 @@ public:
             );
         } catch (const std::exception& error) {
             const std::lock_guard lock(mutex_);
+            if (resident->cancel_requested || find_key(key) != resident) {
+                return canceled_load(*resident);
+            }
             transition(*resident, ResidentDeploymentState::Failed);
             return operation_error(
                 "500 Internal Server Error",
@@ -266,8 +288,10 @@ public:
         if (resident == nullptr) {
             return operation_success("200 OK", expected_identity, std::nullopt);
         }
-        if (resident->state == ResidentDeploymentState::Loading ||
-            resident->state == ResidentDeploymentState::Unloading) {
+        if (resident->state == ResidentDeploymentState::Loading) {
+            return operation_success("200 OK", resident->identity, resident->state);
+        }
+        if (resident->state == ResidentDeploymentState::Unloading) {
             return transitioning_error(*resident);
         }
         if (resident->state == ResidentDeploymentState::Active) {
@@ -288,8 +312,15 @@ public:
         if (resident == nullptr) {
             return operation_success("200 OK", expected_identity, std::nullopt);
         }
-        if (resident->state == ResidentDeploymentState::Loading ||
-            resident->state == ResidentDeploymentState::Unloading) {
+        if (resident->state == ResidentDeploymentState::Loading) {
+            const DeploymentKey key = key_for(resident->identity);
+            const DeploymentIdentity unloaded_identity = resident->identity;
+            resident->cancel_requested = true;
+            deployments_.erase(key);
+            select_preferred_after_erase();
+            return operation_success("200 OK", unloaded_identity, std::nullopt);
+        }
+        if (resident->state == ResidentDeploymentState::Unloading) {
             return transitioning_error(*resident);
         }
         if (resident->state == ResidentDeploymentState::Active) {
@@ -381,20 +412,41 @@ public:
         return deployment->execution->stage_worker.close_session(request);
     }
 
+    pipeline_parallel::StageRunResult rollback_session(
+        const protocol::StageRequest& request
+    ) const {
+        std::shared_ptr<const ResidentDeployment> deployment;
+        bool any_active = false;
+        {
+            const std::lock_guard lock(mutex_);
+            deployment = deployment_for(request);
+            any_active = has_active_deployment_locked();
+        }
+        if (deployment == nullptr) return unavailable_for(request, any_active);
+        if (pipeline_parallel::StageRunResult mismatch =
+                validate_stage_deployment(deployment->identity, request);
+            !mismatch.ok) {
+            return mismatch;
+        }
+        return deployment->execution->stage_worker.rollback_session(request);
+    }
+
 private:
     struct ResidentExecution {
         ResidentExecution(
             std::string node_name,
             std::string model_id,
             pipeline_parallel::StageAssignment assignment,
-            InferenceEngineParts loaded_engine_parts
+            InferenceEngineParts loaded_engine_parts,
+            std::shared_ptr<const activation::ActivationCodec> activation_codec
         )
             : engine_parts(std::move(loaded_engine_parts)),
               stage_worker(
                   std::move(node_name),
                   std::move(model_id),
                   assignment,
-                  Impl::require_layer_executor(engine_parts)
+                  Impl::require_layer_executor(engine_parts),
+                  std::move(activation_codec)
               ) {}
 
         InferenceEngineParts engine_parts;
@@ -413,7 +465,8 @@ private:
             std::string node_name,
             DeploymentIdentity deployment_identity,
             pipeline_parallel::StageAssignment assignment,
-            InferenceEngineParts loaded_engine_parts
+            InferenceEngineParts loaded_engine_parts,
+            std::shared_ptr<const activation::ActivationCodec> activation_codec
         )
             : identity(Impl::require_identity(std::move(deployment_identity))),
               state(ResidentDeploymentState::Active),
@@ -422,14 +475,26 @@ private:
                   std::move(node_name),
                   identity.model_id,
                   assignment,
-                  std::move(loaded_engine_parts)
+                  std::move(loaded_engine_parts),
+                  std::move(activation_codec)
               )) {}
 
         DeploymentIdentity identity;
         ResidentDeploymentState state;
+        bool cancel_requested = false;
         std::optional<ModelResidency> model_residency;
         std::unique_ptr<ResidentExecution> execution;
     };
+
+    static LoadDeploymentResult canceled_load(const ResidentDeployment& resident) {
+        return operation_error(
+            "409 Conflict",
+            "deployment_load_canceled",
+            "deployment load was canceled before it became resident",
+            resident.identity,
+            ResidentDeploymentState::Loading
+        );
+    }
 
     void insert_active(
         std::string node_name,
@@ -444,7 +509,8 @@ private:
                 std::move(node_name),
                 std::move(identity),
                 assignment,
-                std::move(engine_parts)
+                std::move(engine_parts),
+                activation_codec_
             )
         );
         preferred_ = key;
@@ -730,6 +796,15 @@ private:
         return *engine_parts.layer_executor;
     }
 
+    static std::shared_ptr<const activation::ActivationCodec> require_activation_codec(
+        std::shared_ptr<const activation::ActivationCodec> codec
+    ) {
+        if (!codec) {
+            throw std::invalid_argument("model manager requires an activation codec");
+        }
+        return codec;
+    }
+
     static void transition(
         ResidentDeployment& deployment,
         ResidentDeploymentState next
@@ -741,6 +816,7 @@ private:
     }
 
     mutable std::mutex mutex_;
+    std::shared_ptr<const activation::ActivationCodec> activation_codec_;
     std::map<DeploymentKey, std::shared_ptr<ResidentDeployment>> deployments_;
     std::optional<DeploymentKey> preferred_;
 };
@@ -752,7 +828,24 @@ ModelManager::ModelManager(
     const Config& config,
     const InferenceEngineFactory& engine_factory
 )
-    : impl_(std::make_unique<Impl>(config, engine_factory)) {}
+    : ModelManager(
+          config,
+          engine_factory,
+          activation::make_default_activation_codec_factory()->create_codec(
+              config.activation_encoding
+          )
+      ) {}
+
+ModelManager::ModelManager(
+    const Config& config,
+    const InferenceEngineFactory& engine_factory,
+    std::shared_ptr<const activation::ActivationCodec> activation_codec
+)
+    : impl_(std::make_unique<Impl>(
+          config,
+          engine_factory,
+          std::move(activation_codec)
+      )) {}
 
 ModelManager::ModelManager(
     std::string node_name,
@@ -859,6 +952,12 @@ pipeline_parallel::StageRunResult ModelManager::close_session(
     const protocol::StageRequest& request
 ) const {
     return impl_->close_session(request);
+}
+
+pipeline_parallel::StageRunResult ModelManager::rollback_session(
+    const protocol::StageRequest& request
+) const {
+    return impl_->rollback_session(request);
 }
 
 } // namespace jetsonfabric::runtime::deployment

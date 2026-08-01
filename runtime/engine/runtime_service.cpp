@@ -1,6 +1,8 @@
 #include "engine/runtime_service.hpp"
 
+#include "activation/activation_codec_factory.hpp"
 #include "engine/generation_service.hpp"
+#include "speculative/draft_strategy_factory.hpp"
 #include "protocol/execution_mode.hpp"
 #include "protocol/generation.hpp"
 #include "protocol/stage.hpp"
@@ -168,6 +170,26 @@ DecodedLoadRequest decode_load_request(const Config& base, const std::string& re
     request.config.start_idle = false;
     request.config.model = request.identity.model_id;
     request.config.engine = optional_string(body, "engine", request.config.engine);
+    const std::string activation_encoding = optional_string(
+        body,
+        "activation_encoding",
+        request.config.activation_encoding
+    );
+    if (activation_encoding != request.config.activation_encoding) {
+        throw std::invalid_argument(
+            "activation_encoding does not match the runtime activation codec"
+        );
+    }
+    const std::string kv_cache_type = optional_string(
+        body,
+        "kv_cache_type",
+        std::string(kv_cache_type_string(request.config.kv_cache_type))
+    );
+    if (kv_cache_type != kv_cache_type_string(request.config.kv_cache_type)) {
+        throw std::invalid_argument(
+            "kv_cache_type does not match the runtime KV cache configuration"
+        );
+    }
     request.config.compute_backend = optional_string(
         body,
         "compute_backend",
@@ -313,16 +335,43 @@ RuntimeService::RuntimeService(
     std::shared_ptr<const InferenceEngineFactory> engine_factory,
     std::shared_ptr<const transport::StageTransport> stage_transport
 )
+    : RuntimeService(
+          config,
+          std::move(engine_factory),
+          std::move(stage_transport),
+          activation::make_default_activation_codec_factory()->create_codec(
+              config.activation_encoding
+          )
+      ) {}
+
+RuntimeService::RuntimeService(
+    Config config,
+    std::shared_ptr<const InferenceEngineFactory> engine_factory,
+    std::shared_ptr<const transport::StageTransport> stage_transport,
+    std::shared_ptr<const activation::ActivationCodec> activation_codec
+)
     : config_(std::move(config)),
       engine_factory_(std::move(engine_factory)),
       stage_transport_(std::move(stage_transport)),
-      model_manager_(config_, require_engine_factory(engine_factory_)) {
+      activation_codec_(std::move(activation_codec)),
+      model_manager_(
+          config_,
+          require_engine_factory(engine_factory_),
+          activation_codec_
+      ) {
     if (!stage_transport_) {
         throw std::invalid_argument("runtime service requires a stage transport");
     }
     if (!engine_factory_->supports(config_.engine)) {
         throw std::invalid_argument("unsupported inference engine: " + config_.engine);
     }
+    if (!activation_codec_) {
+        throw std::invalid_argument("runtime service requires an activation codec");
+    }
+}
+
+void RuntimeService::shutdown() {
+    stage_transport_->shutdown();
 }
 
 std::string RuntimeService::runtime_name() const {
@@ -339,6 +388,38 @@ ExecutionMode RuntimeService::execution_mode() const {
 
 std::string RuntimeService::model() const {
     return model_manager_.active_model_id();
+}
+
+std::string RuntimeService::stage_transport_name() const {
+    return config_.stage_transport;
+}
+
+std::string RuntimeService::activation_encoding() const {
+    return config_.activation_encoding;
+}
+
+std::string RuntimeService::kv_cache_type() const {
+    return kv_cache_type_string(config_.kv_cache_type);
+}
+
+int RuntimeService::ubatch_size() const {
+    return config_.ubatch_size;
+}
+
+int RuntimeService::parallel_sessions() const {
+    return config_.parallel_sessions;
+}
+
+int RuntimeService::decode_batch_size() const {
+    return config_.decode_batch_size;
+}
+
+std::string RuntimeService::speculative_draft() const {
+    return config_.speculative_draft;
+}
+
+int RuntimeService::speculative_max_tokens() const {
+    return config_.speculative_max_tokens;
 }
 
 RuntimeResponse RuntimeService::deployment_status() const {
@@ -485,7 +566,9 @@ RuntimeResponse RuntimeService::generate(
         config_.node_name,
         config_.mode,
         model_manager_,
-        *stage_transport_
+        *stage_transport_,
+        speculative::create_draft_strategy(config_.speculative_draft),
+        config_.speculative_max_tokens
     );
     const pipeline_parallel::GenerationResult result = generation_service.generate(
         request,
@@ -514,8 +597,16 @@ RuntimeResponse RuntimeService::generate(
             result.sampled_tokens,
             result.stage_calls,
             result.remote_stage_calls,
+            result.rollback_stage_calls,
+            result.remote_rollback_stage_calls,
+            result.rollback_stage_us,
+            result.rollback_remote_call_us,
             result.bytes_in,
-            result.bytes_out
+            result.bytes_out,
+            result.stage_timings,
+            result.target_decode_passes,
+            result.speculative_draft_tokens,
+            result.speculative_accepted_tokens
         ),
     };
 }
@@ -535,15 +626,19 @@ RuntimeResponse RuntimeService::run_stage(const std::string& request_body) const
     try {
         operation = protocol::decode_stage_operation(request_body);
         request = protocol::decode_stage_request(request_body);
+        protocol::validate_stage_operation(operation, request.rollback_tokens);
     } catch (const std::exception& err) {
         return json_error("400 Bad Request", "invalid_stage_request", err.what());
     }
 
     const pipeline_parallel::StageRunResult result = operation == protocol::kStageOperationCloseSession
         ? model_manager_.close_session(request)
-        : model_manager_.run_stage(request);
+        : operation == protocol::kStageOperationRollbackSession
+            ? model_manager_.rollback_session(request)
+            : model_manager_.run_stage(request);
     if (!result.ok) {
         protocol::StageResponse response = stage_error_response(request, result.error_code, result.error_message);
+        response.operation = operation;
         return RuntimeResponse{
             result.status,
             protocol::kStageWireContentType,
@@ -551,10 +646,12 @@ RuntimeResponse RuntimeService::run_stage(const std::string& request_body) const
         };
     }
 
+    protocol::StageResponse response = result.response;
+    response.operation = operation;
     return RuntimeResponse{
         "200 OK",
         protocol::kStageWireContentType,
-        protocol::encode_stage_response(result.response),
+        protocol::encode_stage_response(std::move(response)),
     };
 }
 

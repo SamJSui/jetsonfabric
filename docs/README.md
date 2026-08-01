@@ -13,6 +13,8 @@ validation procedures.
 - [Single-node runtime validation](single-node-runtime-validation.md) - build and
   verify the first real runtime path.
 - [Architecture](architecture.md) - current component ownership and request flow.
+- [Codebase catalog](architecture/codebase-catalog.md) - every Go package,
+  behavior-owning type, C++ runtime class, and their relationships.
 - [Architecture diagrams](architecture-diagrams.md) - curated current and target
   architecture views.
 - [Deployment invariants](deployment-invariants.md) - current and target
@@ -24,7 +26,7 @@ validation procedures.
 
 - [Runtime stage interface](runtime-stage-interface.md) - engine-neutral stage
   input, output, identity, and lifecycle boundary.
-- [Stagewire v1](stagewire-v1.md) - binary inter-stage frame and payload contract.
+- [Stagewire v2](stagewire-v2.md) - binary inter-stage frame, rollback, and payload contract.
 - [llama.cpp partial-layer execution](llama-cpp-partial-layer.md) - pinned engine
   integration and stage-range behavior.
 
@@ -36,6 +38,15 @@ validation procedures.
   acceptance gate for distributed CUDA execution.
 - [Two-Orin Nano benchmark](benchmarks/2026-07-27-two-orin-nano.md) - physical
   correctness, capacity, performance, power, and HumanEval results.
+- [Concurrent serving optimization](benchmarks/2026-07-28-concurrent-serving.md)
+  - two-node Qwen2.5-Coder 1.5B aggregate throughput, TTFT, ITL, latency,
+  measured stage balance, and the matching one-node baseline.
+- [Serving matrix](benchmarks/2026-07-29-serving-matrix.md) - replica and
+  balanced-pipeline results for Qwen2.5-Coder 1.5B, 3B, 7B, and 14B, including
+  runtime timing decomposition and HumanEval useful-work rates.
+- [32B capacity frontier](benchmarks/2026-07-30-32b-capacity.md) - stage-local
+  Q8_0 KV memory, balanced 33/31 serving, sustained concurrency, and the
+  largest Qwen2.5-Coder quantization tested on the two-node cluster.
 
 Real-model local integration commands are documented in
 [Local development](local-development.md). The source repository does not keep

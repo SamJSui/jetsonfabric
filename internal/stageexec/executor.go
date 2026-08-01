@@ -69,27 +69,31 @@ type Result struct {
 }
 
 type StageTrace struct {
-	RequestID       string                `json:"request_id"`
-	SessionID       string                `json:"session_id"`
-	StageIndex      int                   `json:"stage_index"`
-	StageCount      int                   `json:"stage_count"`
-	NodeID          string                `json:"node_id"`
-	NodeName        string                `json:"node_name"`
-	APIURL          string                `json:"api_url"`
-	StatusCode      int                   `json:"status_code"`
-	LatencyMS       int                   `json:"latency_ms"`
-	BytesIn         int64                 `json:"bytes_in"`
-	BytesOut        int64                 `json:"bytes_out"`
-	PayloadKindIn   stagewire.PayloadKind `json:"payload_kind_in"`
-	PayloadKindOut  stagewire.PayloadKind `json:"payload_kind_out"`
-	PayloadIn       int                   `json:"payload_in"`
-	PayloadOut      int                   `json:"payload_out"`
-	PayloadCRC32In  uint32                `json:"payload_crc32_in"`
-	PayloadCRC32Out uint32                `json:"payload_crc32_out"`
-	Transport       string                `json:"transport"`
-	Operation       stagewire.Operation   `json:"operation"`
-	Phase           inference.Phase       `json:"phase"`
-	DecodeStep      int                   `json:"decode_step"`
+	RequestID          string                `json:"request_id"`
+	SessionID          string                `json:"session_id"`
+	StageIndex         int                   `json:"stage_index"`
+	StageCount         int                   `json:"stage_count"`
+	NodeID             string                `json:"node_id"`
+	NodeName           string                `json:"node_name"`
+	APIURL             string                `json:"api_url"`
+	StatusCode         int                   `json:"status_code"`
+	LatencyMS          int                   `json:"latency_ms"`
+	ExecutionUS        int64                 `json:"execution_us,omitempty"`
+	ActivationDecodeUS int64                 `json:"activation_decode_us,omitempty"`
+	ActivationEncodeUS int64                 `json:"activation_encode_us,omitempty"`
+	StageTotalUS       int64                 `json:"stage_total_us,omitempty"`
+	BytesIn            int64                 `json:"bytes_in"`
+	BytesOut           int64                 `json:"bytes_out"`
+	PayloadKindIn      stagewire.PayloadKind `json:"payload_kind_in"`
+	PayloadKindOut     stagewire.PayloadKind `json:"payload_kind_out"`
+	PayloadIn          int                   `json:"payload_in"`
+	PayloadOut         int                   `json:"payload_out"`
+	PayloadCRC32In     uint32                `json:"payload_crc32_in"`
+	PayloadCRC32Out    uint32                `json:"payload_crc32_out"`
+	Transport          string                `json:"transport"`
+	Operation          stagewire.Operation   `json:"operation"`
+	Phase              inference.Phase       `json:"phase"`
+	DecodeStep         int                   `json:"decode_step"`
 }
 
 type StageRequest = stagewire.StageRequest
@@ -129,56 +133,27 @@ func (e *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 	if len(req.Plan.Stages) == 0 {
 		return Result{}, fmt.Errorf("stage plan is empty")
 	}
-	requestID := normalizeOrNewID(req.RequestID, "request")
-	sessionID := normalizeOrNewID(req.SessionID, "session")
-	phase := req.Phase
-	if phase == "" {
-		phase = inference.PhasePrefill
+	req.RequestID = normalizeOrNewID(req.RequestID, "request")
+	req.SessionID = normalizeOrNewID(req.SessionID, "session")
+	if req.Phase == "" {
+		req.Phase = inference.PhasePrefill
 	}
-	kind := req.Kind
-	if kind == "" {
-		kind = stagewire.PayloadKindText
-	}
-	payload := append([]byte(nil), req.Data...)
-	if payload == nil {
-		payload = []byte(req.Payload)
-	}
-	payloadMetadata := stagewire.Metadata{PayloadKind: kind}
-	switch kind {
-	case stagewire.PayloadKindText:
-		payloadMetadata.Encoding = "utf-8"
-	case stagewire.PayloadKindSampledToken:
-		payloadMetadata.DType = "u32"
-		payloadMetadata.Shape = []int64{1}
-		payloadMetadata.ByteOrder = "little"
-		payloadMetadata.Layout = "row_major"
-	case stagewire.PayloadKindTokens:
-		if len(payload)%4 != 0 || len(payload) == 0 {
-			return Result{}, fmt.Errorf("token payload must contain one or more 32-bit token IDs")
-		}
-		payloadMetadata.DType = "i32"
-		payloadMetadata.Shape = []int64{int64(len(payload) / 4)}
-		payloadMetadata.ByteOrder = "little"
-		payloadMetadata.Layout = "row_major"
+	payloadMetadata, payload, err := initialPayload(req)
+	if err != nil {
+		return Result{}, err
 	}
 
 	result := Result{
-		RequestID: requestID,
-		SessionID: sessionID,
+		RequestID: req.RequestID,
+		SessionID: req.SessionID,
 		Model:     req.Model,
 		Stages:    make([]StageTrace, 0, len(req.Plan.Stages)),
 	}
 	var finalResponse StageResponse
 
 	for _, stage := range req.Plan.Stages {
-		stageRequestID := stageOperationRequestID(requestID, stage.StageIndex)
-		stageReq := buildStageRequest(sessionID, stageRequestID, req.Model, req.Deployment, phase, req.DecodeStep, payloadMetadata, payload, req.MaxTokens, stage)
+		stageReq := buildStageRequest(req, stage, payloadMetadata, payload)
 		stageResp, status, trace, err := e.callStage(ctx, stage, stageReq)
-		trace.StageIndex = stage.StageIndex
-		trace.StageCount = stage.StageCount
-		trace.NodeID = stage.NodeID
-		trace.NodeName = stage.NodeName
-		trace.APIURL = stage.APIURL
 		result.Stages = append(result.Stages, trace)
 		if err != nil {
 			return result, err
@@ -189,11 +164,10 @@ func (e *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		if err := validateStageResponseIdentity(stageReq, stageResp); err != nil {
 			return result, fmt.Errorf("stage %d response identity: %w", stage.StageIndex, err)
 		}
-		if err := inference.ValidatePayloadTransition(phase, stageReq.Position(), stageReq.PayloadKind, stageResp.PayloadKind); err != nil {
+		if err := inference.ValidatePayloadTransition(req.Phase, stageReq.Position(), stageReq.PayloadKind, stageResp.PayloadKind); err != nil {
 			return result, fmt.Errorf("stage %d payload contract: %w", stage.StageIndex, err)
 		}
 		payload = append(payload[:0], stageResp.Payload...)
-		kind = stageResp.PayloadKind
 		payloadMetadata = stagewire.Metadata{
 			PayloadKind: stageResp.PayloadKind,
 			Encoding:    stageResp.Encoding,
@@ -209,6 +183,41 @@ func (e *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		finalResponse = stageResp
 	}
 
+	finalizeResult(&result, payloadMetadata.PayloadKind, payload, finalResponse)
+	return result, nil
+}
+
+func initialPayload(req Request) (stagewire.Metadata, []byte, error) {
+	kind := req.Kind
+	if kind == "" {
+		kind = stagewire.PayloadKindText
+	}
+	payload := append([]byte(nil), req.Data...)
+	if payload == nil {
+		payload = []byte(req.Payload)
+	}
+	metadata := stagewire.Metadata{PayloadKind: kind}
+	switch kind {
+	case stagewire.PayloadKindText:
+		metadata.Encoding = "utf-8"
+	case stagewire.PayloadKindSampledToken:
+		metadata.DType = "u32"
+		metadata.Shape = []int64{1}
+		metadata.ByteOrder = "little"
+		metadata.Layout = "row_major"
+	case stagewire.PayloadKindTokens:
+		if len(payload)%4 != 0 || len(payload) == 0 {
+			return stagewire.Metadata{}, nil, fmt.Errorf("token payload must contain one or more 32-bit token IDs")
+		}
+		metadata.DType = "i32"
+		metadata.Shape = []int64{int64(len(payload) / 4)}
+		metadata.ByteOrder = "little"
+		metadata.Layout = "row_major"
+	}
+	return metadata, payload, nil
+}
+
+func finalizeResult(result *Result, kind stagewire.PayloadKind, payload []byte, finalResponse StageResponse) {
 	result.PayloadKind = kind
 	result.PayloadBytes = len(payload)
 	result.Data = append([]byte(nil), payload...)
@@ -221,18 +230,17 @@ func (e *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		token := binary.LittleEndian.Uint32(payload)
 		result.SampledToken = &token
 	}
-	return result, nil
 }
 
-func buildStageRequest(sessionID string, requestID string, model string, deployment stagewire.DeploymentIdentity, phase inference.Phase, decodeStep int, payloadMetadata stagewire.Metadata, payload []byte, maxTokens int, stage clusterplan.Stage) StageRequest {
+func buildStageRequest(req Request, stage clusterplan.Stage, payloadMetadata stagewire.Metadata, payload []byte) StageRequest {
 	metadata := stagewire.Metadata{
 		Operation:          stagewire.OperationExecute,
-		SessionID:          sessionID,
-		RequestID:          requestID,
-		ModelID:            model,
-		DeploymentIdentity: deployment,
-		Phase:              phase,
-		DecodeStep:         decodeStep,
+		SessionID:          req.SessionID,
+		RequestID:          stageOperationRequestID(req.RequestID, stage.StageIndex),
+		ModelID:            req.Model,
+		DeploymentIdentity: req.Deployment,
+		Phase:              req.Phase,
+		DecodeStep:         req.DecodeStep,
 		StageIndex:         stage.StageIndex,
 		StageCount:         stage.StageCount,
 		NodeName:           stage.NodeName,
@@ -244,7 +252,7 @@ func buildStageRequest(sessionID string, requestID string, model string, deploym
 		Shape:              append([]int64(nil), payloadMetadata.Shape...),
 		ByteOrder:          payloadMetadata.ByteOrder,
 		Layout:             payloadMetadata.Layout,
-		MaxTokens:          maxTokens,
+		MaxTokens:          req.MaxTokens,
 	}
 	return StageRequest{Metadata: metadata, Payload: append([]byte(nil), payload...)}
 }
@@ -269,7 +277,8 @@ func buildCloseSessionRequest(sessionID string, model string, deployment stagewi
 }
 
 func validateStageResponseIdentity(request StageRequest, response StageResponse) error {
-	if response.SessionID != request.SessionID ||
+	if response.Operation != request.Operation ||
+		response.SessionID != request.SessionID ||
 		response.RequestID != request.RequestID ||
 		response.ModelID != request.ModelID ||
 		response.DeploymentIdentity != request.DeploymentIdentity ||
@@ -306,6 +315,11 @@ func (e *Executor) callStage(ctx context.Context, stage clusterplan.Stage, stage
 	baseTrace := StageTrace{
 		RequestID:      stageReq.RequestID,
 		SessionID:      stageReq.SessionID,
+		StageIndex:     stage.StageIndex,
+		StageCount:     stage.StageCount,
+		NodeID:         stage.NodeID,
+		NodeName:       stage.NodeName,
+		APIURL:         stage.APIURL,
 		PayloadKindIn:  stageReq.PayloadKind,
 		PayloadIn:      len(stageReq.Payload),
 		PayloadCRC32In: crc32.ChecksumIEEE(stageReq.Payload),
@@ -328,6 +342,10 @@ func (e *Executor) callStage(ctx context.Context, stage clusterplan.Stage, stage
 	trace := baseTrace
 	trace.StatusCode = resp.StatusCode
 	trace.LatencyMS = stageResp.LatencyMS
+	trace.ExecutionUS = stageResp.ExecutionUS
+	trace.ActivationDecodeUS = stageResp.ActivationDecodeUS
+	trace.ActivationEncodeUS = stageResp.ActivationEncodeUS
+	trace.StageTotalUS = stageResp.StageTotalUS
 	trace.BytesIn = stageResp.BytesIn
 	trace.BytesOut = stageResp.BytesOut
 	trace.PayloadKindOut = stageResp.PayloadKind

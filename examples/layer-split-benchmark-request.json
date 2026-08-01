@@ -1,0 +1,8 @@
+{
+  "request_id": "layer-split-benchmark",
+  "model": "qwen2.5-coder-1.5b-q4",
+  "payload": "Once upon a time",
+  "max_tokens": 128,
+  "stage_count": 2,
+  "allow_colocated_stages": false
+}

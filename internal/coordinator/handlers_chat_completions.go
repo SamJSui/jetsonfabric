@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/SamJSui/jetsonfabric/internal/chat"
 )
 
 type chatCompletionRequest struct {
@@ -34,6 +36,7 @@ type chatCompletionResponse struct {
 	Model   string                 `json:"model"`
 	Choices []chatCompletionChoice `json:"choices"`
 	Usage   chatCompletionUsage    `json:"usage"`
+	Trace   *chat.RuntimeTrace     `json:"jetsonfabric,omitempty"`
 }
 
 type chatCompletionChoice struct {
@@ -142,6 +145,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			CompletionTokens: result.CompletionTokens,
 			TotalTokens:      result.PromptTokens + result.CompletionTokens,
 		},
+		Trace: runtimeTrace(result),
 	})
 }
 

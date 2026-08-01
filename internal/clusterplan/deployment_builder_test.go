@@ -37,16 +37,47 @@ func TestBuildDeploymentPlanUsesOneFreshCompatibleSnapshot(t *testing.T) {
 	}
 	if result.Compatibility.Architecture != "arm64" ||
 		result.Compatibility.RuntimeRevision != "runtime-a" ||
-		result.Compatibility.StageTransport != cluster.StageTransportHTTPBinaryV1 {
+		result.Compatibility.StageTransport != cluster.StageTransportHTTPBinaryV1 ||
+		result.Compatibility.ActivationEncoding != cluster.ActivationEncodingF32 ||
+		result.Compatibility.KVCacheType != cluster.KVCacheTypeF16 {
 		t.Fatalf("unexpected compatibility: %+v", result.Compatibility)
 	}
-	if result.Plan.Model().StageTransport != cluster.StageTransportHTTPBinaryV1 {
-		t.Fatalf("deployment plan lost stage transport: %+v", result.Plan.Model())
+	if result.Plan.Model().StageTransport != cluster.StageTransportHTTPBinaryV1 ||
+		result.Plan.Model().ActivationEncoding != cluster.ActivationEncodingF32 ||
+		result.Plan.Model().KVCacheType != cluster.KVCacheTypeF16 {
+		t.Fatalf("deployment plan lost runtime strategy: %+v", result.Plan.Model())
 	}
 
 	members[0].NodeName = "mutated"
 	if result.Plan.Stages()[0].NodeName != "dopey" {
 		t.Fatal("plan changed after membership snapshot mutation")
+	}
+}
+
+func TestBuildDeploymentPlanUsesConfiguredStageLayerCounts(t *testing.T) {
+	now := time.Now().UTC()
+	dopey := deploymentMember("node-a", "dopey", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now)
+	grumpy := deploymentMember("node-b", "grumpy", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now)
+	dopey.Hostname = "dopey"
+	grumpy.Hostname = "grumpy"
+	result, err := BuildDeploymentPlan(DeploymentBuildRequest{
+		Identity:   DeploymentIdentity{DeploymentID: "deployment-balanced", Epoch: 1},
+		Model:      deployableModel(nil),
+		Members:    []membership.Member{dopey, grumpy},
+		Now:        now,
+		StaleAfter: time.Minute,
+		Policy: Policy{
+			StageLayerCounts: []int{18, 10},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildDeploymentPlan() error = %v", err)
+	}
+	stages := result.Plan.Stages()
+	if len(stages) != 2 ||
+		stages[0].LayerStart != 0 || stages[0].LayerEnd != 18 ||
+		stages[1].LayerStart != 18 || stages[1].LayerEnd != 28 {
+		t.Fatalf("unexpected balanced stages: %+v", stages)
 	}
 }
 
@@ -86,6 +117,130 @@ func TestBuildDeploymentPlanRejectsStageTransportMismatch(t *testing.T) {
 		Policy:     Policy{StageCount: 2, AllowColocatedStages: true},
 	})
 	if err == nil || !strings.Contains(err.Error(), "stage transport") {
+		t.Fatalf("BuildDeploymentPlan() error = %v", err)
+	}
+}
+
+func TestBuildDeploymentPlanRejectsSpeculativeConfigurationMismatch(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value any
+	}{
+		{name: "draft strategy", key: cluster.CapabilityRuntimeSpeculativeDraft, value: "prompt_lookup"},
+		{name: "maximum width", key: cluster.CapabilityRuntimeSpeculativeMax, value: 8},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := time.Now().UTC()
+			members := []membership.Member{
+				deploymentMember("node-a", "dopey", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now),
+				deploymentMember("node-b", "grumpy", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now),
+			}
+			members[1].Capabilities[tt.key] = tt.value
+
+			_, err := BuildDeploymentPlan(DeploymentBuildRequest{
+				Identity:   DeploymentIdentity{DeploymentID: "deployment-a", Epoch: 1},
+				Model:      deployableModel(nil),
+				Members:    members,
+				Now:        now,
+				StaleAfter: time.Minute,
+				Policy:     Policy{StageCount: 2, AllowColocatedStages: true},
+			})
+			if err == nil || !strings.Contains(err.Error(), "speculative") {
+				t.Fatalf("BuildDeploymentPlan() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestBuildDeploymentPlanRejectsSessionCapacityMismatch(t *testing.T) {
+	now := time.Now().UTC()
+	members := []membership.Member{
+		deploymentMember("node-a", "dopey", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now),
+		deploymentMember("node-b", "grumpy", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now),
+	}
+	members[1].Capabilities[cluster.CapabilityRuntimeParallelSessions] = 4
+	members[1].Capabilities[cluster.CapabilityRuntimeDecodeBatchSize] = 2
+
+	_, err := BuildDeploymentPlan(DeploymentBuildRequest{
+		Identity:   DeploymentIdentity{DeploymentID: "deployment-a", Epoch: 1},
+		Model:      deployableModel(nil),
+		Members:    members,
+		Now:        now,
+		StaleAfter: time.Minute,
+		Policy:     Policy{StageCount: 2, AllowColocatedStages: true},
+	})
+	if err == nil || !strings.Contains(err.Error(), "session capacity") {
+		t.Fatalf("BuildDeploymentPlan() error = %v", err)
+	}
+}
+
+func TestBuildDeploymentPlanRejectsUnsafeDirectRuntimeEndpoint(t *testing.T) {
+	for _, runtimeURL := range []string{"http://127.0.0.1:9090", "http://0.0.0.0:9090"} {
+		t.Run(runtimeURL, func(t *testing.T) {
+			now := time.Now().UTC()
+			member := deploymentMember(
+				"node-a", "dopey", "arm64", "runtime-a", "llama-a",
+				cluster.ComputeBackendCPU, false, now,
+			)
+			member.APIURL = strings.Replace(runtimeURL, ":9090", ":52415", 1)
+			member.Capabilities[cluster.CapabilityRuntimeStageTransport] = cluster.StageTransportHTTPDirectV1
+			member.RuntimeURL = runtimeURL
+
+			_, err := BuildDeploymentPlan(DeploymentBuildRequest{
+				Identity:   DeploymentIdentity{DeploymentID: "deployment-a", Epoch: 1},
+				Model:      deployableModel(nil),
+				Members:    []membership.Member{member},
+				Now:        now,
+				StaleAfter: time.Minute,
+				Policy:     Policy{StageCount: 1},
+			})
+			if err == nil {
+				t.Fatalf("expected unsafe direct runtime endpoint %q to be rejected", runtimeURL)
+			}
+		})
+	}
+}
+
+func TestBuildDeploymentPlanRejectsActivationEncodingMismatch(t *testing.T) {
+	now := time.Now().UTC()
+	members := []membership.Member{
+		deploymentMember("node-a", "dopey", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now),
+		deploymentMember("node-b", "sleepy", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now),
+	}
+	members[1].Capabilities[cluster.CapabilityRuntimeActivationEncoding] = cluster.ActivationEncodingF16
+
+	_, err := BuildDeploymentPlan(DeploymentBuildRequest{
+		Identity:   DeploymentIdentity{DeploymentID: "deployment-a", Epoch: 1},
+		Model:      deployableModel(nil),
+		Members:    members,
+		Now:        now,
+		StaleAfter: time.Minute,
+		Policy:     Policy{StageCount: 2, AllowColocatedStages: true},
+	})
+	if err == nil || !strings.Contains(err.Error(), "activation encoding") {
+		t.Fatalf("BuildDeploymentPlan() error = %v", err)
+	}
+}
+
+func TestBuildDeploymentPlanRejectsKVCacheTypeMismatch(t *testing.T) {
+	now := time.Now().UTC()
+	members := []membership.Member{
+		deploymentMember("node-a", "dopey", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now),
+		deploymentMember("node-b", "sleepy", "arm64", "runtime-a", "llama-a", cluster.ComputeBackendCPU, false, now),
+	}
+	members[1].Capabilities[cluster.CapabilityRuntimeKVCacheType] = cluster.KVCacheTypeQ8_0
+
+	_, err := BuildDeploymentPlan(DeploymentBuildRequest{
+		Identity:   DeploymentIdentity{DeploymentID: "deployment-a", Epoch: 1},
+		Model:      deployableModel(nil),
+		Members:    members,
+		Now:        now,
+		StaleAfter: time.Minute,
+		Policy:     Policy{StageCount: 2, AllowColocatedStages: true},
+	})
+	if err == nil || !strings.Contains(err.Error(), "KV cache type") {
 		t.Fatalf("BuildDeploymentPlan() error = %v", err)
 	}
 }
@@ -177,16 +332,22 @@ func deploymentMember(
 		APIURL:    "http://" + nodeID + ".test",
 		Arch:      arch,
 		Capabilities: map[string]any{
-			cluster.CapabilityMemoryGB:                64.0,
-			cluster.CapabilityComputeBackends:         []string{string(backend)},
-			cluster.CapabilityRuntimeEngine:           string(cluster.EngineLlamaCPP),
-			cluster.CapabilityRuntimeComputeBackend:   string(backend),
-			cluster.CapabilityRuntimeExecutionMode:    string(cluster.ExecutionModePipelineParallel),
-			cluster.CapabilityRuntimeStageTransport:   cluster.StageTransportHTTPBinaryV1,
-			cluster.CapabilityRuntimeRevision:         runtimeRevision,
-			cluster.CapabilityRuntimeLlamaCPPRevision: llamaRevision,
-			cluster.CapabilityRuntimeCUDAActive:       cudaActive,
-			cluster.CapabilityRuntimeStartsIdle:       true,
+			cluster.CapabilityMemoryGB:                  64.0,
+			cluster.CapabilityComputeBackends:           []string{string(backend)},
+			cluster.CapabilityRuntimeEngine:             string(cluster.EngineLlamaCPP),
+			cluster.CapabilityRuntimeComputeBackend:     string(backend),
+			cluster.CapabilityRuntimeExecutionMode:      string(cluster.ExecutionModePipelineParallel),
+			cluster.CapabilityRuntimeStageTransport:     cluster.StageTransportHTTPBinaryV1,
+			cluster.CapabilityRuntimeActivationEncoding: cluster.ActivationEncodingF32,
+			cluster.CapabilityRuntimeKVCacheType:        cluster.KVCacheTypeF16,
+			cluster.CapabilityRuntimeSpeculativeDraft:   "none",
+			cluster.CapabilityRuntimeSpeculativeMax:     4,
+			cluster.CapabilityRuntimeParallelSessions:   2,
+			cluster.CapabilityRuntimeDecodeBatchSize:    1,
+			cluster.CapabilityRuntimeRevision:           runtimeRevision,
+			cluster.CapabilityRuntimeLlamaCPPRevision:   llamaRevision,
+			cluster.CapabilityRuntimeCUDAActive:         cudaActive,
+			cluster.CapabilityRuntimeStartsIdle:         true,
 		},
 		StartedAt: now.Add(-time.Hour),
 		LastSeen:  now,

@@ -1,0 +1,23 @@
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -2210,5 +2210,19 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+                         }
+                     }
+ 
++                    if (is_layer_partition()) {
++                        const uint32_t layer_start = loaded_layer_start();
++                        const uint32_t layer_end = loaded_layer_end();
++                        auto architecture_filter = std::move(filter);
++                        filter = [
++                            architecture_filter = std::move(architecture_filter),
++                            layer_start,
++                            layer_end
++                        ](uint32_t il) {
++                            return il >= layer_start && il < layer_end &&
++                                (!architecture_filter || architecture_filter(il));
++                        };
++                    }
++
+                     if (arch == LLM_ARCH_DEEPSEEK4) {
+                         GGML_ASSERT(hparams.swa_type != LLAMA_SWA_TYPE_NONE);

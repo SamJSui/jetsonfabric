@@ -163,11 +163,19 @@ func (s *deploymentState) publish(plan clusterplan.DeploymentPlan, intent deploy
 	return previous
 }
 
-func (s *deploymentState) rollback(err error, healthy bool) {
+func (s *deploymentState) rollback(
+	plan clusterplan.DeploymentPlan,
+	err error,
+	healthy bool,
+	cleanupPending bool,
+) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.preparing = nil
+	if cleanupPending {
+		s.draining[plan.Identity().Epoch] = copyPlan(&plan)
+	}
 	s.setErrorLocked(err)
 	s.setServingPhaseLocked(healthy)
 	s.signalLocked()

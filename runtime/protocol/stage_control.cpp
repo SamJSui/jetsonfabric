@@ -31,12 +31,11 @@ std::string decode_stage_operation(const std::string& frame) {
     const std::string metadata_text = frame.substr(kHeaderSize, metadata_length);
     const nlohmann::json metadata = nlohmann::json::parse(metadata_text);
     const auto found = metadata.find("operation");
-    const std::string operation = found == metadata.end() || found->is_null()
-        ? kStageOperationExecute
-        : found->get<std::string>();
-    if (operation != kStageOperationExecute && operation != kStageOperationCloseSession) {
-        throw std::invalid_argument("invalid stage operation: " + operation);
+    if (found == metadata.end() || found->is_null()) {
+        throw std::invalid_argument("stage operation is required");
     }
+    const std::string operation = found->get<std::string>();
+    validate_stage_operation_name(operation);
     return operation;
 }
 

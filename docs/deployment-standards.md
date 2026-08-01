@@ -15,6 +15,11 @@ state.
   versioned packages and service units.
 - Cluster APIs are suitable only for a trusted network until mutually
   authenticated and encrypted transport is implemented.
+- Direct runtime transport exposes an authenticated runtime port on that
+  trusted network. It sends the shared cluster token over plaintext HTTP and
+  must not be exposed to an untrusted LAN or the public Internet.
+- Nodes configured with a cluster token authenticate discovery announcements;
+  any runtime bound beyond loopback also requires that token.
 
 ## Build and Dependency Rules
 

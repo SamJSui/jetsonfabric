@@ -6,7 +6,7 @@ package stagewire
 import "github.com/SamJSui/jetsonfabric/internal/inference"
 
 const (
-	ContentType = "application/vnd.jetsonfabric.stage.v1+octet-stream"
+	ContentType = "application/vnd.jetsonfabric.stage.v2+octet-stream"
 	Transport   = "http_binary_v1"
 )
 
@@ -15,21 +15,21 @@ type Operation string
 const (
 	OperationExecute      Operation = "execute"
 	OperationCloseSession Operation = "close_session"
+	OperationRollback     Operation = "rollback_session"
 )
 
-// Empty remains a valid legacy value and is interpreted as execute. Encoders
-// normalize new frames to the explicit execute operation.
 func (o Operation) Valid() bool {
-	return o == "" || o == OperationExecute || o == OperationCloseSession
+	return o == OperationExecute || o == OperationCloseSession || o == OperationRollback
 }
 
 type PayloadKind = inference.PayloadKind
 
 const (
-	PayloadKindText         = inference.PayloadKindText
-	PayloadKindTokens       = inference.PayloadKindTokens
-	PayloadKindActivation   = inference.PayloadKindActivation
-	PayloadKindSampledToken = inference.PayloadKindSampledToken
+	PayloadKindText          = inference.PayloadKindText
+	PayloadKindTokens        = inference.PayloadKindTokens
+	PayloadKindActivation    = inference.PayloadKindActivation
+	PayloadKindSampledToken  = inference.PayloadKindSampledToken
+	PayloadKindSampledTokens = inference.PayloadKindSampledTokens
 )
 
 type DeploymentIdentity struct {
@@ -47,7 +47,7 @@ func (d DeploymentIdentity) Present() bool {
 type Metadata struct {
 	ProtocolVersion uint16 `json:"protocol_version"`
 
-	Operation Operation `json:"operation,omitempty"`
+	Operation Operation `json:"operation"`
 	SessionID string    `json:"session_id"`
 	RequestID string    `json:"request_id"`
 	ModelID   string    `json:"model_id"`
@@ -74,15 +74,26 @@ type Metadata struct {
 	PayloadCRC32 uint32 `json:"payload_crc32"`
 	Transport    string `json:"transport"`
 
-	MaxTokens int `json:"max_tokens,omitempty"`
+	MaxTokens      int `json:"max_tokens,omitempty"`
+	RollbackTokens int `json:"rollback_tokens,omitempty"`
 
-	BytesIn          int64  `json:"bytes_in,omitempty"`
-	BytesOut         int64  `json:"bytes_out,omitempty"`
-	PromptTokens     int    `json:"prompt_tokens,omitempty"`
-	CompletionTokens int    `json:"completion_tokens,omitempty"`
-	LatencyMS        int    `json:"latency_ms,omitempty"`
-	Error            string `json:"error,omitempty"`
-	Message          string `json:"message,omitempty"`
+	BytesIn            int64    `json:"bytes_in,omitempty"`
+	BytesOut           int64    `json:"bytes_out,omitempty"`
+	PromptTokens       int      `json:"prompt_tokens,omitempty"`
+	PromptTokenIDs     []uint32 `json:"prompt_token_ids,omitempty"`
+	CompletionTokens   int      `json:"completion_tokens,omitempty"`
+	ExecutionBatchSize int      `json:"execution_batch_size,omitempty"`
+	VerificationWidth  int      `json:"verification_width,omitempty"`
+	LatencyMS          int      `json:"latency_ms,omitempty"`
+	ExecutionUS        int64    `json:"execution_us,omitempty"`
+	ActivationDecodeUS int64    `json:"activation_decode_us,omitempty"`
+	ActivationEncodeUS int64    `json:"activation_encode_us,omitempty"`
+	StageTotalUS       int64    `json:"stage_total_us,omitempty"`
+	TokenTextOffsets   []uint32 `json:"token_text_offsets,omitempty"`
+	TokenEOG           []uint32 `json:"token_eog,omitempty"`
+	Error              string   `json:"error,omitempty"`
+	Message            string   `json:"message,omitempty"`
+	MessageBytes       []int    `json:"message_bytes,omitempty"`
 }
 
 func (m Metadata) Position() inference.StagePosition {

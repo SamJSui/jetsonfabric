@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/api"
+	"github.com/SamJSui/jetsonfabric/internal/chat"
 	"github.com/SamJSui/jetsonfabric/internal/cluster"
 	"github.com/SamJSui/jetsonfabric/internal/membership"
 	"github.com/SamJSui/jetsonfabric/internal/runtimebridge"
@@ -70,7 +71,16 @@ func TestChatCompletionsUsesSingleStagePipelineByDefault(t *testing.T) {
 func TestChatCompletionsUsesDistributedPipeline(t *testing.T) {
 	generation := &recordingGenerationClient{events: []runtimebridge.GenerationEvent{
 		{Type: "token", Token: uint32Pointer(42), Text: "GPU answer", Index: 0},
-		{Type: "done", FinishReason: "length", PromptTokens: 11, CompletionTokens: 1, SampledTokens: []uint32{42}, StageCalls: 2, RemoteStageCalls: 1},
+		{
+			Type: "done", FinishReason: "length", PromptTokens: 11, CompletionTokens: 1,
+			SampledTokens: []uint32{42}, StageCalls: 2, RemoteStageCalls: 1,
+			BytesIn: 16, BytesOut: 8,
+			StageTimings: []chat.StageTiming{{
+				Phase: "prefill", StageIndex: 1, NodeName: "node-b", Remote: true,
+				Calls: 1, ExecutionUS: 100, StageTotalUS: 130,
+				RemoteCallUS: 200, RemoteOverheadUS: 70,
+			}},
+		},
 	}}
 	server := NewServer(
 		coordinatorTestRegistry(),
@@ -115,6 +125,11 @@ func TestChatCompletionsUsesDistributedPipeline(t *testing.T) {
 	if decoded.Choices[0].FinishReason != "length" || decoded.Usage.CompletionTokens != 1 {
 		t.Fatalf("unexpected completion metadata: %+v", decoded)
 	}
+	if decoded.Trace == nil || decoded.Trace.RemoteStageCalls != 1 ||
+		len(decoded.Trace.StageTimings) != 1 ||
+		decoded.Trace.StageTimings[0].RemoteOverheadUS != 70 {
+		t.Fatalf("runtime timing trace was not exposed: %+v", decoded.Trace)
+	}
 }
 
 func TestChatCompletionsStreamsRuntimeTokens(t *testing.T) {
@@ -146,7 +161,16 @@ func TestChatCompletionsStreamsRuntimeTokens(t *testing.T) {
 		t.Fatalf("status=%d content-type=%q body=%s", response.Code, response.Header().Get("Content-Type"), response.Body.String())
 	}
 	body := response.Body.String()
-	for _, expected := range []string{`"role":"assistant"`, `"content":"hello"`, `"content":" world"`, `"finish_reason":"length"`, "data: [DONE]"} {
+	for _, expected := range []string{
+		`"role":"assistant"`,
+		`"content":"hello"`,
+		`"token_index":0`,
+		`"content":" world"`,
+		`"token_index":1`,
+		`"finish_reason":"length"`,
+		`"completion_tokens":2`,
+		"data: [DONE]",
+	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("stream omitted %q: %s", expected, body)
 		}
@@ -301,6 +325,26 @@ func TestConsumeGenerationEventsAccountsForNaturalStopPass(t *testing.T) {
 	}
 	if result.FinishReason != "stop" || result.GeneratedText != "hello" || result.StageCalls != 4 {
 		t.Fatalf("unexpected natural-stop result: %+v", result)
+	}
+}
+
+func TestConsumeGenerationEventsAccountsForSpeculativeTargetPasses(t *testing.T) {
+	stream := strings.NewReader(
+		"{\"type\":\"token\",\"token\":7,\"text\":\"a\",\"index\":0}\n" +
+			"{\"type\":\"token\",\"token\":8,\"text\":\"b\",\"index\":1}\n" +
+			"{\"type\":\"token\",\"token\":9,\"text\":\"c\",\"index\":2}\n" +
+			"{\"type\":\"done\",\"finish_reason\":\"length\",\"completion_tokens\":3," +
+			"\"sampled_tokens\":[7,8,9],\"stage_calls\":4,\"remote_stage_calls\":2," +
+			"\"target_decode_passes\":1,\"speculative_draft_tokens\":2," +
+			"\"speculative_accepted_tokens\":1}\n",
+	)
+	result, err := consumeGenerationEvents(stream, 2, nil)
+	if err != nil {
+		t.Fatalf("consume speculative result: %v", err)
+	}
+	if result.TargetDecodePasses != 1 || result.SpeculativeDraftTokens != 2 ||
+		result.SpeculativeAcceptedTokens != 1 {
+		t.Fatalf("unexpected speculative telemetry: %+v", result)
 	}
 }
 

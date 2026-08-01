@@ -2,6 +2,7 @@ package node
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -19,27 +20,36 @@ const (
 	DefaultLeaderPreference  = 0
 	ClusterTokenEnv          = "JETSONFABRIC_CLUSTER_TOKEN"
 
-	AutoRuntimeURL                 = "auto"
-	DefaultRuntimeBin              = "dist/jetsonfabric-runtime-worker"
-	DefaultRuntimeListen           = "127.0.0.1:0"
-	DefaultRuntimeStageTransport   = cluster.StageTransportHTTPBinaryV1
-	DefaultRuntimeComputeBackend   = "cuda"
-	DefaultRuntimeMode             = "pipeline_parallel"
-	DefaultRuntimeCtxSize          = 4096
-	DefaultRuntimeNGPULayers       = 999
-	DefaultRuntimeThreads          = 0
-	DefaultRuntimeHTTPWorkers      = 2
-	MaxRuntimeHTTPWorkers          = 64
-	DefaultRuntimeRevision         = "dev"
-	DefaultRuntimeLlamaCPPRevision = "dev"
-
-	DefaultStageIndex = 0
-	DefaultStageCount = 1
-	DefaultLayerStart = 0
-	DefaultLayerEnd   = 28
+	AutoRuntimeURL                   = "auto"
+	DefaultRuntimeBin                = "dist/jetsonfabric-runtime-worker"
+	DefaultRuntimeListen             = "127.0.0.1:0"
+	DefaultRuntimeStageTransport     = cluster.StageTransportHTTPBinaryV1
+	DefaultRuntimeActivationEncoding = cluster.ActivationEncodingF32
+	DefaultRuntimeKVCacheType        = cluster.KVCacheTypeF16
+	DefaultRuntimeComputeBackend     = "cuda"
+	DefaultRuntimeMode               = "pipeline_parallel"
+	DefaultRuntimeCtxSize            = 4096
+	DefaultRuntimeUBatchSize         = 512
+	DefaultRuntimeNGPULayers         = 999
+	DefaultRuntimeThreads            = 0
+	DefaultRuntimeHTTPWorkers        = 2
+	MaxRuntimeHTTPWorkers            = 64
+	DefaultRuntimeParallelSessions   = 2
+	DefaultRuntimeDecodeBatchSize    = 1
+	DefaultRuntimeSpeculativeDraft   = "none"
+	DefaultRuntimeSpeculativeMax     = 4
+	MaxRuntimeParallelSessions       = 64
+	DefaultStageIndex                = 0
+	DefaultStageCount                = 1
+	DefaultLayerStart                = 0
+	DefaultLayerEnd                  = 28
 )
 
-var defaultDiscoveryModes = []string{discovery.ModeMDNS}
+var (
+	DefaultRuntimeRevision         = "unknown"
+	DefaultRuntimeLlamaCPPRevision = "unknown"
+	defaultDiscoveryModes          = []string{discovery.ModeMDNS}
+)
 
 type Config struct {
 	ClusterID    string
@@ -52,21 +62,28 @@ type Config struct {
 	RuntimeURL string
 	RuntimeBin string
 
-	Engine                  cluster.Engine
-	Model                   string
-	ModelPath               string
-	RuntimeListen           string
-	RuntimeStageTransport   string
-	RuntimeComputeBackend   string
-	RuntimeMode             string
-	RuntimeCtxSize          int
-	RuntimeNGPULayers       int
-	RuntimeThreads          int
-	RuntimeHTTPWorkers      int
-	RuntimeStartIdle        bool
-	RuntimeRevision         string
-	RuntimeLlamaCPPRevision string
-	RuntimeCUDAActive       bool
+	Engine                    cluster.Engine
+	Model                     string
+	ModelPath                 string
+	RuntimeListen             string
+	RuntimeStageTransport     string
+	RuntimeActivationEncoding string
+	RuntimeKVCacheType        string
+	RuntimeComputeBackend     string
+	RuntimeMode               string
+	RuntimeCtxSize            int
+	RuntimeUBatchSize         int
+	RuntimeNGPULayers         int
+	RuntimeThreads            int
+	RuntimeHTTPWorkers        int
+	RuntimeParallelSessions   int
+	RuntimeDecodeBatchSize    int
+	RuntimeSpeculativeDraft   string
+	RuntimeSpeculativeMax     int
+	RuntimeStartIdle          bool
+	RuntimeRevision           string
+	RuntimeLlamaCPPRevision   string
+	RuntimeCUDAActive         bool
 
 	StageIndex int
 	StageCount int
@@ -91,40 +108,47 @@ type Config struct {
 
 func DefaultConfigValue() Config {
 	return Config{
-		ClusterID:               DefaultClusterID,
-		Listen:                  DefaultNodeListen,
-		APIURL:                  "",
-		DataDir:                 "",
-		RuntimeURL:              AutoRuntimeURL,
-		RuntimeBin:              DefaultRuntimeBin,
-		Engine:                  cluster.EngineLlamaCPP,
-		Model:                   "qwen2.5-coder-1.5b-q4",
-		ModelPath:               "",
-		RuntimeListen:           DefaultRuntimeListen,
-		RuntimeStageTransport:   DefaultRuntimeStageTransport,
-		RuntimeComputeBackend:   DefaultRuntimeComputeBackend,
-		RuntimeMode:             DefaultRuntimeMode,
-		RuntimeCtxSize:          DefaultRuntimeCtxSize,
-		RuntimeNGPULayers:       DefaultRuntimeNGPULayers,
-		RuntimeThreads:          DefaultRuntimeThreads,
-		RuntimeHTTPWorkers:      DefaultRuntimeHTTPWorkers,
-		RuntimeRevision:         DefaultRuntimeRevision,
-		RuntimeLlamaCPPRevision: DefaultRuntimeLlamaCPPRevision,
-		StageIndex:              DefaultStageIndex,
-		StageCount:              DefaultStageCount,
-		LayerStart:              DefaultLayerStart,
-		LayerEnd:                DefaultLayerEnd,
-		Role:                    membership.NodeRoleAuto,
-		LeaderPreference:        DefaultLeaderPreference,
-		Seeds:                   nil,
-		DiscoveryModes:          append([]string(nil), defaultDiscoveryModes...),
-		DiscoveryInterval:       DefaultDiscoveryInterval,
-		StaleAfter:              DefaultStaleAfter,
-		MDNSService:             discovery.DefaultMDNSService,
-		MDNSDomain:              discovery.DefaultMDNSDomain,
-		MDNSBrowseTimeout:       discovery.DefaultMDNSBrowseTimeout,
-		ModelsPath:              config.DefaultModelRegistryPath(),
-		BenchmarksPath:          config.DefaultBenchmarksPath(),
+		ClusterID:                 DefaultClusterID,
+		Listen:                    DefaultNodeListen,
+		APIURL:                    "",
+		DataDir:                   "",
+		RuntimeURL:                AutoRuntimeURL,
+		RuntimeBin:                DefaultRuntimeBin,
+		Engine:                    cluster.EngineLlamaCPP,
+		Model:                     "qwen2.5-coder-1.5b-q4",
+		ModelPath:                 "",
+		RuntimeListen:             DefaultRuntimeListen,
+		RuntimeStageTransport:     DefaultRuntimeStageTransport,
+		RuntimeActivationEncoding: DefaultRuntimeActivationEncoding,
+		RuntimeKVCacheType:        DefaultRuntimeKVCacheType,
+		RuntimeComputeBackend:     DefaultRuntimeComputeBackend,
+		RuntimeMode:               DefaultRuntimeMode,
+		RuntimeCtxSize:            DefaultRuntimeCtxSize,
+		RuntimeUBatchSize:         DefaultRuntimeUBatchSize,
+		RuntimeNGPULayers:         DefaultRuntimeNGPULayers,
+		RuntimeThreads:            DefaultRuntimeThreads,
+		RuntimeHTTPWorkers:        DefaultRuntimeHTTPWorkers,
+		RuntimeParallelSessions:   DefaultRuntimeParallelSessions,
+		RuntimeDecodeBatchSize:    DefaultRuntimeDecodeBatchSize,
+		RuntimeSpeculativeDraft:   DefaultRuntimeSpeculativeDraft,
+		RuntimeSpeculativeMax:     DefaultRuntimeSpeculativeMax,
+		RuntimeRevision:           DefaultRuntimeRevision,
+		RuntimeLlamaCPPRevision:   DefaultRuntimeLlamaCPPRevision,
+		StageIndex:                DefaultStageIndex,
+		StageCount:                DefaultStageCount,
+		LayerStart:                DefaultLayerStart,
+		LayerEnd:                  DefaultLayerEnd,
+		Role:                      membership.NodeRoleAuto,
+		LeaderPreference:          DefaultLeaderPreference,
+		Seeds:                     nil,
+		DiscoveryModes:            append([]string(nil), defaultDiscoveryModes...),
+		DiscoveryInterval:         DefaultDiscoveryInterval,
+		StaleAfter:                DefaultStaleAfter,
+		MDNSService:               discovery.DefaultMDNSService,
+		MDNSDomain:                discovery.DefaultMDNSDomain,
+		MDNSBrowseTimeout:         discovery.DefaultMDNSBrowseTimeout,
+		ModelsPath:                config.DefaultModelRegistryPath(),
+		BenchmarksPath:            config.DefaultBenchmarksPath(),
 	}
 }
 
@@ -159,6 +183,8 @@ func normalizeStringsInConfig(cfg Config) Config {
 	cfg.ModelPath = strings.TrimSpace(cfg.ModelPath)
 	cfg.RuntimeListen = strings.TrimSpace(cfg.RuntimeListen)
 	cfg.RuntimeStageTransport = strings.TrimSpace(cfg.RuntimeStageTransport)
+	cfg.RuntimeActivationEncoding = strings.TrimSpace(cfg.RuntimeActivationEncoding)
+	cfg.RuntimeKVCacheType = strings.TrimSpace(cfg.RuntimeKVCacheType)
 	cfg.RuntimeComputeBackend = strings.TrimSpace(cfg.RuntimeComputeBackend)
 	cfg.RuntimeMode = strings.TrimSpace(cfg.RuntimeMode)
 	cfg.RuntimeRevision = strings.TrimSpace(cfg.RuntimeRevision)
@@ -185,6 +211,16 @@ func normalizeRuntimeConfig(cfg Config) Config {
 	if cfg.RuntimeStageTransport == "" {
 		cfg.RuntimeStageTransport = DefaultRuntimeStageTransport
 	}
+	if cfg.RuntimeStageTransport == cluster.StageTransportHTTPDirectV1 &&
+		cfg.RuntimeListen == DefaultRuntimeListen {
+		cfg.RuntimeListen = "0.0.0.0:0"
+	}
+	if cfg.RuntimeActivationEncoding == "" {
+		cfg.RuntimeActivationEncoding = DefaultRuntimeActivationEncoding
+	}
+	if cfg.RuntimeKVCacheType == "" {
+		cfg.RuntimeKVCacheType = DefaultRuntimeKVCacheType
+	}
 	if cfg.RuntimeComputeBackend == "" {
 		cfg.RuntimeComputeBackend = DefaultRuntimeComputeBackend
 	}
@@ -194,11 +230,26 @@ func normalizeRuntimeConfig(cfg Config) Config {
 	if cfg.RuntimeCtxSize <= 0 {
 		cfg.RuntimeCtxSize = DefaultRuntimeCtxSize
 	}
+	if cfg.RuntimeUBatchSize == 0 {
+		cfg.RuntimeUBatchSize = DefaultRuntimeUBatchSize
+	}
 	if cfg.RuntimeNGPULayers == 0 {
 		cfg.RuntimeNGPULayers = DefaultRuntimeNGPULayers
 	}
 	if cfg.RuntimeHTTPWorkers == 0 {
 		cfg.RuntimeHTTPWorkers = DefaultRuntimeHTTPWorkers
+	}
+	if cfg.RuntimeParallelSessions == 0 {
+		cfg.RuntimeParallelSessions = DefaultRuntimeParallelSessions
+	}
+	if cfg.RuntimeDecodeBatchSize == 0 {
+		cfg.RuntimeDecodeBatchSize = DefaultRuntimeDecodeBatchSize
+	}
+	if cfg.RuntimeSpeculativeDraft == "" {
+		cfg.RuntimeSpeculativeDraft = DefaultRuntimeSpeculativeDraft
+	}
+	if cfg.RuntimeSpeculativeMax == 0 {
+		cfg.RuntimeSpeculativeMax = DefaultRuntimeSpeculativeMax
 	}
 	if cfg.RuntimeRevision == "" {
 		cfg.RuntimeRevision = DefaultRuntimeRevision
@@ -250,11 +301,50 @@ func ValidateConfig(cfg Config) error {
 	if cfg.Engine == "" {
 		return fmt.Errorf("--engine is required")
 	}
-	if cfg.RuntimeStageTransport == "" {
-		return fmt.Errorf("--runtime-stage-transport is required")
+	if cfg.RuntimeStageTransport != cluster.StageTransportHTTPBinaryV1 &&
+		cfg.RuntimeStageTransport != cluster.StageTransportHTTPDirectV1 {
+		return fmt.Errorf(
+			"--runtime-stage-transport must be %q or %q",
+			cluster.StageTransportHTTPBinaryV1,
+			cluster.StageTransportHTTPDirectV1,
+		)
+	}
+	if cfg.RuntimeStageTransport == cluster.StageTransportHTTPDirectV1 && cfg.ClusterToken == "" {
+		return fmt.Errorf("--runtime-stage-transport=%s requires %s", cluster.StageTransportHTTPDirectV1, ClusterTokenEnv)
+	}
+	if err := validateRuntimeListenAuth(cfg.RuntimeListen, cfg.ClusterToken); err != nil {
+		return err
+	}
+	if cfg.RuntimeActivationEncoding == "" {
+		return fmt.Errorf("--runtime-activation-encoding is required")
+	}
+	if cfg.RuntimeKVCacheType != cluster.KVCacheTypeF16 &&
+		cfg.RuntimeKVCacheType != cluster.KVCacheTypeQ8_0 {
+		return fmt.Errorf("--runtime-kv-cache-type must be %q or %q", cluster.KVCacheTypeF16, cluster.KVCacheTypeQ8_0)
+	}
+	if cfg.RuntimeUBatchSize < 1 {
+		return fmt.Errorf("--runtime-ubatch-size must be greater than zero")
 	}
 	if cfg.RuntimeHTTPWorkers < 1 || cfg.RuntimeHTTPWorkers > MaxRuntimeHTTPWorkers {
 		return fmt.Errorf("--runtime-http-workers must be between 1 and %d", MaxRuntimeHTTPWorkers)
+	}
+	if cfg.RuntimeParallelSessions < 1 || cfg.RuntimeParallelSessions > MaxRuntimeParallelSessions {
+		return fmt.Errorf("--runtime-parallel-sessions must be between 1 and %d", MaxRuntimeParallelSessions)
+	}
+	if cfg.RuntimeDecodeBatchSize < 1 || cfg.RuntimeDecodeBatchSize > cfg.RuntimeParallelSessions {
+		return fmt.Errorf("--runtime-decode-batch-size must be between 1 and --runtime-parallel-sessions")
+	}
+	if cfg.RuntimeDecodeBatchSize > cfg.RuntimeHTTPWorkers {
+		return fmt.Errorf("--runtime-decode-batch-size cannot exceed --runtime-http-workers")
+	}
+	if cfg.RuntimeSpeculativeDraft != "none" && cfg.RuntimeSpeculativeDraft != "prompt_lookup" {
+		return fmt.Errorf("--runtime-speculative-draft must be %q or %q", "none", "prompt_lookup")
+	}
+	if cfg.RuntimeSpeculativeMax < 1 || cfg.RuntimeSpeculativeMax > 8 {
+		return fmt.Errorf("--runtime-speculative-max-tokens must be between 1 and 8")
+	}
+	if cfg.RuntimeSpeculativeDraft != "none" && cfg.RuntimeDecodeBatchSize != 1 {
+		return fmt.Errorf("speculative decoding currently requires --runtime-decode-batch-size=1")
 	}
 	if cfg.RuntimeRevision == "" {
 		return fmt.Errorf("--runtime-revision is required")
@@ -289,6 +379,26 @@ func ValidateConfig(cfg Config) error {
 		return fmt.Errorf("--benchmarks is required")
 	}
 	return nil
+}
+
+func validateRuntimeListenAuth(listen, clusterToken string) error {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		return fmt.Errorf("--runtime-listen must be host:port: %w", err)
+	}
+	if clusterToken != "" || runtimeHostIsLoopback(host) {
+		return nil
+	}
+	return fmt.Errorf("non-loopback --runtime-listen requires %s", ClusterTokenEnv)
+}
+
+func runtimeHostIsLoopback(host string) bool {
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (cfg Config) RuntimeAuto() bool {

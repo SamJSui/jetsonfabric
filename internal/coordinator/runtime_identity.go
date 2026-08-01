@@ -15,13 +15,15 @@ import (
 // part of this identity: CPU and CUDA are placement/telemetry concerns as long
 // as both runtimes implement the same execution and activation contract.
 type pipelineRuntimeIdentity struct {
-	Engine         cluster.Engine        `json:"engine"`
-	ModelID        string                `json:"model_id"`
-	ModelSHA256    string                `json:"model_sha256"`
-	ExecutionMode  cluster.ExecutionMode `json:"execution_mode"`
-	StageTransport string                `json:"stage_transport,omitempty"`
-	DeploymentID   string                `json:"deployment_id,omitempty"`
-	Epoch          uint64                `json:"epoch,omitempty"`
+	Engine             cluster.Engine        `json:"engine"`
+	ModelID            string                `json:"model_id"`
+	ModelSHA256        string                `json:"model_sha256"`
+	ExecutionMode      cluster.ExecutionMode `json:"execution_mode"`
+	StageTransport     string                `json:"stage_transport,omitempty"`
+	ActivationEncoding string                `json:"activation_encoding,omitempty"`
+	KVCacheType        string                `json:"kv_cache_type,omitempty"`
+	DeploymentID       string                `json:"deployment_id,omitempty"`
+	Epoch              uint64                `json:"epoch,omitempty"`
 }
 
 func (i pipelineRuntimeIdentity) key() string {
@@ -31,6 +33,8 @@ func (i pipelineRuntimeIdentity) key() string {
 		i.ModelSHA256,
 		string(i.ExecutionMode),
 		i.StageTransport,
+		i.ActivationEncoding,
+		i.KVCacheType,
 	}, "|")
 }
 
@@ -78,7 +82,7 @@ func selectPipelineRuntimeMembers(
 	}
 	if selectedKey == "" {
 		return nil, pipelineRuntimeIdentity{}, fmt.Errorf(
-			"need %d fresh pipeline runtimes with matching engine, model artifact, execution mode, and stage transport",
+			"need %d fresh pipeline runtimes with matching engine, model artifact, execution mode, stage transport, activation encoding, and KV cache type",
 			requiredStages,
 		)
 	}
@@ -88,11 +92,13 @@ func selectPipelineRuntimeMembers(
 func runtimeIdentityForModel(member membership.Member, model cluster.ModelProfile) (pipelineRuntimeIdentity, bool) {
 	caps := member.Capabilities
 	identity := pipelineRuntimeIdentity{
-		Engine:         cluster.Engine(capabilityString(caps, cluster.CapabilityRuntimeEngine)),
-		ModelID:        capabilityString(caps, cluster.CapabilityRuntimeModelID),
-		ModelSHA256:    strings.ToLower(capabilityString(caps, cluster.CapabilityRuntimeModelSHA256)),
-		ExecutionMode:  cluster.ExecutionMode(capabilityString(caps, cluster.CapabilityRuntimeExecutionMode)),
-		StageTransport: capabilityString(caps, cluster.CapabilityRuntimeStageTransport),
+		Engine:             cluster.Engine(capabilityString(caps, cluster.CapabilityRuntimeEngine)),
+		ModelID:            capabilityString(caps, cluster.CapabilityRuntimeModelID),
+		ModelSHA256:        strings.ToLower(capabilityString(caps, cluster.CapabilityRuntimeModelSHA256)),
+		ExecutionMode:      cluster.ExecutionMode(capabilityString(caps, cluster.CapabilityRuntimeExecutionMode)),
+		StageTransport:     capabilityString(caps, cluster.CapabilityRuntimeStageTransport),
+		ActivationEncoding: capabilityString(caps, cluster.CapabilityRuntimeActivationEncoding),
+		KVCacheType:        capabilityString(caps, cluster.CapabilityRuntimeKVCacheType),
 	}
 	if identity.ModelID != model.ID || identity.ModelSHA256 == "" {
 		return pipelineRuntimeIdentity{}, false
@@ -101,6 +107,12 @@ func runtimeIdentityForModel(member membership.Member, model cluster.ModelProfil
 		return pipelineRuntimeIdentity{}, false
 	}
 	if identity.StageTransport == "" {
+		return pipelineRuntimeIdentity{}, false
+	}
+	if identity.ActivationEncoding == "" {
+		return pipelineRuntimeIdentity{}, false
+	}
+	if identity.KVCacheType == "" {
 		return pipelineRuntimeIdentity{}, false
 	}
 	if !modelSupportsEngine(model, identity.Engine) {

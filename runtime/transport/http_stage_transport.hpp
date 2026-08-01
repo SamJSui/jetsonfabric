@@ -7,11 +7,20 @@
 
 namespace jetsonfabric::runtime::transport {
 
+enum class HTTPStageTarget {
+    NodeAPI,
+    Runtime,
+};
+
 class HTTPStageTransport final : public StageTransport {
 public:
-    explicit HTTPStageTransport(std::string cluster_token);
+    explicit HTTPStageTransport(
+        std::string cluster_token,
+        HTTPStageTarget target = HTTPStageTarget::NodeAPI
+    );
     ~HTTPStageTransport() override;
 
+    void shutdown() const override;
     pipeline_parallel::StageRunResult invoke(
         const protocol::GenerationStage& stage,
         const protocol::StageRequest& request,

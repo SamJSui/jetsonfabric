@@ -61,7 +61,9 @@ func TestLayerSplitRunReportsActivationHandoff(t *testing.T) {
 		t.Fatalf("unexpected response: %+v", decoded)
 	}
 	if decoded.RuntimeIdentity.ModelSHA256 != coordinatorTestModelSHA256 ||
-		decoded.RuntimeIdentity.StageTransport != cluster.StageTransportHTTPBinaryV1 {
+		decoded.RuntimeIdentity.StageTransport != cluster.StageTransportHTTPBinaryV1 ||
+		decoded.RuntimeIdentity.ActivationEncoding != cluster.ActivationEncodingF32 ||
+		decoded.RuntimeIdentity.KVCacheType != cluster.KVCacheTypeF16 {
 		t.Fatalf("runtime identity was not returned: %+v", decoded.RuntimeIdentity)
 	}
 	if decoded.Result.RequestID != "run-1" || decoded.Result.SessionID == "" {
@@ -250,6 +252,12 @@ func (items membershipMembersForRun) members() []membership.Member {
 		member.Capabilities[cluster.CapabilityRuntimeComputeBackend] = string(cluster.ComputeBackendCPU)
 		member.Capabilities[cluster.CapabilityRuntimeExecutionMode] = string(cluster.ExecutionModePipelineParallel)
 		member.Capabilities[cluster.CapabilityRuntimeStageTransport] = cluster.StageTransportHTTPBinaryV1
+		member.Capabilities[cluster.CapabilityRuntimeActivationEncoding] = cluster.ActivationEncodingF32
+		member.Capabilities[cluster.CapabilityRuntimeKVCacheType] = cluster.KVCacheTypeF16
+		member.Capabilities[cluster.CapabilityRuntimeSpeculativeDraft] = "none"
+		member.Capabilities[cluster.CapabilityRuntimeSpeculativeMax] = 4
+		member.Capabilities[cluster.CapabilityRuntimeParallelSessions] = 2
+		member.Capabilities[cluster.CapabilityRuntimeDecodeBatchSize] = 1
 		members = append(members, member)
 	}
 	return members

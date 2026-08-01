@@ -52,21 +52,21 @@ func TestHTTPGenerationClientStartsAuthenticatedRuntimeStream(t *testing.T) {
 	}
 }
 
-func TestGenerationProxyStripsClusterCredentials(t *testing.T) {
+func TestGenerationProxyUsesConfiguredRuntimeCredential(t *testing.T) {
 	var received bool
 	runtimeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		received = true
 		if request.URL.Path != runtimeGenerationPath {
 			t.Fatalf("runtime path=%q", request.URL.Path)
 		}
-		if request.Header.Get(api.HeaderCoordinatorNodeID) != "" || request.Header.Get(api.HeaderClusterToken) != "" {
-			t.Fatalf("proxy leaked cluster credentials: %v", request.Header)
+		if request.Header.Get(api.HeaderCoordinatorNodeID) != "" || request.Header.Get(api.HeaderClusterToken) != "cluster-secret" {
+			t.Fatalf("unexpected runtime authorization headers: %v", request.Header)
 		}
 		w.Header().Set("Content-Type", GenerationContentType)
 		_, _ = io.WriteString(w, "{\"type\":\"token\",\"token\":7,\"index\":0}\n")
 	}))
 	defer runtimeServer.Close()
-	proxy, err := NewGenerationProxy(runtimeServer.URL)
+	proxy, err := NewGenerationProxy(runtimeServer.URL, "cluster-secret")
 	if err != nil {
 		t.Fatal(err)
 	}

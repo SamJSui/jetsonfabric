@@ -9,7 +9,7 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/membership"
 )
 
-func TestPlanUsesAPIURLNotRuntimeURL(t *testing.T) {
+func TestPlanCarriesNodeAndRuntimeURLs(t *testing.T) {
 	now := clusterPlanTestNow()
 	member := clusterPlanTestMember("node-a", "dopey-a", "dopey", "http://dopey.local:52415")
 	member.RuntimeURL = "http://127.0.0.1:9090"
@@ -18,8 +18,8 @@ func TestPlanUsesAPIURLNotRuntimeURL(t *testing.T) {
 	if !preview.Valid || len(preview.Stages) != 1 {
 		t.Fatalf("expected valid one-stage preview: %+v", preview)
 	}
-	if preview.Stages[0].APIURL != member.APIURL || preview.Stages[0].APIURL == member.RuntimeURL {
-		t.Fatalf("planner must use node API URL: %+v", preview.Stages[0])
+	if preview.Stages[0].APIURL != member.APIURL || preview.Stages[0].RuntimeURL != member.RuntimeURL {
+		t.Fatalf("planner lost a stage endpoint: %+v", preview.Stages[0])
 	}
 }
 
@@ -95,6 +95,26 @@ func TestPlanSupportsRequestedStageCount(t *testing.T) {
 			t.Fatalf("unexpected stage %d: %+v", i, stage)
 		}
 	}
+}
+
+func TestPlanUsesConfiguredStageLayerCounts(t *testing.T) {
+	preview := Preview(Request{
+		Model: clusterPlanTestModel(),
+		Members: []membership.Member{
+			clusterPlanTestMember("node-a", "dopey", "dopey", "http://dopey.local:52415"),
+			clusterPlanTestMember("node-b", "grumpy", "grumpy", "http://grumpy.local:52415"),
+		},
+		Now:        clusterPlanTestNow(),
+		StaleAfter: time.Minute,
+		Policy: Policy{
+			StageLayerCounts: []int{18, 10},
+		},
+	})
+	if !preview.Valid || preview.StageCount != 2 {
+		t.Fatalf("expected configured two-stage preview: %+v", preview)
+	}
+	assertRange(t, preview.Stages[0], 0, 18)
+	assertRange(t, preview.Stages[1], 18, 28)
 }
 
 func TestPlanUsesEveryEligibleNodeWhenStageCountIsAutomatic(t *testing.T) {

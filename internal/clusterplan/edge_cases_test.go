@@ -83,6 +83,36 @@ func TestPlanRejectsInvalidRequestedStageCounts(t *testing.T) {
 	}
 }
 
+func TestPlanRejectsInvalidStageLayerCounts(t *testing.T) {
+	tests := []struct {
+		name       string
+		stageCount int
+		counts     []int
+	}{
+		{name: "count mismatch", stageCount: 3, counts: []int{18, 10}},
+		{name: "non-positive count", counts: []int{28, 0}},
+		{name: "incomplete coverage", counts: []int{18, 9}},
+		{name: "excess coverage", counts: []int{18, 11}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			preview := Preview(Request{
+				Model:      clusterPlanTestModel(),
+				Members:    edgeCaseMembers(3),
+				Now:        clusterPlanTestNow(),
+				StaleAfter: time.Minute,
+				Policy: Policy{
+					StageCount:       test.stageCount,
+					StageLayerCounts: test.counts,
+				},
+			})
+			if preview.Valid || preview.Reason != ReasonInvalidStageLayerCounts {
+				t.Fatalf("preview = %+v, want reason %q", preview, ReasonInvalidStageLayerCounts)
+			}
+		})
+	}
+}
+
 func TestPlanRejectsIncompleteAdvertisedAssignments(t *testing.T) {
 	tests := []struct {
 		name        string

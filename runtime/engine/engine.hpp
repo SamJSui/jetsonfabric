@@ -18,11 +18,20 @@ using GenerationEventSink = std::function<bool(const std::string&)>;
 class RuntimeAPI {
 public:
     virtual ~RuntimeAPI() = default;
+    virtual void shutdown() {}
 
     virtual std::string runtime_name() const = 0;
     virtual std::string engine_name() const = 0;
     virtual ExecutionMode execution_mode() const = 0;
     virtual std::string model() const = 0;
+    virtual std::string stage_transport_name() const = 0;
+    virtual std::string activation_encoding() const = 0;
+    virtual std::string kv_cache_type() const = 0;
+    virtual int ubatch_size() const = 0;
+    virtual int parallel_sessions() const = 0;
+    virtual int decode_batch_size() const = 0;
+    virtual std::string speculative_draft() const = 0;
+    virtual int speculative_max_tokens() const = 0;
 
     virtual RuntimeResponse deployment_status() const = 0;
     virtual RuntimeResponse load_deployment(const std::string& request_body) = 0;

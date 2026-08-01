@@ -13,10 +13,10 @@ type StaticSource struct {
 	Announcer *AnnounceClient
 }
 
-func NewStaticSource(seeds []string, self SelfFunc) *StaticSource {
+func NewStaticSource(seeds []string, self SelfFunc, clusterToken string) *StaticSource {
 	return &StaticSource{
 		Seeds:     normalizeSeeds(seeds),
-		Announcer: NewAnnounceClient(self),
+		Announcer: NewAnnounceClient(self, clusterToken),
 	}
 }
 

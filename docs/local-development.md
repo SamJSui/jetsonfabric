@@ -26,6 +26,8 @@ RUNTIME_CUDA_ARCH=87
 RUNTIME_COMPUTE_BACKEND=cuda
 RUNTIME_MODE=pipeline_parallel
 RUNTIME_CTX_SIZE=4096
+RUNTIME_KV_CACHE_TYPE=f16
+RUNTIME_UBATCH_SIZE=512
 RUNTIME_N_GPU_LAYERS=999
 
 JF_NODE0_PORT=19180
@@ -39,6 +41,13 @@ persistent or network-accessible clusters must override that value.
 
 `RUNTIME_BUILD_JOBS=1` or `2` is the safest starting point on an 8 GB Jetson.
 Use `4` only when compilation is stable and the system is not swapping.
+
+`RUNTIME_UBATCH_SIZE` bounds llama.cpp's physical prefill micro-batch while
+preserving the full logical prompt batch. Smaller values reduce transient CUDA
+compute-buffer memory but can increase prefill time. Keep the default unless a
+measured capacity profile requires less; the two-node 32B experiment used
+`128`. `RUNTIME_KV_CACHE_TYPE=q8_0` separately reduces persistent per-session
+KV memory and should also be treated as a measured capacity setting.
 
 The base stage values may remain:
 

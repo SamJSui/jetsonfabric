@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "name": "local-serving-smoke",
+  "metadata": {
+    "purpose": "Example manifest; prepare the deployment before running"
+  },
+  "suites": [
+    {
+      "name": "streaming-c1",
+      "endpoints": [
+        "http://127.0.0.1:52415/v1/chat/completions"
+      ],
+      "request": "genai-perf-request.json",
+      "count": 5,
+      "warmup": 1,
+      "concurrency": 1,
+      "timeout": "5m",
+      "stream": true,
+      "metadata": {
+        "placement": "active-deployment"
+      }
+    },
+    {
+      "name": "streaming-c2",
+      "endpoints": [
+        "http://127.0.0.1:52415/v1/chat/completions"
+      ],
+      "request": "genai-perf-request.json",
+      "count": 6,
+      "warmup": 2,
+      "concurrency": 2,
+      "timeout": "5m",
+      "stream": true,
+      "metadata": {
+        "placement": "active-deployment"
+      }
+    }
+  ]
+}

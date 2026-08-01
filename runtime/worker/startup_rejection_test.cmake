@@ -4,6 +4,8 @@ foreach(required RUNTIME_BIN OPTION VALUE EXPECTED)
   endif()
 endforeach()
 
+set(ENV{JETSONFABRIC_CLUSTER_TOKEN} "")
+
 execute_process(
   COMMAND "${RUNTIME_BIN}" --idle "${OPTION}" "${VALUE}"
   RESULT_VARIABLE result

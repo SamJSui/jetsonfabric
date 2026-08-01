@@ -12,6 +12,8 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cerrno>
 #include <cctype>
 #include <cstring>
@@ -22,6 +24,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -30,6 +33,7 @@ namespace jetsonfabric::runtime::transport {
 namespace {
 
 constexpr std::size_t kMaxHTTPResponseBytes = (512U << 20) + (2U << 20);
+constexpr auto kConnectionLease = std::chrono::seconds(4);
 
 struct HTTPURL {
     std::string host;
@@ -367,18 +371,23 @@ class HTTPStageTransport::Impl {
 public:
     struct PeerConnection {
         ~PeerConnection() {
-            if (socket_fd >= 0) close(socket_fd);
+            const int fd = socket_fd.exchange(-1);
+            if (fd >= 0) close(fd);
         }
 
         std::mutex mutex;
-        int socket_fd = -1;
+        std::atomic_int socket_fd{-1};
+        std::chrono::steady_clock::time_point last_used;
     };
 
-    explicit Impl(std::string cluster_token)
-        : cluster_token_(std::move(cluster_token)) {}
+    Impl(std::string cluster_token, HTTPStageTarget target)
+        : cluster_token_(std::move(cluster_token)), target_(target) {}
 
     std::shared_ptr<PeerConnection> connection_for(const HTTPURL& target) const {
-        const std::string key = target.host + ':' + target.port;
+        const auto key = std::make_pair(
+            target.host + ':' + target.port,
+            std::this_thread::get_id()
+        );
         const std::lock_guard lock(connections_mutex_);
         auto [iterator, inserted] = connections_.try_emplace(key);
         if (inserted) {
@@ -391,23 +400,56 @@ public:
         return cluster_token_;
     }
 
+    const std::string& target_url(const protocol::GenerationStage& stage) const {
+        if (target_ == HTTPStageTarget::Runtime) {
+            if (stage.runtime_url.empty()) {
+                throw std::invalid_argument("direct stage transport requires runtime_url");
+            }
+            return stage.runtime_url;
+        }
+        return stage.api_url;
+    }
+
+    bool uses_runtime_target() const noexcept {
+        return target_ == HTTPStageTarget::Runtime;
+    }
+
     void reset(const std::shared_ptr<PeerConnection>& connection) const noexcept {
-        if (connection->socket_fd >= 0) {
-            close(connection->socket_fd);
-            connection->socket_fd = -1;
+        const int fd = connection->socket_fd.exchange(-1);
+        if (fd >= 0) close(fd);
+        connection->last_used = {};
+    }
+
+    void interrupt_all() const noexcept {
+        const std::lock_guard lock(connections_mutex_);
+        for (const auto& [_, connection] : connections_) {
+            const int fd = connection->socket_fd.load();
+            if (fd >= 0) {
+                (void) ::shutdown(fd, SHUT_RDWR);
+            }
         }
     }
 
 private:
+    using ConnectionKey = std::pair<std::string, std::thread::id>;
+
     std::string cluster_token_;
+    HTTPStageTarget target_;
     mutable std::mutex connections_mutex_;
-    mutable std::map<std::string, std::shared_ptr<PeerConnection>> connections_;
+    mutable std::map<ConnectionKey, std::shared_ptr<PeerConnection>> connections_;
 };
 
-HTTPStageTransport::HTTPStageTransport(std::string cluster_token)
-    : impl_(std::make_unique<Impl>(std::move(cluster_token))) {}
+HTTPStageTransport::HTTPStageTransport(
+    std::string cluster_token,
+    HTTPStageTarget target
+)
+    : impl_(std::make_unique<Impl>(std::move(cluster_token), target)) {}
 
 HTTPStageTransport::~HTTPStageTransport() = default;
+
+void HTTPStageTransport::shutdown() const {
+    impl_->interrupt_all();
+}
 
 pipeline_parallel::StageRunResult HTTPStageTransport::invoke(
     const protocol::GenerationStage& stage,
@@ -422,10 +464,23 @@ pipeline_parallel::StageRunResult HTTPStageTransport::invoke(
         );
     }
     try {
-        const HTTPURL target = parse_http_url(stage.api_url);
+        const auto call_start = std::chrono::steady_clock::now();
+        const HTTPURL target = parse_http_url(impl_->target_url(stage));
+        if (impl_->uses_runtime_target()) {
+            const HTTPURL node_api = parse_http_url(stage.api_url);
+            if (lower(target.host) != lower(node_api.host)) {
+                return stage_error(
+                    "400 Bad Request",
+                    "runtime_endpoint_mismatch",
+                    "direct runtime host must match the stage node API host"
+                );
+            }
+        }
         const std::string operation_name = operation == pipeline_parallel::StageOperation::CloseSession
             ? protocol::kStageOperationCloseSession
-            : protocol::kStageOperationExecute;
+            : operation == pipeline_parallel::StageOperation::RollbackSession
+                ? protocol::kStageOperationRollbackSession
+                : protocol::kStageOperationExecute;
         const std::string body = protocol::encode_stage_request(request, operation_name);
         std::ostringstream headers;
         headers << "POST " << stage_path(target.path) << " HTTP/1.1\r\n"
@@ -440,18 +495,25 @@ pipeline_parallel::StageRunResult HTTPStageTransport::invoke(
             impl_->connection_for(target);
         const std::lock_guard connection_lock(connection->mutex);
         try {
-            if (connection->socket_fd < 0) {
-                connection->socket_fd = connect_socket(target);
+            const auto now = std::chrono::steady_clock::now();
+            if (connection->socket_fd.load() >= 0 &&
+                now - connection->last_used >= kConnectionLease) {
+                impl_->reset(connection);
             }
-            send_all(connection->socket_fd, headers.str());
-            send_all(connection->socket_fd, body);
+            if (connection->socket_fd.load() < 0) {
+                connection->socket_fd.store(connect_socket(target));
+            }
+            const int fd = connection->socket_fd.load();
+            send_all(fd, headers.str());
+            send_all(fd, body);
         } catch (...) {
             impl_->reset(connection);
             throw;
         }
         std::string wire_response;
         try {
-            wire_response = receive_http_response(connection->socket_fd);
+            wire_response = receive_http_response(connection->socket_fd.load());
+            connection->last_used = std::chrono::steady_clock::now();
         } catch (...) {
             impl_->reset(connection);
             throw;
@@ -482,6 +544,13 @@ pipeline_parallel::StageRunResult HTTPStageTransport::invoke(
             return stage_error(response.status, code, message);
         }
         protocol::StageResponse decoded = protocol::decode_stage_response(response.body);
+        if (decoded.operation != operation_name) {
+            return stage_error(
+                "502 Bad Gateway",
+                "runtime_stage_operation_mismatch",
+                "peer runtime acknowledged a different stage operation"
+            );
+        }
         if (response.status_code < 200 || response.status_code >= 300 || !decoded.error.empty()) {
             return stage_error(
                 response.status,
@@ -493,6 +562,9 @@ pipeline_parallel::StageRunResult HTTPStageTransport::invoke(
         result.ok = true;
         result.status = response.status;
         result.response = std::move(decoded);
+        result.remote_call_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - call_start
+        ).count();
         return result;
     } catch (const std::exception& error) {
         return stage_error("502 Bad Gateway", "runtime_stage_transport_failed", error.what());

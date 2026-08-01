@@ -15,6 +15,7 @@ type deploymentSwitchRequest struct {
 	DeploymentID         string `json:"deployment_id,omitempty"`
 	Model                string `json:"model"`
 	StageCount           int    `json:"stage_count,omitempty"`
+	StageLayerCounts     []int  `json:"stage_layer_counts,omitempty"`
 	AllowColocatedStages bool   `json:"allow_colocated_stages,omitempty"`
 	ContextSize          int    `json:"ctx_size,omitempty"`
 	Threads              int    `json:"threads,omitempty"`
@@ -26,6 +27,7 @@ func (r deploymentSwitchRequest) spec() deploymentSpec {
 		DeploymentID:         r.DeploymentID,
 		ModelID:              r.Model,
 		StageCount:           r.StageCount,
+		StageLayerCounts:     append([]int(nil), r.StageLayerCounts...),
 		AllowColocatedStages: r.AllowColocatedStages,
 		ContextSize:          r.ContextSize,
 		Threads:              r.Threads,
@@ -126,6 +128,8 @@ func decodeDeploymentSwitchRequest(w http.ResponseWriter, r *http.Request) (depl
 		writeError(w, http.StatusBadRequest, errorMissingModel, "model is required")
 	case request.StageCount < 0:
 		writeError(w, http.StatusBadRequest, errorInvalidStageCount, "stage_count cannot be negative")
+	case hasNonPositiveValue(request.StageLayerCounts):
+		writeError(w, http.StatusBadRequest, errorInvalidStageCount, "stage_layer_counts must contain only positive values")
 	case request.ContextSize < 0 || request.Threads < 0:
 		writeError(w, http.StatusBadRequest, errorDeploymentConfigInvalid, "ctx_size and threads cannot be negative")
 	case request.NGPULayers != nil && *request.NGPULayers < 0:
@@ -134,6 +138,15 @@ func decodeDeploymentSwitchRequest(w http.ResponseWriter, r *http.Request) (depl
 		return request, true
 	}
 	return deploymentSwitchRequest{}, false
+}
+
+func hasNonPositiveValue(values []int) bool {
+	for _, value := range values {
+		if value <= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func writeDeploymentSwitchError(w http.ResponseWriter, err error) {

@@ -21,6 +21,7 @@ type CompletionResponse struct {
 	Choices []Choice       `json:"choices"`
 	Usage   *Usage         `json:"usage,omitempty"`
 	Route   *RouteMetadata `json:"jetsonfabric_route,omitempty"`
+	Trace   *RuntimeTrace  `json:"jetsonfabric,omitempty"`
 }
 
 type Choice struct {
@@ -33,6 +34,42 @@ type Usage struct {
 	PromptTokens     int `json:"prompt_tokens,omitempty"`
 	CompletionTokens int `json:"completion_tokens,omitempty"`
 	TotalTokens      int `json:"total_tokens,omitempty"`
+}
+
+type RuntimeTrace struct {
+	TokenIndex                *int          `json:"token_index,omitempty"`
+	StageCalls                int           `json:"stage_calls,omitempty"`
+	RemoteStageCalls          int           `json:"remote_stage_calls,omitempty"`
+	RollbackStageCalls        int           `json:"rollback_stage_calls,omitempty"`
+	RemoteRollbackStageCalls  int           `json:"remote_rollback_stage_calls,omitempty"`
+	RollbackStageUS           int64         `json:"rollback_stage_us,omitempty"`
+	RollbackRemoteCallUS      int64         `json:"rollback_remote_call_us,omitempty"`
+	BytesIn                   int64         `json:"bytes_in,omitempty"`
+	BytesOut                  int64         `json:"bytes_out,omitempty"`
+	StageTimings              []StageTiming `json:"stage_timings,omitempty"`
+	TargetDecodePasses        int           `json:"target_decode_passes,omitempty"`
+	SpeculativeDraftTokens    int           `json:"speculative_draft_tokens,omitempty"`
+	SpeculativeAcceptedTokens int           `json:"speculative_accepted_tokens,omitempty"`
+}
+
+type StageTiming struct {
+	Phase                string `json:"phase"`
+	StageIndex           int    `json:"stage_index"`
+	NodeName             string `json:"node_name"`
+	Remote               bool   `json:"remote"`
+	Calls                int    `json:"calls"`
+	BatchItems           int    `json:"batch_items,omitempty"`
+	MaxExecutionBatch    int    `json:"max_execution_batch_size,omitempty"`
+	VerificationItems    int    `json:"verification_items,omitempty"`
+	MaxVerificationWidth int    `json:"max_verification_width,omitempty"`
+	ExecutionUS          int64  `json:"execution_us"`
+	ActivationDecodeUS   int64  `json:"activation_decode_us"`
+	ActivationEncodeUS   int64  `json:"activation_encode_us"`
+	StageTotalUS         int64  `json:"stage_total_us"`
+	RemoteCallUS         int64  `json:"remote_call_us"`
+	RemoteOverheadUS     int64  `json:"remote_overhead_us"`
+	BytesIn              int64  `json:"bytes_in"`
+	BytesOut             int64  `json:"bytes_out"`
 }
 
 type RouteMetadata struct {

@@ -56,6 +56,9 @@ const (
 const (
 	DefaultEngineInstanceID    = "default"
 	StageTransportHTTPBinaryV1 = "http_binary_v1"
+	StageTransportHTTPDirectV1 = "http_direct_v1"
+	ActivationEncodingF32      = "f32"
+	ActivationEncodingF16      = "f16"
 )
 
 const (
@@ -71,18 +74,30 @@ const (
 	// Runtime identity describes the process that is actually serving requests.
 	// Host-level CUDA or engine installation detection is not a substitute for
 	// these configured runtime facts.
-	CapabilityRuntimeEngine           = "runtime_engine"
-	CapabilityRuntimeModelID          = "runtime_model_id"
-	CapabilityRuntimeModelSHA256      = "runtime_model_sha256"
-	CapabilityRuntimeComputeBackend   = "runtime_compute_backend"
-	CapabilityRuntimeExecutionMode    = "runtime_execution_mode"
-	CapabilityRuntimeStageTransport   = "runtime_stage_transport"
-	CapabilityRuntimeRevision         = "runtime_revision"
-	CapabilityRuntimeLlamaCPPRevision = "runtime_llama_cpp_revision"
-	CapabilityRuntimeCUDAActive       = "runtime_cuda_active"
-	CapabilityRuntimeStartsIdle       = "runtime_starts_idle"
+	CapabilityRuntimeEngine             = "runtime_engine"
+	CapabilityRuntimeModelID            = "runtime_model_id"
+	CapabilityRuntimeModelSHA256        = "runtime_model_sha256"
+	CapabilityRuntimeComputeBackend     = "runtime_compute_backend"
+	CapabilityRuntimeExecutionMode      = "runtime_execution_mode"
+	CapabilityRuntimeStageTransport     = "runtime_stage_transport"
+	CapabilityRuntimeActivationEncoding = "runtime_activation_encoding"
+	CapabilityRuntimeKVCacheType        = "runtime_kv_cache_type"
+	CapabilityRuntimeUBatchSize         = "runtime_ubatch_size"
+	CapabilityRuntimeParallelSessions   = "runtime_parallel_sessions"
+	CapabilityRuntimeDecodeBatchSize    = "runtime_decode_batch_size"
+	CapabilityRuntimeSpeculativeDraft   = "runtime_speculative_draft"
+	CapabilityRuntimeSpeculativeMax     = "runtime_speculative_max_tokens"
+	CapabilityRuntimeRevision           = "runtime_revision"
+	CapabilityRuntimeLlamaCPPRevision   = "runtime_llama_cpp_revision"
+	CapabilityRuntimeCUDAActive         = "runtime_cuda_active"
+	CapabilityRuntimeStartsIdle         = "runtime_starts_idle"
 
 	MetricTemperatureC = "temperature_c"
+)
+
+const (
+	KVCacheTypeF16  = "f16"
+	KVCacheTypeQ8_0 = "q8_0"
 )
 
 // EngineEndpoint is a node-advertised endpoint for a local inference engine.

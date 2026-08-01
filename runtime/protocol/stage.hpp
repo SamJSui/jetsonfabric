@@ -6,9 +6,11 @@
 
 namespace jetsonfabric::runtime::protocol {
 
-inline constexpr std::uint16_t kStageWireVersion = 1;
-inline constexpr const char* kStageWireContentType = "application/vnd.jetsonfabric.stage.v1+octet-stream";
+inline constexpr std::uint16_t kStageWireVersion = 2;
+inline constexpr const char* kStageWireContentType = "application/vnd.jetsonfabric.stage.v2+octet-stream";
 inline constexpr const char* kStageWireTransport = "http_binary_v1";
+inline constexpr const char* kDirectStageTransport = "http_direct_v1";
+inline constexpr int kMaxStageTokens = 1024;
 
 struct StageRequest {
     std::uint16_t protocol_version = kStageWireVersion;
@@ -43,6 +45,7 @@ struct StageRequest {
     std::string transport = kStageWireTransport;
 
     int max_tokens = 128;
+    int rollback_tokens = 0;
 
     bool is_first_stage() const;
     bool is_last_stage() const;
@@ -50,6 +53,7 @@ struct StageRequest {
 
 struct StageResponse {
     std::uint16_t protocol_version = kStageWireVersion;
+    std::string operation = "execute";
 
     std::string session_id;
     std::string request_id;
@@ -83,11 +87,20 @@ struct StageResponse {
     std::int64_t bytes_in = 0;
     std::int64_t bytes_out = 0;
     int prompt_tokens = 0;
+    std::vector<std::uint32_t> prompt_token_ids;
     int completion_tokens = 0;
+    int execution_batch_size = 1;
+    int verification_width = 1;
     int latency_ms = 0;
+    std::int64_t execution_us = 0;
+    std::int64_t activation_decode_us = 0;
+    std::int64_t activation_encode_us = 0;
+    std::int64_t stage_total_us = 0;
 
     std::string error;
     std::string message;
+    std::vector<std::uint32_t> token_text_offsets;
+    std::vector<std::uint8_t> token_eog;
 };
 
 StageRequest decode_stage_request(const std::string& frame);

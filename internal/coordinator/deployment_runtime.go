@@ -2,10 +2,15 @@ package coordinator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/cluster"
 	"github.com/SamJSui/jetsonfabric/internal/clusterplan"
@@ -13,7 +18,70 @@ import (
 	"github.com/SamJSui/jetsonfabric/internal/runtimebridge"
 )
 
-const defaultDeploymentContextSize = 4096
+const (
+	defaultDeploymentContextSize = 4096
+	directRuntimeProbeTimeout    = 5 * time.Second
+	maxRuntimeStatusBytes        = 1 << 20
+)
+
+func probeDirectRuntimeEndpoints(ctx context.Context, plan clusterplan.DeploymentPlan) error {
+	if plan.Model().StageTransport != cluster.StageTransportHTTPDirectV1 {
+		return nil
+	}
+	client := &http.Client{
+		Timeout: directRuntimeProbeTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	for _, stage := range plan.Stages() {
+		endpoint, err := url.Parse(stage.RuntimeURL)
+		if err != nil {
+			return fmt.Errorf("parse direct runtime URL for node %q: %w", stage.NodeID, err)
+		}
+		endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/v1/deployment"
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+		if err != nil {
+			return fmt.Errorf("create direct runtime probe for node %q: %w", stage.NodeID, err)
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			return fmt.Errorf("direct runtime on node %q is unreachable: %w", stage.NodeID, err)
+		}
+		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+			_ = response.Body.Close()
+			return fmt.Errorf(
+				"direct runtime on node %q returned %s",
+				stage.NodeID,
+				response.Status,
+			)
+		}
+		status, err := decodeDirectRuntimeStatus(response.Body)
+		_ = response.Body.Close()
+		if err != nil {
+			return fmt.Errorf("decode direct runtime status on node %q: %w", stage.NodeID, err)
+		}
+		if err := validateRuntimeStatus(status, plan, stage, "ready", false); err != nil {
+			return fmt.Errorf("direct runtime on node %q is not ready: %w", stage.NodeID, err)
+		}
+	}
+	return nil
+}
+
+func decodeDirectRuntimeStatus(body io.Reader) (runtimebridge.DeploymentStatus, error) {
+	payload, err := io.ReadAll(io.LimitReader(body, maxRuntimeStatusBytes+1))
+	if err != nil {
+		return runtimebridge.DeploymentStatus{}, err
+	}
+	if len(payload) > maxRuntimeStatusBytes {
+		return runtimebridge.DeploymentStatus{}, errors.New("runtime status exceeds 1 MiB")
+	}
+	var status runtimebridge.DeploymentStatus
+	if err := json.Unmarshal(payload, &status); err != nil {
+		return runtimebridge.DeploymentStatus{}, err
+	}
+	return status, nil
+}
 
 func (c *DeploymentController) loadPlan(
 	ctx context.Context,
@@ -80,7 +148,9 @@ func newRuntimeLoadRequest(
 		DeploymentID: plan.Identity().DeploymentID, Epoch: plan.Identity().Epoch,
 		ModelID: model.ID, ModelSHA256: plan.Model().ModelSHA256,
 		Engine: string(plan.Model().Engine), ComputeBackend: string(backend),
-		ModelPath: model.ArtifactPath, CtxSize: ctxSize, NGPULayers: nGPULayers,
+		ActivationEncoding: plan.Model().ActivationEncoding,
+		KVCacheType:        plan.Model().KVCacheType,
+		ModelPath:          model.ArtifactPath, CtxSize: ctxSize, NGPULayers: nGPULayers,
 		Threads: spec.Threads, Mode: string(plan.Model().ExecutionMode),
 		StageIndex: stage.StageIndex, StageCount: stage.StageCount,
 		LayerStart: stage.LayerStart, LayerEnd: stage.LayerEnd,

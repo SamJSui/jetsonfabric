@@ -16,6 +16,7 @@ enum class PayloadKind {
     Tokens,
     Activation,
     SampledToken,
+    SampledTokens,
 };
 
 enum class ErrorKind {
@@ -68,8 +69,13 @@ struct StageInput {
 struct StageOutput {
     Payload payload;
     int prompt_tokens = 0;
+    std::vector<std::uint32_t> prompt_token_ids;
     int completion_tokens = 0;
+    int execution_batch_size = 1;
+    int verification_width = 1;
     std::string token_text;
+    std::vector<std::uint32_t> token_text_offsets;
+    std::vector<std::uint8_t> token_eog;
     bool end_of_generation = false;
 };
 

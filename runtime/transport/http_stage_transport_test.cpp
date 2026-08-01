@@ -8,8 +8,10 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <future>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -208,6 +210,45 @@ int main() {
     expect(server_error.empty(), "test server failed: " + server_error);
     expect(first.ok && second.ok, "persistent stage requests did not both succeed");
     expect(accepted_connections == 1, "stage transport did not reuse its peer connection");
+
+    std::uint16_t blocked_port = 0;
+    const int blocked_server_fd = open_server(blocked_port);
+    std::promise<void> request_received;
+    std::thread blocked_server([&]() {
+        const int client_fd = accept(blocked_server_fd, nullptr, nullptr);
+        if (client_fd >= 0) {
+            (void) read_request(client_fd);
+            request_received.set_value();
+            char byte = 0;
+            (void) recv(client_fd, &byte, 1, 0);
+            close(client_fd);
+        }
+        close(blocked_server_fd);
+    });
+
+    transport::HTTPStageTransport interruptible_transport(
+        "test-token",
+        transport::HTTPStageTarget::Runtime
+    );
+    stage.api_url = "http://127.0.0.1:1";
+    stage.runtime_url = "http://127.0.0.1:" + std::to_string(blocked_port);
+    std::future<pipeline_parallel::StageRunResult> blocked_invoke =
+        std::async(std::launch::async, [&]() {
+            return interruptible_transport.invoke(
+                stage,
+                request,
+                pipeline_parallel::StageOperation::Execute
+            );
+        });
+    request_received.get_future().wait();
+    interruptible_transport.shutdown();
+    expect(
+        blocked_invoke.wait_for(std::chrono::seconds(1)) == std::future_status::ready,
+        "transport shutdown did not interrupt an active peer response"
+    );
+    expect(!blocked_invoke.get().ok, "interrupted peer response unexpectedly succeeded");
+    blocked_server.join();
+
     std::cout << "HTTP stage transport tests passed\n";
     return 0;
 }

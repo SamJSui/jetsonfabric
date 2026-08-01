@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/SamJSui/jetsonfabric/internal/api"
+	"github.com/SamJSui/jetsonfabric/internal/clusterauth"
 	"github.com/SamJSui/jetsonfabric/internal/election"
 	"github.com/SamJSui/jetsonfabric/internal/membership"
 )
@@ -332,6 +333,63 @@ func TestAnnounceUpsertsMemberAndReturnsClusterView(t *testing.T) {
 	}
 	if len(view.Members) != 2 {
 		t.Fatalf("expected 2 members, got %+v", view.Members)
+	}
+}
+
+func TestAnnounceRequiresConfiguredClusterToken(t *testing.T) {
+	store := membership.NewStore()
+	store.Upsert(testFacadeMember("self", "dopey", membership.NodeRoleJetson, time.Now().UTC()))
+	router := NewRouter(Config{
+		SelfID:       "self",
+		ClusterToken: "cluster-secret",
+		Store:        store,
+		StaleAfter:   30 * time.Second,
+	})
+	body := `{
+		"cluster_id": "home-lab",
+		"node_id": "peer",
+		"node_name": "peer",
+		"role": "jetson",
+		"api_url": "http://peer.local:52415"
+	}`
+
+	denied := httptest.NewRecorder()
+	router.ServeHTTP(denied, httptest.NewRequest(http.MethodPost, PathClusterAnnounce, strings.NewReader(body)))
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("unauthenticated announce status=%d body=%s", denied.Code, denied.Body.String())
+	}
+	if _, ok := store.Get("peer"); ok {
+		t.Fatal("unauthenticated peer was added to membership")
+	}
+
+	request := httptest.NewRequest(http.MethodPost, PathClusterAnnounce, strings.NewReader(body))
+	nonce := "request-nonce"
+	timestamp, signature := clusterauth.SignAnnouncementRequest(
+		"cluster-secret",
+		time.Now().UTC(),
+		nonce,
+		[]byte(body),
+	)
+	request.Header.Set(clusterauth.HeaderAnnouncementNonce, nonce)
+	request.Header.Set(clusterauth.HeaderAnnouncementTimestamp, timestamp)
+	request.Header.Set(clusterauth.HeaderAnnouncementSignature, signature)
+	allowed := httptest.NewRecorder()
+	router.ServeHTTP(allowed, request)
+	if allowed.Code != http.StatusOK {
+		t.Fatalf("authenticated announce status=%d body=%s", allowed.Code, allowed.Body.String())
+	}
+	if _, ok := store.Get("peer"); !ok {
+		t.Fatal("authenticated peer was not added to membership")
+	}
+	if !clusterauth.VerifyAnnouncementResponse(
+		"cluster-secret",
+		allowed.Header().Get(clusterauth.HeaderAnnouncementResponseTimestamp),
+		nonce,
+		allowed.Header().Get(clusterauth.HeaderAnnouncementResponseSignature),
+		allowed.Body.Bytes(),
+		time.Now().UTC(),
+	) {
+		t.Fatal("cluster view response was not signed for the request nonce")
 	}
 }
 
