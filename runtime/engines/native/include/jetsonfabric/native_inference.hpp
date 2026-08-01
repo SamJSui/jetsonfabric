@@ -29,7 +29,8 @@ struct GenerationResult {
     std::vector<std::int32_t> sampled_tokens;
     double time_to_first_token_ms = 0.0;
     double inter_token_latency_ms = 0.0;
-    double output_tokens_per_second = 0.0;
+    double decode_tokens_per_second = 0.0;
+    double end_to_end_tokens_per_second = 0.0;
 };
 
 class NativeEngine {

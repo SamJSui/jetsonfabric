@@ -95,6 +95,15 @@ void print_tokens(const std::vector<std::int32_t>& tokens) {
     std::cout << ']';
 }
 
+void print_samples(const std::vector<double>& samples) {
+    std::cout << '[';
+    for (std::size_t index = 0; index < samples.size(); ++index) {
+        if (index != 0) std::cout << ',';
+        std::cout << std::fixed << std::setprecision(3) << samples[index];
+    }
+    std::cout << ']';
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -107,7 +116,8 @@ int main(int argc, char ** argv) {
 
         std::vector<double> ttft;
         std::vector<double> itl;
-        std::vector<double> throughput;
+        std::vector<double> decode_throughput;
+        std::vector<double> end_to_end_throughput;
         std::vector<std::int32_t> sampled_tokens;
         for (std::uint32_t index = 0; index < args.iterations; ++index) {
             const auto result = engine.generate(args.tokens, args.max_tokens);
@@ -117,7 +127,8 @@ int main(int argc, char ** argv) {
             }
             ttft.push_back(result.time_to_first_token_ms);
             itl.push_back(result.inter_token_latency_ms);
-            throughput.push_back(result.output_tokens_per_second);
+            decode_throughput.push_back(result.decode_tokens_per_second);
+            end_to_end_throughput.push_back(result.end_to_end_tokens_per_second);
         }
         if (args.expected_first_token && sampled_tokens.front() != *args.expected_first_token) {
             throw std::runtime_error("native first token does not match expected oracle token");
@@ -142,11 +153,24 @@ int main(int argc, char ** argv) {
         std::cout << ",\n  \"sampled_tokens\": ";
         print_tokens(sampled_tokens);
         std::cout << ",\n"
+                  << "  \"warmups\": " << args.warmups << ",\n"
                   << "  \"iterations\": " << args.iterations << ",\n"
                   << "  \"load_ms\": " << engine.load_time_ms() << ",\n"
+                  << "  \"ttft_ms\": ";
+        print_samples(ttft);
+        std::cout << ",\n  \"itl_ms\": ";
+        print_samples(itl);
+        std::cout << ",\n  \"decode_tokens_per_second\": ";
+        print_samples(decode_throughput);
+        std::cout << ",\n  \"end_to_end_tokens_per_second\": ";
+        print_samples(end_to_end_throughput);
+        std::cout << ",\n"
                   << "  \"ttft_p50_ms\": " << median(ttft) << ",\n"
                   << "  \"itl_p50_ms\": " << median(itl) << ",\n"
-                  << "  \"output_tokens_per_second_p50\": " << median(throughput) << ",\n"
+                  << "  \"decode_tokens_per_second_p50\": "
+                  << median(decode_throughput) << ",\n"
+                  << "  \"end_to_end_tokens_per_second_p50\": "
+                  << median(end_to_end_throughput) << ",\n"
                   << "  \"kv_cache\": false,\n"
                   << "  \"decode_policy\": \"full_prefix_recompute\"\n"
                   << "}\n";

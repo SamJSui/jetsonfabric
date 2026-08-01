@@ -90,8 +90,10 @@ GenerationResult NativeEngine::generate(
     }
     if (max_tokens > 1) {
         result.inter_token_latency_ms = decode_ms / static_cast<double>(max_tokens - 1);
+        result.decode_tokens_per_second = 1000.0 / result.inter_token_latency_ms;
     }
-    result.output_tokens_per_second = 1000.0 * static_cast<double>(max_tokens) / total_ms;
+    result.end_to_end_tokens_per_second =
+        1000.0 * static_cast<double>(max_tokens) / total_ms;
     return result;
 }
 
