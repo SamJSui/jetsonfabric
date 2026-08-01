@@ -47,6 +47,9 @@ validation procedures.
 - [32B capacity frontier](benchmarks/2026-07-30-32b-capacity.md) - stage-local
   Q8_0 KV memory, balanced 33/31 serving, sustained concurrency, and the
   largest Qwen2.5-Coder quantization tested on the two-node cluster.
+- [Tensor-parallel feasibility](benchmarks/2026-07-31-tensor-parallel-feasibility.md)
+  - wired-network lower bound and a two-rank CUDA SwiGLU MLP sublayer proof for
+  Qwen2.5-Coder 1.5B and 14B shapes.
 
 Real-model local integration commands are documented in
 [Local development](local-development.md). The source repository does not keep

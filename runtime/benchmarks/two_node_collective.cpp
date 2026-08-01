@@ -1,26 +1,19 @@
 #include "benchmarks/collective_stats.hpp"
+#include "benchmarks/tcp_peer.hpp"
 
 #include <arpa/inet.h>
-#include <netdb.h>
-#include <netinet/tcp.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
-#include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <limits>
-#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 namespace {
@@ -52,37 +45,6 @@ struct WireConfig {
     std::uint32_t elements;
     std::uint32_t iterations;
     std::uint32_t warmup_iterations;
-};
-
-class FileDescriptor {
-  public:
-    explicit FileDescriptor(int value = -1) : value_(value) {}
-    ~FileDescriptor() {
-        if (value_ >= 0) {
-            close(value_);
-        }
-    }
-
-    FileDescriptor(const FileDescriptor&) = delete;
-    FileDescriptor& operator=(const FileDescriptor&) = delete;
-
-    FileDescriptor(FileDescriptor&& other) noexcept
-        : value_(std::exchange(other.value_, -1)) {}
-
-    FileDescriptor& operator=(FileDescriptor&& other) noexcept {
-        if (this != &other) {
-            if (value_ >= 0) {
-                close(value_);
-            }
-            value_ = std::exchange(other.value_, -1);
-        }
-        return *this;
-    }
-
-    int get() const { return value_; }
-
-  private:
-    int value_;
 };
 
 std::size_t parse_size(std::string_view name, const char* value) {
@@ -158,106 +120,6 @@ Options parse_options(int argc, char** argv) {
     return options;
 }
 
-void tune_socket(int socket_fd) {
-    const int enabled = 1;
-    const int buffer_size = 1 << 20;
-    if (setsockopt(socket_fd, IPPROTO_TCP, TCP_NODELAY, &enabled, sizeof(enabled)) != 0 ||
-        setsockopt(socket_fd, SOL_SOCKET, SO_SNDBUF, &buffer_size, sizeof(buffer_size)) != 0 ||
-        setsockopt(socket_fd, SOL_SOCKET, SO_RCVBUF, &buffer_size, sizeof(buffer_size)) != 0) {
-        throw std::runtime_error("failed to configure TCP socket");
-    }
-}
-
-addrinfo* resolve_address(
-    const std::string& host,
-    std::uint16_t port,
-    int flags) {
-    addrinfo hints{};
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = flags;
-
-    addrinfo* result = nullptr;
-    const auto service = std::to_string(port);
-    const char* node = host.empty() ? nullptr : host.c_str();
-    const int status = getaddrinfo(node, service.c_str(), &hints, &result);
-    if (status != 0) {
-        throw std::runtime_error(std::string("address resolution failed: ") + gai_strerror(status));
-    }
-    return result;
-}
-
-FileDescriptor connect_to(const Options& options) {
-    addrinfo* raw_addresses = resolve_address(options.peer_address, options.port, 0);
-    const std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> addresses(raw_addresses, freeaddrinfo);
-
-    for (auto* address = addresses.get(); address != nullptr; address = address->ai_next) {
-        FileDescriptor socket_fd(socket(address->ai_family, address->ai_socktype, address->ai_protocol));
-        if (socket_fd.get() < 0) {
-            continue;
-        }
-        if (connect(socket_fd.get(), address->ai_addr, address->ai_addrlen) == 0) {
-            tune_socket(socket_fd.get());
-            return socket_fd;
-        }
-    }
-    throw std::runtime_error("failed to connect to peer");
-}
-
-FileDescriptor accept_peer(const Options& options) {
-    addrinfo* raw_addresses = resolve_address(options.listen_address, options.port, AI_PASSIVE);
-    const std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> addresses(raw_addresses, freeaddrinfo);
-
-    FileDescriptor listener;
-    for (auto* address = addresses.get(); address != nullptr; address = address->ai_next) {
-        FileDescriptor candidate(socket(address->ai_family, address->ai_socktype, address->ai_protocol));
-        if (candidate.get() < 0) {
-            continue;
-        }
-        const int enabled = 1;
-        setsockopt(candidate.get(), SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
-        if (bind(candidate.get(), address->ai_addr, address->ai_addrlen) == 0 &&
-            listen(candidate.get(), 1) == 0) {
-            listener = std::move(candidate);
-            break;
-        }
-    }
-    if (listener.get() < 0) {
-        throw std::runtime_error("failed to bind benchmark server");
-    }
-
-    FileDescriptor peer(accept(listener.get(), nullptr, nullptr));
-    if (peer.get() < 0) {
-        throw std::runtime_error("failed to accept benchmark peer");
-    }
-    tune_socket(peer.get());
-    return peer;
-}
-
-void send_all(int socket_fd, const void* data, std::size_t size) {
-    const auto* bytes = static_cast<const std::byte*>(data);
-    std::size_t sent = 0;
-    while (sent < size) {
-        const auto result = send(socket_fd, bytes + sent, size - sent, MSG_NOSIGNAL);
-        if (result <= 0) {
-            throw std::runtime_error("TCP send failed");
-        }
-        sent += static_cast<std::size_t>(result);
-    }
-}
-
-void receive_all(int socket_fd, void* data, std::size_t size) {
-    auto* bytes = static_cast<std::byte*>(data);
-    std::size_t received = 0;
-    while (received < size) {
-        const auto result = recv(socket_fd, bytes + received, size - received, 0);
-        if (result <= 0) {
-            throw std::runtime_error("TCP receive failed");
-        }
-        received += static_cast<std::size_t>(result);
-    }
-}
-
 WireConfig encode_config(const Options& options) {
     return WireConfig{
         .magic = htonl(kMagic),
@@ -268,9 +130,11 @@ WireConfig encode_config(const Options& options) {
     };
 }
 
-Options receive_config(int socket_fd, const Options& server_options) {
+Options receive_config(
+    const jetsonfabric::benchmarks::TcpPeer& peer,
+    const Options& server_options) {
     WireConfig wire{};
-    receive_all(socket_fd, &wire, sizeof(wire));
+    peer.receive_all(&wire, sizeof(wire));
     if (ntohl(wire.magic) != kMagic || ntohl(wire.version) != kVersion) {
         throw std::runtime_error("peer sent an unsupported benchmark protocol");
     }
@@ -286,13 +150,13 @@ Options receive_config(int socket_fd, const Options& server_options) {
 }
 
 void exchange_and_sum(
-    int socket_fd,
+    const jetsonfabric::benchmarks::TcpPeer& peer,
     const std::vector<float>& local,
     std::vector<float>& remote,
     std::vector<float>& sum) {
     const std::size_t payload_bytes = local.size() * sizeof(float);
-    send_all(socket_fd, local.data(), payload_bytes);
-    receive_all(socket_fd, remote.data(), payload_bytes);
+    peer.send_all(local.data(), payload_bytes);
+    peer.receive_all(remote.data(), payload_bytes);
     for (std::size_t index = 0; index < local.size(); ++index) {
         sum[index] = local[index] + remote[index];
     }
@@ -306,23 +170,27 @@ void verify_sum(const std::vector<float>& sum) {
 }
 
 void run_server(const Options& server_options) {
-    auto peer = accept_peer(server_options);
-    const Options options = receive_config(peer.get(), server_options);
+    auto peer = jetsonfabric::benchmarks::TcpPeer::accept(
+        server_options.listen_address,
+        server_options.port);
+    const Options options = receive_config(peer, server_options);
     const std::vector<float> local(options.elements, 1.0F);
     std::vector<float> remote(options.elements);
     std::vector<float> sum(options.elements);
 
     const std::size_t total_iterations = options.warmup_iterations + options.iterations;
     for (std::size_t iteration = 0; iteration < total_iterations; ++iteration) {
-        exchange_and_sum(peer.get(), local, remote, sum);
+        exchange_and_sum(peer, local, remote, sum);
     }
     verify_sum(sum);
 }
 
 void run_client(const Options& options) {
-    auto peer = connect_to(options);
+    auto peer = jetsonfabric::benchmarks::TcpPeer::connect(
+        options.peer_address,
+        options.port);
     const WireConfig config = encode_config(options);
-    send_all(peer.get(), &config, sizeof(config));
+    peer.send_all(&config, sizeof(config));
 
     const std::vector<float> local(options.elements, 2.0F);
     std::vector<float> remote(options.elements);
@@ -333,7 +201,7 @@ void run_client(const Options& options) {
     const std::size_t total_iterations = options.warmup_iterations + options.iterations;
     for (std::size_t iteration = 0; iteration < total_iterations; ++iteration) {
         const auto start = std::chrono::steady_clock::now();
-        exchange_and_sum(peer.get(), local, remote, sum);
+        exchange_and_sum(peer, local, remote, sum);
         const auto stop = std::chrono::steady_clock::now();
         if (iteration >= options.warmup_iterations) {
             latencies_us.push_back(

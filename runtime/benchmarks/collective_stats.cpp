@@ -24,12 +24,12 @@ LatencySummary summarize_latencies(std::vector<double> latencies_us) {
     const double total =
         std::accumulate(latencies_us.begin(), latencies_us.end(), 0.0);
 
-    return LatencySummary{
-        .mean_us = total / static_cast<double>(latencies_us.size()),
-        .p50_us = percentile(latencies_us, 0.50),
-        .p95_us = percentile(latencies_us, 0.95),
-        .p99_us = percentile(latencies_us, 0.99),
-    };
+    LatencySummary summary;
+    summary.mean_us = total / static_cast<double>(latencies_us.size());
+    summary.p50_us = percentile(latencies_us, 0.50);
+    summary.p95_us = percentile(latencies_us, 0.95);
+    summary.p99_us = percentile(latencies_us, 0.99);
+    return summary;
 }
 
 double projected_communication_ms(
