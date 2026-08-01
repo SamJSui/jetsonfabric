@@ -58,10 +58,6 @@ if(TARGET ggml)
     PUBLIC jetsonfabric-native-engine
     PRIVATE ggml
   )
-  if(GGML_CUDA)
-    target_compile_definitions(jetsonfabric-native-inference PRIVATE JF_NATIVE_CUDA=1)
-  endif()
-
   add_executable(jf-native-inference-bench
     benchmarks/native_inference_bench.cpp
   )

@@ -1,9 +1,6 @@
 #include "tensor_store.hpp"
 
 #include "ggml-cpu.h"
-#ifdef JF_NATIVE_CUDA
-#include "ggml-cuda.h"
-#endif
 
 #include <array>
 #include <limits>
@@ -73,22 +70,21 @@ TensorStore::TensorStore(
 }
 
 ggml_backend_ptr TensorStore::create_backend(Backend backend, int threads) {
-    ggml_backend_t raw_backend = nullptr;
-    if (backend == Backend::Cuda) {
-#ifdef JF_NATIVE_CUDA
-        raw_backend = ggml_backend_cuda_init(0);
-#else
-        throw std::runtime_error("native CUDA backend was not compiled");
-#endif
-    } else {
-        raw_backend = ggml_backend_cpu_init();
-        if (raw_backend != nullptr) {
-            ggml_backend_cpu_set_n_threads(raw_backend, threads);
-        }
+    ggml_backend_load_all();
+    const enum ggml_backend_dev_type type = backend == Backend::Cuda
+        ? GGML_BACKEND_DEVICE_TYPE_GPU
+        : GGML_BACKEND_DEVICE_TYPE_CPU;
+    ggml_backend_dev_t device = ggml_backend_dev_by_type(type);
+    if (device == nullptr && backend == Backend::Cuda) {
+        device = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_IGPU);
     }
+    ggml_backend_t raw_backend = device == nullptr
+        ? nullptr
+        : ggml_backend_dev_init(device, nullptr);
     if (raw_backend == nullptr) {
         throw std::runtime_error("could not initialize native compute backend");
     }
+    if (backend == Backend::Cpu) ggml_backend_cpu_set_n_threads(raw_backend, threads);
     return ggml_backend_ptr(raw_backend);
 }
 
