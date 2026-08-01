@@ -20,7 +20,7 @@ struct Arguments {
     std::uint32_t warmups = 0;
     std::uint32_t iterations = 1;
     int threads = 1;
-    std::optional<std::int32_t> expected_first_token;
+    std::optional<std::vector<std::int32_t>> expected_tokens;
 };
 
 std::uint32_t parse_u32(const std::string& value, const char * name) {
@@ -63,9 +63,8 @@ Arguments parse_args(int argc, char ** argv) {
         else if (option == "--warmups") args.warmups = parse_u32(value, "--warmups");
         else if (option == "--iterations") args.iterations = parse_u32(value, "--iterations");
         else if (option == "--threads") args.threads = static_cast<int>(parse_u32(value, "--threads"));
-        else if (option == "--expected-first-token") {
-            args.expected_first_token = static_cast<std::int32_t>(parse_u32(value, option.c_str()));
-        } else if (option == "--backend" && value == "cpu") args.backend = jetsonfabric::native::Backend::Cpu;
+        else if (option == "--expected-tokens") args.expected_tokens = parse_tokens(value);
+        else if (option == "--backend" && value == "cpu") args.backend = jetsonfabric::native::Backend::Cpu;
         else if (option == "--backend" && value == "cuda") args.backend = jetsonfabric::native::Backend::Cuda;
         else throw std::invalid_argument("unknown option or backend: " + option + " " + value);
     }
@@ -130,8 +129,8 @@ int main(int argc, char ** argv) {
             decode_throughput.push_back(result.decode_tokens_per_second);
             end_to_end_throughput.push_back(result.end_to_end_tokens_per_second);
         }
-        if (args.expected_first_token && sampled_tokens.front() != *args.expected_first_token) {
-            throw std::runtime_error("native first token does not match expected oracle token");
+        if (args.expected_tokens && sampled_tokens != *args.expected_tokens) {
+            throw std::runtime_error("native token sequence does not match expected oracle tokens");
         }
 
         const auto& info = engine.model_info();

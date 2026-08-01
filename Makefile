@@ -48,7 +48,7 @@ JFM_TOKENS ?=
 JFM_MAX_TOKENS ?= 1
 JFM_INFERENCE_WARMUPS ?= 1
 JFM_INFERENCE_ITERATIONS ?= 3
-JFM_EXPECTED_FIRST_TOKEN ?=
+JFM_EXPECTED_TOKENS ?=
 
 # Node defaults: multi-instance safe.
 NODE_NAME ?=
@@ -323,7 +323,7 @@ bench-native-inference:
 		--max-tokens "$(JFM_MAX_TOKENS)" \
 		--warmups "$(JFM_INFERENCE_WARMUPS)" \
 		--iterations "$(JFM_INFERENCE_ITERATIONS)" \
-		$(if $(JFM_EXPECTED_FIRST_TOKEN),--expected-first-token "$(JFM_EXPECTED_FIRST_TOKEN)")
+		$(if $(JFM_EXPECTED_TOKENS),--expected-tokens "$(JFM_EXPECTED_TOKENS)")
 
 .PHONY: runtime-cuda
 runtime-cuda: setup

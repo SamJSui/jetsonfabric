@@ -97,16 +97,15 @@ TensorStore::TensorStore(
 
 ggml_backend_ptr TensorStore::create_backend(Backend backend, int threads) {
     ggml_backend_load_all();
-    const enum ggml_backend_dev_type type = backend == Backend::Cuda
-        ? GGML_BACKEND_DEVICE_TYPE_GPU
-        : GGML_BACKEND_DEVICE_TYPE_CPU;
-    ggml_backend_dev_t device = ggml_backend_dev_by_type(type);
-    if (device == nullptr && backend == Backend::Cuda) {
-        device = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_IGPU);
+    const char * registry_name = backend == Backend::Cuda ? "CUDA" : "CPU";
+    const ggml_backend_reg_t registry = ggml_backend_reg_by_name(registry_name);
+    if (registry == nullptr || ggml_backend_reg_dev_count(registry) == 0) {
+        throw std::runtime_error(
+            std::string("native ") + registry_name + " backend is not available"
+        );
     }
-    ggml_backend_t raw_backend = device == nullptr
-        ? nullptr
-        : ggml_backend_dev_init(device, nullptr);
+    const ggml_backend_dev_t device = ggml_backend_reg_dev_get(registry, 0);
+    ggml_backend_t raw_backend = ggml_backend_dev_init(device, nullptr);
     if (raw_backend == nullptr) {
         throw std::runtime_error("could not initialize native compute backend");
     }

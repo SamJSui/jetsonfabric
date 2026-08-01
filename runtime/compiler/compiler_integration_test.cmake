@@ -59,7 +59,7 @@ execute_process(
     --max-tokens 2
     --iterations 2
     --threads 1
-    --expected-first-token 7
+    --expected-tokens 7,7
   RESULT_VARIABLE QWEN_RESULT
   OUTPUT_VARIABLE QWEN_OUTPUT
   ERROR_VARIABLE QWEN_ERROR
