@@ -36,6 +36,46 @@ target_link_libraries(jf-native-model-bench PRIVATE
   jetsonfabric-native-engine
 )
 
+if(TARGET ggml)
+  add_library(jetsonfabric-native-inference STATIC
+    src/architecture_registry.cpp
+    src/native_inference.cpp
+    src/qwen2_architecture.cpp
+    src/qwen2_metadata.cpp
+    src/tensor_store.cpp
+  )
+  target_include_directories(jetsonfabric-native-inference
+    PUBLIC include
+    PRIVATE src
+  )
+  target_compile_features(jetsonfabric-native-inference PUBLIC cxx_std_20)
+  target_compile_options(jetsonfabric-native-inference PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  target_link_libraries(jetsonfabric-native-inference
+    PUBLIC jetsonfabric-native-engine
+    PRIVATE ggml
+  )
+  if(GGML_CUDA)
+    target_compile_definitions(jetsonfabric-native-inference PRIVATE JF_NATIVE_CUDA=1)
+  endif()
+
+  add_executable(jf-native-inference-bench
+    benchmarks/native_inference_bench.cpp
+  )
+  target_compile_features(jf-native-inference-bench PRIVATE cxx_std_20)
+  target_compile_options(jf-native-inference-bench PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  target_link_libraries(jf-native-inference-bench PRIVATE
+    jetsonfabric-native-inference
+  )
+endif()
+
 if(BUILD_TESTING)
   add_executable(jetsonfabric-native-engine-test
     tests/engine_test.cpp

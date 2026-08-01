@@ -1,5 +1,6 @@
-if(NOT DEFINED FIXTURE_BIN OR NOT DEFINED COMPILER_BIN OR NOT DEFINED BENCH_BIN OR NOT DEFINED WORK_DIR)
-  message(FATAL_ERROR "fixture, compiler, benchmark, and work directory are required")
+if(NOT DEFINED FIXTURE_BIN OR NOT DEFINED COMPILER_BIN OR NOT DEFINED BENCH_BIN OR
+   NOT DEFINED INFERENCE_BENCH_BIN OR NOT DEFINED WORK_DIR)
+  message(FATAL_ERROR "fixture, compiler, load benchmark, inference benchmark, and work directory are required")
 endif()
 
 file(REMOVE_RECURSE "${WORK_DIR}")
@@ -27,7 +28,7 @@ if(NOT COMPILER_RESULT EQUAL 0)
   message(FATAL_ERROR "model compilation failed: ${COMPILER_OUTPUT}${COMPILER_ERROR}")
 endif()
 if(NOT COMPILER_OUTPUT MATCHES "\"layer_count\": 2" OR
-   NOT COMPILER_OUTPUT MATCHES "\"tensor_count\": 7")
+   NOT COMPILER_OUTPUT MATCHES "\"tensor_count\": 27")
   message(FATAL_ERROR "model compiler returned unexpected metadata: ${COMPILER_OUTPUT}")
 endif()
 
@@ -45,9 +46,30 @@ execute_process(
 if(NOT BENCH_RESULT EQUAL 0)
   message(FATAL_ERROR "native model load failed: ${BENCH_OUTPUT}${BENCH_ERROR}")
 endif()
-if(NOT BENCH_OUTPUT MATCHES "\"selected_tensor_count\": 3" OR
-   NOT BENCH_OUTPUT MATCHES "\"total_tensor_count\": 7")
+if(NOT BENCH_OUTPUT MATCHES "\"selected_tensor_count\": 13" OR
+   NOT BENCH_OUTPUT MATCHES "\"total_tensor_count\": 27")
   message(FATAL_ERROR "native model benchmark returned unexpected residency: ${BENCH_OUTPUT}")
+endif()
+
+execute_process(
+  COMMAND "${INFERENCE_BENCH_BIN}"
+    --package "${WORK_DIR}/fixture.jfm"
+    --backend cpu
+    --tokens 2
+    --max-tokens 2
+    --iterations 2
+    --threads 1
+    --expected-first-token 7
+  RESULT_VARIABLE QWEN_RESULT
+  OUTPUT_VARIABLE QWEN_OUTPUT
+  ERROR_VARIABLE QWEN_ERROR
+)
+if(NOT QWEN_RESULT EQUAL 0)
+  message(FATAL_ERROR "native Qwen execution failed: ${QWEN_OUTPUT}${QWEN_ERROR}")
+endif()
+if(NOT QWEN_OUTPUT MATCHES "\"engine\": \"jetsonfabric-native\"" OR
+   NOT QWEN_OUTPUT MATCHES "\"sampled_tokens\": \[7,7\]")
+  message(FATAL_ERROR "native Qwen benchmark returned unexpected output: ${QWEN_OUTPUT}")
 endif()
 
 file(REMOVE_RECURSE "${WORK_DIR}")

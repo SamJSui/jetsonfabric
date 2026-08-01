@@ -17,6 +17,7 @@ TENSOR_WORKER_BIN ?= $(DIST_DIR)/jetsonfabric-tensor-worker
 NATIVE_ENGINE_BUILD_DIR ?= runtime/build-native-engine
 MODEL_COMPILER_BIN ?= $(DIST_DIR)/jf-model-compile
 NATIVE_MODEL_BENCH_BIN ?= $(DIST_DIR)/jf-native-model-bench
+NATIVE_INFERENCE_BENCH_BIN ?= $(DIST_DIR)/jf-native-inference-bench
 NODE_BIN ?= $(DIST_DIR)/jetsonfabric-node
 INTEGRATION_BUILD_DIR ?= runtime/build-integration-cpu
 INTEGRATION_RUNTIME_BIN ?= $(DIST_DIR)/jetsonfabric-runtime-worker-integration-cpu
@@ -41,6 +42,13 @@ JFM_BENCH_VERIFY ?= false
 JFM_BENCH_PREFETCH ?= true
 JFM_BENCH_EVICT ?= false
 JFM_PREFETCH_THREADS ?= 4
+JFM_INFERENCE_BACKEND ?= cpu
+JFM_INFERENCE_THREADS ?= 6
+JFM_TOKENS ?=
+JFM_MAX_TOKENS ?= 1
+JFM_INFERENCE_WARMUPS ?= 1
+JFM_INFERENCE_ITERATIONS ?= 3
+JFM_EXPECTED_FIRST_TOKEN ?=
 
 # Node defaults: multi-instance safe.
 NODE_NAME ?=
@@ -135,6 +143,7 @@ help:
 	@printf '  make model-compiler             Build the GGUF to JFM importer\n'
 	@printf '  make model-compile              Import MODEL_PATH into JFM_PACKAGE\n'
 	@printf '  make bench-native-model         Measure JFM stage mapping and prefetch\n'
+	@printf '  make bench-native-inference     Measure architecture-selected native inference\n'
 	@printf '  make dev-up                      Run one full-model pipeline stage\n'
 	@printf '  make dev-status                  Inspect the running development node\n'
 	@printf '  make dev-chat                    Send a chat request to the development node\n'
@@ -156,6 +165,7 @@ help:
 	@printf '  RUNTIME_TENSOR_RPC_PEERS=host:52520  Enable llama.cpp tensor sharding to remote CUDA\n'
 	@printf '  JFM_PACKAGE=/path/model.jfm     Canonical native model package\n'
 	@printf '  JFM_LAYER_START=0 JFM_LAYER_END=14  Native stage range\n'
+	@printf '  JFM_TOKENS=1,2,3               Fixed token IDs for native inference\n'
 	@printf '  RUNTIME_BUILD_JOBS=1             Safer on Jetson; try 2 or 4 if memory allows\n'
 	@printf '  RUNTIME_CUDA_ARCH=87             Jetson Orin default\n'
 	@printf '  JF_NODE0_PORT=19180              Fixed local node port\n'
@@ -252,14 +262,16 @@ model-compiler: setup
 		-DCMAKE_BUILD_TYPE=Release \
 		-DJF_LLAMA_CPP_SOURCE_DIR=$(abspath $(LLAMA_CPP_DIR))
 	$(CMAKE) --build $(RUNTIME_BUILD_DIR) \
-		--target jf-model-compile jf-native-model-bench \
+		--target jf-model-compile jf-native-model-bench jf-native-inference-bench \
 		--parallel $(RUNTIME_BUILD_JOBS)
 	mkdir -p $(DIST_DIR)
 	cp $(RUNTIME_BUILD_DIR)/jf-model-compile $(MODEL_COMPILER_BIN).tmp
 	cp $(RUNTIME_BUILD_DIR)/engines/native/jf-native-model-bench $(NATIVE_MODEL_BENCH_BIN).tmp
-	chmod +x $(MODEL_COMPILER_BIN).tmp $(NATIVE_MODEL_BENCH_BIN).tmp
+	cp $(RUNTIME_BUILD_DIR)/engines/native/jf-native-inference-bench $(NATIVE_INFERENCE_BENCH_BIN).tmp
+	chmod +x $(MODEL_COMPILER_BIN).tmp $(NATIVE_MODEL_BENCH_BIN).tmp $(NATIVE_INFERENCE_BENCH_BIN).tmp
 	mv -f $(MODEL_COMPILER_BIN).tmp $(MODEL_COMPILER_BIN)
 	mv -f $(NATIVE_MODEL_BENCH_BIN).tmp $(NATIVE_MODEL_BENCH_BIN)
+	mv -f $(NATIVE_INFERENCE_BENCH_BIN).tmp $(NATIVE_INFERENCE_BENCH_BIN)
 
 .PHONY: model-compile
 model-compile: model-compiler
@@ -292,6 +304,26 @@ bench-native-model:
 		$(if $(filter true,$(JFM_BENCH_EVICT)),--evict) \
 		--prefetch-threads "$(JFM_PREFETCH_THREADS)" \
 		$(if $(filter true,$(JFM_BENCH_PREFETCH)),--prefetch)
+
+.PHONY: bench-native-inference
+bench-native-inference:
+	@if [ ! -x "$(NATIVE_INFERENCE_BENCH_BIN)" ]; then \
+		printf 'native inference benchmark missing. Run make model-compiler.\n' >&2; \
+		exit 2; \
+	fi
+	@if [ -z "$(JFM_PACKAGE)" ] || [ -z "$(JFM_TOKENS)" ]; then \
+		printf 'JFM_PACKAGE and JFM_TOKENS are required.\n' >&2; \
+		exit 2; \
+	fi
+	$(NATIVE_INFERENCE_BENCH_BIN) \
+		--package "$(JFM_PACKAGE)" \
+		--backend "$(JFM_INFERENCE_BACKEND)" \
+		--threads "$(JFM_INFERENCE_THREADS)" \
+		--tokens "$(JFM_TOKENS)" \
+		--max-tokens "$(JFM_MAX_TOKENS)" \
+		--warmups "$(JFM_INFERENCE_WARMUPS)" \
+		--iterations "$(JFM_INFERENCE_ITERATIONS)" \
+		$(if $(JFM_EXPECTED_FIRST_TOKEN),--expected-first-token "$(JFM_EXPECTED_FIRST_TOKEN)")
 
 .PHONY: runtime-cuda
 runtime-cuda: setup

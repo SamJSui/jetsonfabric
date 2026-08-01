@@ -12,8 +12,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(CTest)
 
-add_subdirectory(engines/native)
-
 set(JF_LLAMA_CPP_SOURCE_DIR
   "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp"
   CACHE PATH "Path to a local llama.cpp checkout"
@@ -103,6 +101,8 @@ else()
   message(FATAL_ERROR "llama.cpp was added, but no llama target was found")
 endif()
 
+add_subdirectory(engines/native)
+
 add_executable(jf-model-compile
   compiler/jf_model_compile.cpp
 )
@@ -141,6 +141,7 @@ if(BUILD_TESTING)
       -DFIXTURE_BIN=$<TARGET_FILE:jf-model-fixture>
       -DCOMPILER_BIN=$<TARGET_FILE:jf-model-compile>
       -DBENCH_BIN=$<TARGET_FILE:jf-native-model-bench>
+      -DINFERENCE_BENCH_BIN=$<TARGET_FILE:jf-native-inference-bench>
       -DWORK_DIR=/tmp/jetsonfabric-native-model-compiler-test
       -P ${CMAKE_CURRENT_SOURCE_DIR}/compiler/compiler_integration_test.cmake
   )
