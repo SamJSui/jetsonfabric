@@ -106,14 +106,21 @@ Wire counters covered one warmup plus three measured requests. Power and
 latency metrics cover the three measured requests. Tensor sharding was correct,
 but repeated intra-layer collectives made it network-bound on 1 GbE.
 
-### Native Engine Correctness Baseline
+### Native Engine Decode Benchmark
 
-The experimental JetsonFabric-native Qwen2 graph reproduced the exact greedy
-token sequence from the pinned llama.cpp oracle on CPU and CUDA. On one Orin
-Nano with Qwen2.5-Coder 1.5B Q4_K_M, CUDA measured 100.84 ms p50 TTFT and
-8.66 tok/s p50 repeated full-prefix decode across ten samples. This path does
-not yet use a KV cache and is not comparable to the serving results above. See
-the [native inference baseline](docs/benchmarks/2026-08-01-native-inference-baseline.md).
+The experimental JetsonFabric-native Qwen2 engine reproduced the exact 32-token
+greedy sequence from the pinned llama.cpp oracle. On one Orin Nano in
+`MAXN_SUPER`, the matched direct-engine microbenchmark measured:
+
+| Engine | TTFT p50 | ITL p50 | Decode p50 | End-to-end p50 |
+| --- | ---: | ---: | ---: | ---: |
+| JetsonFabric native | 43.39 ms | **21.03 ms** | **47.56 tok/s** | **46.03 tok/s** |
+| llama.cpp oracle | **42.22 ms** | 26.73 ms | 37.41 tok/s | 36.74 tok/s |
+
+The native path delivered 27.1% higher decode throughput and 21.4% lower ITL,
+while TTFT was 2.8% slower. This is a one-model, one-prompt microbenchmark, not
+a serving or distributed-runtime result. See the
+[KV-cache benchmark](docs/benchmarks/2026-08-01-native-kv-cache.md).
 
 ### Findings
 
@@ -355,7 +362,6 @@ After those are stable:
 - Experimental tensor execution uses raw unauthenticated GGML RPC and bypasses
   coordinator lifecycle management. It is restricted to trusted-LAN research.
 - The native JFM path performs experimental one-node Qwen2 greedy generation
-  from token IDs, but reloads the full model and recomputes the full prefix for
-  every token. llama.cpp remains the serving engine and correctness oracle
-  while tokenization, KV cache, lifecycle, and distributed-stage parity are
-  implemented and validated.
+  from token IDs with an F16 KV cache. llama.cpp remains the serving engine and
+  correctness oracle while tokenization, lifecycle, and distributed-stage
+  parity are implemented and validated.

@@ -1,5 +1,9 @@
 # Native Inference Correctness Baseline
 
+This report preserves the historical full-prefix baseline. The subsequent
+[KV-cache benchmark](2026-08-01-native-kv-cache.md) supersedes its performance
+path.
+
 ## Result
 
 JetsonFabric's native engine reproduced the exact four-token greedy sequence
@@ -53,4 +57,3 @@ cache; no cache eviction was performed.
 
 Raw evidence is stored in
 [`evidence/20260801-native-inference`](evidence/20260801-native-inference).
-
