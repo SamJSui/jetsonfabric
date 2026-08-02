@@ -19,6 +19,31 @@ These numbers describe this exact direct-engine workload. They do not establish
 that the native engine is generally faster than llama.cpp, and they are not
 HTTP serving or distributed-cluster measurements.
 
+## KV-Cache Ablation
+
+The same native executable supports the previous full-prefix policy, allowing
+the KV-cache change to be measured without changing the model, prompt, output,
+power state, warmup, or sample count.
+
+| Native decode policy | TTFT p50 | ITL p50 | Decode p50 | End-to-end p50 |
+| --- | ---: | ---: | ---: | ---: |
+| Full-prefix recompute | 43.92 ms | 42.90 ms | 23.31 tok/s | 23.29 tok/s |
+| Incremental F16 KV cache | **43.39 ms** | **21.03 ms** | **47.56 tok/s** | **46.03 tok/s** |
+
+Incremental decode increased native decode throughput by 104.0%, increased
+end-to-end throughput by 97.6%, and reduced ITL by 51.0%. This measures the
+improvement over JetsonFabric's old native path. It is not a difference from
+llama.cpp: the llama.cpp oracle also performs prefill once and then decodes one
+token at a time with a KV cache.
+
+The remaining native-versus-llama.cpp difference in this microbenchmark comes
+from the narrower Qwen2 greedy graph and execution path. In particular, native
+generation performs `argmax` on CUDA and copies one 4-byte token ID to the host;
+the pinned oracle harness copied a 607,744-byte F32 logits vector for host-side
+selection. The native request also reuses one decode graph and scheduler. These
+choices still need isolated A/B measurements before assigning a percentage to
+each optimization.
+
 ## Workload
 
 - Hardware: one 8 GB Jetson Orin Nano (`dopey`)
