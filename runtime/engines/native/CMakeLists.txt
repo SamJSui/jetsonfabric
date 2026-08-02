@@ -70,6 +70,18 @@ if(TARGET ggml)
   target_link_libraries(jf-native-inference-bench PRIVATE
     jetsonfabric-native-inference
   )
+  add_executable(jf-native-attention-parity
+    benchmarks/native_attention_parity.cpp
+  )
+  target_compile_features(jf-native-attention-parity PRIVATE cxx_std_20)
+  target_compile_options(jf-native-attention-parity PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  target_link_libraries(jf-native-attention-parity PRIVATE
+    jetsonfabric-native-inference
+  )
 endif()
 
 if(BUILD_TESTING)

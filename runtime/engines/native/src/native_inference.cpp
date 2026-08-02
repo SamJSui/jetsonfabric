@@ -8,11 +8,18 @@
 #include <utility>
 
 namespace jetsonfabric::native {
+
 class NativeEngine::Impl {
 public:
-    Impl(const std::string& package_path, Backend backend, int threads)
-        : tensors(package_path, backend, threads),
+    Impl(const std::string& package_path, EngineOptions options)
+        : tensors(package_path, options.backend, options.threads),
           architecture(create_architecture(tensors)) {
+        prefill_attention_kernel = architecture->resolve_attention_kernel(
+            options.backend, options.prefill_attention_kernel
+        );
+        decode_attention_kernel = architecture->resolve_attention_kernel(
+            options.backend, options.decode_attention_kernel
+        );
         info = architecture->model_info();
         info.source_sha256 = tensors.source_sha256();
         info.compute_backend = tensors.backend_name();
@@ -25,19 +32,32 @@ public:
     std::unique_ptr<ModelArchitecture> architecture;
     std::unique_ptr<InferenceSession> session;
     ModelInfo info;
+    AttentionKernel prefill_attention_kernel = AttentionKernel::Unfused;
+    AttentionKernel decode_attention_kernel = AttentionKernel::Unfused;
 
     InferenceSession& reset_session(std::size_t required_capacity) {
         if (!session || session->capacity() != required_capacity) {
-            session = architecture->create_session(tensors, required_capacity);
+            session = architecture->create_session(
+                tensors, required_capacity,
+                prefill_attention_kernel, decode_attention_kernel
+            );
         }
         session->reset();
         return *session;
     }
 };
 
-NativeEngine::NativeEngine(const std::string& package_path, Backend backend, int threads) {
+NativeEngine::NativeEngine(const std::string& package_path, Backend backend, int threads)
+    : NativeEngine(package_path, EngineOptions{
+          .backend = backend,
+          .prefill_attention_kernel = AttentionKernel::Automatic,
+          .decode_attention_kernel = AttentionKernel::Unfused,
+          .threads = threads,
+      }) {}
+
+NativeEngine::NativeEngine(const std::string& package_path, EngineOptions options) {
     const auto start = std::chrono::steady_clock::now();
-    impl_ = std::make_unique<Impl>(package_path, backend, threads);
+    impl_ = std::make_unique<Impl>(package_path, options);
     load_time_ms_ = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - start
     ).count();
@@ -48,6 +68,12 @@ NativeEngine::NativeEngine(NativeEngine&&) noexcept = default;
 NativeEngine& NativeEngine::operator=(NativeEngine&&) noexcept = default;
 
 const ModelInfo& NativeEngine::model_info() const { return impl_->info; }
+AttentionKernel NativeEngine::prefill_attention_kernel() const {
+    return impl_->prefill_attention_kernel;
+}
+AttentionKernel NativeEngine::decode_attention_kernel() const {
+    return impl_->decode_attention_kernel;
+}
 double NativeEngine::load_time_ms() const { return load_time_ms_; }
 
 void NativeEngine::release_session() { impl_->session.reset(); }
@@ -61,8 +87,40 @@ std::vector<float> NativeEngine::logits(std::span<const std::int32_t> tokens) {
             throw std::invalid_argument("native token ID is outside model vocabulary");
         }
     }
-    auto session = impl_->architecture->create_session(impl_->tensors, tokens.size());
+    auto session = impl_->architecture->create_session(
+        impl_->tensors, tokens.size(),
+        impl_->prefill_attention_kernel, impl_->decode_attention_kernel
+    );
     return session->prefill_logits(tokens);
+}
+
+std::vector<std::vector<float>> NativeEngine::forced_decode_logits(
+    std::span<const std::int32_t> prompt_tokens,
+    std::span<const std::int32_t> forced_tokens
+) {
+    if (prompt_tokens.empty() ||
+        prompt_tokens.size() + forced_tokens.size() > impl_->info.context_length) {
+        throw std::invalid_argument("native logit trace is outside model context");
+    }
+    const auto validate_token = [this](std::int32_t token) {
+        if (token < 0 || static_cast<std::uint32_t>(token) >= impl_->info.vocabulary_size) {
+            throw std::invalid_argument("native token ID is outside model vocabulary");
+        }
+    };
+    for (const std::int32_t token : prompt_tokens) validate_token(token);
+    for (const std::int32_t token : forced_tokens) validate_token(token);
+
+    auto session = impl_->architecture->create_session(
+        impl_->tensors, prompt_tokens.size() + forced_tokens.size(),
+        impl_->prefill_attention_kernel, impl_->decode_attention_kernel
+    );
+    std::vector<std::vector<float>> trace;
+    trace.reserve(forced_tokens.size() + 1U);
+    trace.push_back(session->prefill_logits(prompt_tokens));
+    for (const std::int32_t token : forced_tokens) {
+        trace.push_back(session->decode_logits(token));
+    }
+    return trace;
 }
 
 GenerationResult NativeEngine::generate(
@@ -115,6 +173,15 @@ GenerationResult NativeEngine::generate(
 
 const char * backend_name(Backend backend) {
     return backend == Backend::Cuda ? "cuda" : "cpu";
+}
+
+const char * attention_kernel_name(AttentionKernel kernel) {
+    switch (kernel) {
+    case AttentionKernel::Automatic: return "automatic";
+    case AttentionKernel::Unfused: return "unfused";
+    case AttentionKernel::Flash: return "flash";
+    }
+    return "unknown";
 }
 
 } // namespace jetsonfabric::native

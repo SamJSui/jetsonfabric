@@ -26,6 +26,7 @@ public:
     virtual std::vector<float> prefill_logits(
         std::span<const std::int32_t> tokens
     ) = 0;
+    virtual std::vector<float> decode_logits(std::int32_t token) = 0;
     virtual PrefillResult prefill_greedy(
         std::span<const std::int32_t> tokens
     ) = 0;
@@ -38,9 +39,15 @@ public:
     virtual ~ModelArchitecture() = default;
 
     virtual const ModelInfo& model_info() const = 0;
+    virtual AttentionKernel resolve_attention_kernel(
+        Backend backend,
+        AttentionKernel requested
+    ) const = 0;
     virtual std::unique_ptr<InferenceSession> create_session(
         TensorStore& tensors,
-        std::size_t capacity
+        std::size_t capacity,
+        AttentionKernel prefill_attention_kernel,
+        AttentionKernel decode_attention_kernel
     ) const = 0;
 };
 

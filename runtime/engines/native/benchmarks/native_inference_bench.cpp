@@ -19,6 +19,10 @@ enum class SessionPolicy { Warm, Cold, Mixed };
 struct Arguments {
     std::string package_path;
     jetsonfabric::native::Backend backend = jetsonfabric::native::Backend::Cpu;
+    jetsonfabric::native::AttentionKernel prefill_attention_kernel =
+        jetsonfabric::native::AttentionKernel::Automatic;
+    jetsonfabric::native::AttentionKernel decode_attention_kernel =
+        jetsonfabric::native::AttentionKernel::Unfused;
     std::vector<std::int32_t> tokens;
     std::uint32_t max_tokens = 1;
     std::uint32_t warmups = 0;
@@ -59,6 +63,16 @@ std::vector<std::int32_t> parse_tokens(const std::string& value) {
     return tokens;
 }
 
+jetsonfabric::native::AttentionKernel parse_attention_kernel(
+    const std::string& value,
+    const std::string& option
+) {
+    if (value == "auto") return jetsonfabric::native::AttentionKernel::Automatic;
+    if (value == "unfused") return jetsonfabric::native::AttentionKernel::Unfused;
+    if (value == "flash") return jetsonfabric::native::AttentionKernel::Flash;
+    throw std::invalid_argument(option + " must be auto, unfused, or flash");
+}
+
 Arguments parse_args(int argc, char ** argv) {
     Arguments args;
     for (int index = 1; index < argc; ++index) {
@@ -87,6 +101,11 @@ Arguments parse_args(int argc, char ** argv) {
         else if (option == "--decode-policy" && value == "full-prefix") args.incremental = false;
         else if (option == "--backend" && value == "cpu") args.backend = jetsonfabric::native::Backend::Cpu;
         else if (option == "--backend" && value == "cuda") args.backend = jetsonfabric::native::Backend::Cuda;
+        else if (option == "--prefill-attention-kernel") {
+            args.prefill_attention_kernel = parse_attention_kernel(value, option);
+        } else if (option == "--decode-attention-kernel") {
+            args.decode_attention_kernel = parse_attention_kernel(value, option);
+        }
         else throw std::invalid_argument("unknown option or backend: " + option + " " + value);
     }
     if (args.package_path.empty() || args.tokens.empty() || args.max_tokens == 0 ||
@@ -212,7 +231,15 @@ RunResult run_generation(
 int main(int argc, char ** argv) {
     try {
         const Arguments args = parse_args(argc, argv);
-        jetsonfabric::native::NativeEngine engine(args.package_path, args.backend, args.threads);
+        jetsonfabric::native::NativeEngine engine(
+            args.package_path,
+            jetsonfabric::native::EngineOptions{
+                .backend = args.backend,
+                .prefill_attention_kernel = args.prefill_attention_kernel,
+                .decode_attention_kernel = args.decode_attention_kernel,
+                .threads = args.threads,
+            }
+        );
         for (std::uint32_t index = 0; index < args.warmups; ++index) {
             (void) run_generation(engine, args);
         }
@@ -227,6 +254,7 @@ int main(int argc, char ** argv) {
         std::vector<double> prefill_compute;
         std::vector<double> prefill_output_read;
         std::uint32_t prefill_plan_reuse_count = 0;
+        std::uint32_t prefill_attention_backend_verified_count = 0;
         jetsonfabric::native::ExecutionBufferMetrics buffers;
         std::vector<std::int32_t> sampled_tokens;
         std::vector<std::int32_t> alternate_sampled_tokens;
@@ -251,6 +279,9 @@ int main(int argc, char ** argv) {
             prefill_compute.push_back(result.prefill.compute_ms);
             prefill_output_read.push_back(result.prefill.output_read_ms);
             if (result.prefill.plan_reused) ++prefill_plan_reuse_count;
+            if (result.prefill.attention_backend_verified) {
+                ++prefill_attention_backend_verified_count;
+            }
             buffers = result.buffers;
             if (run.alternate) {
                 if (index == 0) alternate_sampled_tokens = run.alternate->sampled_tokens;
@@ -285,6 +316,26 @@ int main(int argc, char ** argv) {
                   << "  \"requested_backend\": \""
                   << jetsonfabric::native::backend_name(args.backend) << "\",\n"
                   << "  \"backend\": \"" << info.compute_backend << "\",\n"
+                  << "  \"requested_prefill_attention_kernel\": \""
+                  << jetsonfabric::native::attention_kernel_name(
+                         args.prefill_attention_kernel
+                     )
+                  << "\",\n"
+                  << "  \"prefill_attention_kernel\": \""
+                  << jetsonfabric::native::attention_kernel_name(
+                         engine.prefill_attention_kernel()
+                     )
+                  << "\",\n"
+                  << "  \"requested_decode_attention_kernel\": \""
+                  << jetsonfabric::native::attention_kernel_name(
+                         args.decode_attention_kernel
+                     )
+                  << "\",\n"
+                  << "  \"decode_attention_kernel\": \""
+                  << jetsonfabric::native::attention_kernel_name(
+                         engine.decode_attention_kernel()
+                     )
+                  << "\",\n"
                   << "  \"device\": \"" << info.compute_device << "\",\n"
                   << "  \"layer_count\": " << info.layer_count << ",\n"
                   << "  \"embedding_length\": " << info.embedding_length << ",\n"
@@ -333,6 +384,8 @@ int main(int argc, char ** argv) {
                   << median(end_to_end_throughput) << ",\n"
                   << "  \"prefill_plan_reuse_count\": "
                   << prefill_plan_reuse_count << ",\n"
+                  << "  \"prefill_attention_backend_verified_count\": "
+                  << prefill_attention_backend_verified_count << ",\n"
                   << "  \"prefill_planning_p50_ms\": "
                   << median(prefill_graph_build) << ",\n"
                   << "  \"prefill_allocation_p50_ms\": "

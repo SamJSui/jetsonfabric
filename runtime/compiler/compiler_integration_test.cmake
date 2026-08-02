@@ -69,12 +69,35 @@ if(NOT QWEN_RESULT EQUAL 0)
 endif()
 if(NOT QWEN_OUTPUT MATCHES "\"engine\": \"jetsonfabric-native\"" OR
    NOT QWEN_OUTPUT MATCHES "\"sampled_tokens\": \[7,7\]" OR
+   NOT QWEN_OUTPUT MATCHES "\"prefill_attention_kernel\": \"unfused\"" OR
+   NOT QWEN_OUTPUT MATCHES "\"decode_attention_kernel\": \"unfused\"" OR
    NOT QWEN_OUTPUT MATCHES "\"prefill_plan_reuse_count\": 1" OR
    NOT QWEN_OUTPUT MATCHES "\"prefill_compute_p50_ms\":" OR
    NOT QWEN_OUTPUT MATCHES "\"session_policy\": \"exact_shape_reuse_enabled\"" OR
    NOT QWEN_OUTPUT MATCHES "\"prefill_scratch_bytes\":" OR
    NOT QWEN_OUTPUT MATCHES "\"decode_policy\": \"incremental\"")
   message(FATAL_ERROR "native Qwen benchmark returned unexpected output: ${QWEN_OUTPUT}")
+endif()
+
+execute_process(
+  COMMAND "${INFERENCE_BENCH_BIN}"
+    --package "${WORK_DIR}/fixture.jfm"
+    --backend cpu
+    --prefill-attention-kernel flash
+    --tokens 2
+    --max-tokens 1
+    --iterations 1
+    --threads 1
+  RESULT_VARIABLE CPU_FLASH_RESULT
+  OUTPUT_VARIABLE CPU_FLASH_OUTPUT
+  ERROR_VARIABLE CPU_FLASH_ERROR
+)
+if(CPU_FLASH_RESULT EQUAL 0 OR
+   NOT CPU_FLASH_ERROR MATCHES "flash attention requires the CUDA backend")
+  message(FATAL_ERROR
+    "native Qwen accepted CUDA flash attention on CPU: "
+    "${CPU_FLASH_OUTPUT}${CPU_FLASH_ERROR}"
+  )
 endif()
 
 execute_process(
