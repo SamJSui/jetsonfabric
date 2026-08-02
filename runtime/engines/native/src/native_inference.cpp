@@ -50,6 +50,8 @@ NativeEngine& NativeEngine::operator=(NativeEngine&&) noexcept = default;
 const ModelInfo& NativeEngine::model_info() const { return impl_->info; }
 double NativeEngine::load_time_ms() const { return load_time_ms_; }
 
+void NativeEngine::release_session() { impl_->session.reset(); }
+
 std::vector<float> NativeEngine::logits(std::span<const std::int32_t> tokens) {
     if (tokens.empty() || tokens.size() > impl_->info.context_length) {
         throw std::invalid_argument("native token sequence is outside model context");
@@ -85,9 +87,14 @@ GenerationResult NativeEngine::generate(
     double decode_ms = 0.0;
     for (std::uint32_t index = 0; index < max_tokens; ++index) {
         const auto start = std::chrono::steady_clock::now();
-        const std::int32_t token = index == 0
-            ? session.prefill_greedy(prompt_tokens)
-            : session.decode_greedy(result.sampled_tokens.back());
+        std::int32_t token = -1;
+        if (index == 0) {
+            PrefillResult prefill = session.prefill_greedy(prompt_tokens);
+            token = prefill.token;
+            result.prefill = prefill.metrics;
+        } else {
+            token = session.decode_greedy(result.sampled_tokens.back());
+        }
         const double elapsed = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - start
         ).count();
@@ -102,6 +109,7 @@ GenerationResult NativeEngine::generate(
     }
     result.end_to_end_tokens_per_second =
         1000.0 * static_cast<double>(max_tokens) / total_ms;
+    result.buffers = session.execution_buffers();
     return result;
 }
 

@@ -25,8 +25,26 @@ struct ModelInfo {
     std::uint64_t weight_bytes = 0;
 };
 
+struct PrefillMetrics {
+    bool plan_reused = false;
+    double planning_ms = 0.0;
+    double allocation_ms = 0.0;
+    double host_input_preparation_ms = 0.0;
+    double compute_ms = 0.0;
+    double output_read_ms = 0.0;
+};
+
+struct ExecutionBufferMetrics {
+    std::uint64_t kv_cache_bytes = 0;
+    std::uint64_t prefill_scratch_bytes = 0;
+    std::uint64_t decode_scratch_bytes = 0;
+    std::uint64_t prefill_host_input_bytes = 0;
+};
+
 struct GenerationResult {
     std::vector<std::int32_t> sampled_tokens;
+    PrefillMetrics prefill;
+    ExecutionBufferMetrics buffers;
     double time_to_first_token_ms = 0.0;
     double inter_token_latency_ms = 0.0;
     double decode_tokens_per_second = 0.0;
@@ -52,6 +70,7 @@ public:
         std::span<const std::int32_t> prompt_tokens,
         std::uint32_t max_tokens
     );
+    void release_session();
 
 private:
     class Impl;

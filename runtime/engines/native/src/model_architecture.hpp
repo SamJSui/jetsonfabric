@@ -12,6 +12,11 @@ namespace jetsonfabric::native {
 
 class TensorStore;
 
+struct PrefillResult {
+    std::int32_t token = -1;
+    PrefillMetrics metrics;
+};
+
 class InferenceSession {
 public:
     virtual ~InferenceSession() = default;
@@ -21,10 +26,11 @@ public:
     virtual std::vector<float> prefill_logits(
         std::span<const std::int32_t> tokens
     ) = 0;
-    virtual std::int32_t prefill_greedy(
+    virtual PrefillResult prefill_greedy(
         std::span<const std::int32_t> tokens
     ) = 0;
     virtual std::int32_t decode_greedy(std::int32_t token) = 0;
+    virtual ExecutionBufferMetrics execution_buffers() const = 0;
 };
 
 class ModelArchitecture {

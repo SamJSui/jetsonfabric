@@ -107,6 +107,8 @@ def validate_pair(native, llama, model_sha256):
         raise RuntimeError("native and llama.cpp prompt token IDs differ")
     if native["sampled_tokens"] != llama["sampled_tokens"]:
         raise RuntimeError("native and llama.cpp greedy token IDs differ")
+    if native.get("session_policy") != "exact_shape_reuse_enabled":
+        raise RuntimeError("native benchmark did not enable exact-shape session reuse")
 
 
 def tokens_argument(tokens):
@@ -132,6 +134,8 @@ def native_command(args, prompt, output_length):
         str(args.threads),
         "--decode-policy",
         "incremental",
+        "--session-policy",
+        "warm",
     ]
 
 
@@ -229,10 +233,10 @@ def arguments(argv=None):
     parsed.prompt_seed = parse_int_list(parsed.prompt_seed, "prompt seed", allow_zero=True)
     parsed.prompt_lengths = parse_int_list(parsed.prompt_lengths, "prompt lengths")
     parsed.output_lengths = parse_int_list(parsed.output_lengths, "output lengths")
-    if parsed.threads <= 0 or parsed.iterations <= 1 or parsed.warmups < 0:
+    if parsed.threads <= 0 or parsed.iterations <= 1 or parsed.warmups <= 0:
         parser.error(
             "threads must be positive, iterations must exceed one, "
-            "and warmups cannot be negative"
+            "and matched comparisons require at least one warmup"
         )
     if parsed.n_gpu_layers < 0:
         parser.error("n-gpu-layers cannot be negative")
@@ -267,6 +271,9 @@ def main(argv=None):
             "backend": args.backend,
             "n_gpu_layers": args.n_gpu_layers,
             "sampling": "greedy",
+            "comparison_scope": "matched_exact_shape_reuse",
+            "native_session_policy": "exact_shape_reuse_enabled",
+            "llama_context_policy": "reused_context_kv_cleared",
         },
         "rows": [],
     }

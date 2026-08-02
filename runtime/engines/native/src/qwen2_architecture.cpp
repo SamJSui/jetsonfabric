@@ -8,6 +8,7 @@
 #include "ggml-cpp.h"
 #include "ggml.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <initializer_list>
@@ -28,6 +29,14 @@ struct LayerCache {
 };
 
 enum class OutputKind { Logits, GreedyToken };
+enum class InputKind { Prefill, Decode };
+
+struct GraphTimings {
+    double allocation_ms = 0.0;
+    double host_input_preparation_ms = 0.0;
+    double compute_ms = 0.0;
+    double output_read_ms = 0.0;
+};
 
 void require_shape(
     const TensorStore& tensors,
@@ -84,10 +93,11 @@ public:
         ggml_backend_sched_t scheduler,
         std::size_t attention_length,
         std::size_t token_count,
-        OutputKind output_kind
+        OutputKind output_kind,
+        InputKind input_kind
     ) : weights_(weights), params_(params), cache_(cache), scheduler_(scheduler),
         attention_length_(attention_length), token_count_(token_count),
-        output_kind_(output_kind) {
+        output_kind_(output_kind), input_kind_(input_kind) {
         if (token_count == 0 || attention_length < token_count ||
             attention_length > params.public_info.context_length ||
             cache.size() != params.public_info.layer_count || scheduler == nullptr) {
@@ -105,6 +115,9 @@ public:
         }
         build();
         assign_backends();
+        if (input_kind_ == InputKind::Prefill) {
+            prepare_fixed_inputs();
+        }
     }
 
     std::vector<float> compute_logits(
@@ -122,28 +135,62 @@ public:
 
     std::int32_t compute_greedy_token(
         std::span<const std::int32_t> tokens,
-        std::size_t position
+        std::size_t position,
+        GraphTimings * timings = nullptr
     ) {
         if (output_kind_ != OutputKind::GreedyToken) {
             throw std::logic_error("native Qwen2 graph does not produce a greedy token");
         }
-        compute(tokens, position);
+        compute(tokens, position, timings);
+        const auto read_start = std::chrono::steady_clock::now();
         std::int32_t token = -1;
         ggml_backend_tensor_get(greedy_token_, &token, 0, sizeof(token));
+        if (timings != nullptr) {
+            timings->output_read_ms = elapsed_ms(read_start);
+        }
         return token;
     }
 
+    std::uint64_t host_input_bytes() const {
+        return fixed_positions_.size() * sizeof(std::int32_t) +
+            fixed_attention_mask_.size() * sizeof(float) +
+            fixed_value_cache_indices_.size() * sizeof(std::int32_t) +
+            sizeof(fixed_output_index_);
+    }
+
 private:
-    void compute(std::span<const std::int32_t> tokens, std::size_t position) {
+    static double elapsed_ms(std::chrono::steady_clock::time_point start) {
+        return std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start
+        ).count();
+    }
+
+    void compute(
+        std::span<const std::int32_t> tokens,
+        std::size_t position,
+        GraphTimings * timings = nullptr
+    ) {
         if (!allocated_) {
+            const auto allocation_start = std::chrono::steady_clock::now();
             ggml_backend_sched_reset(scheduler_);
             if (!ggml_backend_sched_alloc_graph(scheduler_, graph_)) {
                 throw std::runtime_error("could not allocate native Qwen2 compute graph");
             }
             allocated_ = true;
+            if (timings != nullptr) {
+                timings->allocation_ms = elapsed_ms(allocation_start);
+            }
         }
+        const auto input_start = std::chrono::steady_clock::now();
         set_inputs(tokens, position);
+        if (timings != nullptr) {
+            timings->host_input_preparation_ms = elapsed_ms(input_start);
+        }
+        const auto compute_start = std::chrono::steady_clock::now();
         const ggml_status status = ggml_backend_sched_graph_compute(scheduler_, graph_);
+        if (timings != nullptr) {
+            timings->compute_ms = elapsed_ms(compute_start);
+        }
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("native Qwen2 graph computation failed");
         }
@@ -359,6 +406,14 @@ private:
         if (tokens.size() != token_count_ || position + token_count_ > attention_length_) {
             throw std::invalid_argument("native Qwen2 graph token count changed");
         }
+        if (input_kind_ == InputKind::Prefill && position != 0) {
+            throw std::invalid_argument("native Qwen2 prefill graph must start at position zero");
+        }
+        ggml_backend_tensor_set(input_tokens_, tokens.data(), 0, tokens.size_bytes());
+        if (input_kind_ == InputKind::Prefill) {
+            upload_fixed_inputs();
+            return;
+        }
         std::vector<std::int32_t> positions(token_count_);
         for (std::size_t query = 0; query < token_count_; ++query) {
             positions[query] = static_cast<std::int32_t>(position + query);
@@ -367,7 +422,6 @@ private:
         const std::vector<std::int32_t> value_cache_indices =
             build_value_cache_indices(position);
         const std::int32_t output_index = static_cast<std::int32_t>(token_count_ - 1);
-        ggml_backend_tensor_set(input_tokens_, tokens.data(), 0, tokens.size_bytes());
         ggml_backend_tensor_set(positions_, positions.data(), 0, positions.size() * sizeof(std::int32_t));
         ggml_backend_tensor_set(mask_, mask.data(), 0, mask.size() * sizeof(float));
         ggml_backend_tensor_set(output_index_, &output_index, 0, sizeof(output_index));
@@ -377,6 +431,38 @@ private:
         ggml_backend_tensor_set(
             value_cache_indices_, value_cache_indices.data(), 0,
             value_cache_indices.size() * sizeof(std::int32_t)
+        );
+    }
+
+    void prepare_fixed_inputs() {
+        fixed_positions_.resize(token_count_);
+        for (std::size_t query = 0; query < token_count_; ++query) {
+            fixed_positions_[query] = static_cast<std::int32_t>(query);
+        }
+        fixed_attention_mask_ = build_attention_mask(0);
+        fixed_value_cache_indices_ = build_value_cache_indices(0);
+        fixed_output_index_ = static_cast<std::int32_t>(token_count_ - 1);
+    }
+
+    void upload_fixed_inputs() {
+        ggml_backend_tensor_set(
+            positions_, fixed_positions_.data(), 0,
+            fixed_positions_.size() * sizeof(std::int32_t)
+        );
+        ggml_backend_tensor_set(
+            mask_, fixed_attention_mask_.data(), 0,
+            fixed_attention_mask_.size() * sizeof(float)
+        );
+        ggml_backend_tensor_set(
+            output_index_, &fixed_output_index_, 0, sizeof(fixed_output_index_)
+        );
+        ggml_backend_tensor_set(
+            cache_indices_, fixed_positions_.data(), 0,
+            fixed_positions_.size() * sizeof(std::int32_t)
+        );
+        ggml_backend_tensor_set(
+            value_cache_indices_, fixed_value_cache_indices_.data(), 0,
+            fixed_value_cache_indices_.size() * sizeof(std::int32_t)
         );
     }
 
@@ -421,6 +507,7 @@ private:
     std::size_t attention_length_;
     std::size_t token_count_;
     OutputKind output_kind_;
+    InputKind input_kind_;
     bool allocated_ = false;
     ggml_context_ptr context_;
     ggml_cgraph * graph_ = nullptr;
@@ -432,6 +519,10 @@ private:
     ggml_tensor * value_cache_indices_ = nullptr;
     ggml_tensor * logits_ = nullptr;
     ggml_tensor * greedy_token_ = nullptr;
+    std::vector<std::int32_t> fixed_positions_;
+    std::vector<float> fixed_attention_mask_;
+    std::vector<std::int32_t> fixed_value_cache_indices_;
+    std::int32_t fixed_output_index_ = 0;
 };
 
 } // namespace
@@ -447,7 +538,8 @@ public:
             throw std::invalid_argument("native Qwen2 cache capacity is outside model context");
         }
         allocate_cache();
-        create_scheduler();
+        prefill_scheduler_ = create_scheduler();
+        decode_scheduler_ = create_scheduler();
     }
 
     std::size_t capacity() const override { return capacity_; }
@@ -460,38 +552,78 @@ public:
         std::span<const std::int32_t> tokens
     ) override {
         validate_prefill(tokens);
+        ggml_backend_sched_ptr logits_scheduler = create_scheduler();
         std::vector<float> output = ForwardGraph(
-            tensors_, hparams_, cache_, scheduler_.get(), tokens.size(), tokens.size(),
-            OutputKind::Logits
+            tensors_, hparams_, cache_, logits_scheduler.get(),
+            tokens.size(), tokens.size(), OutputKind::Logits,
+            InputKind::Prefill
         ).compute_logits(tokens, 0);
         position_ += tokens.size();
         return output;
     }
 
-    std::int32_t prefill_greedy(
+    PrefillResult prefill_greedy(
         std::span<const std::int32_t> tokens
     ) override {
         validate_prefill(tokens);
-        const std::int32_t token = ForwardGraph(
-            tensors_, hparams_, cache_, scheduler_.get(), tokens.size(), tokens.size(),
-            OutputKind::GreedyToken
-        ).compute_greedy_token(tokens, 0);
+        const bool graph_reused = prefill_greedy_graph_ != nullptr &&
+            prefill_token_count_ == tokens.size();
+        double graph_build_ms = 0.0;
+        if (!graph_reused) {
+            const auto build_start = std::chrono::steady_clock::now();
+            prefill_greedy_graph_ = std::make_unique<ForwardGraph>(
+                tensors_, hparams_, cache_, prefill_scheduler_.get(),
+                tokens.size(), tokens.size(), OutputKind::GreedyToken,
+                InputKind::Prefill
+            );
+            graph_build_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - build_start
+            ).count();
+            prefill_token_count_ = tokens.size();
+        }
+        GraphTimings graph_timings;
+        const std::int32_t token = prefill_greedy_graph_->compute_greedy_token(
+            tokens, 0, &graph_timings
+        );
         position_ += tokens.size();
-        return token;
+        return PrefillResult{
+            .token = token,
+            .metrics = PrefillMetrics{
+                .plan_reused = graph_reused,
+                .planning_ms = graph_build_ms,
+                .allocation_ms = graph_timings.allocation_ms,
+                .host_input_preparation_ms = graph_timings.host_input_preparation_ms,
+                .compute_ms = graph_timings.compute_ms,
+                .output_read_ms = graph_timings.output_read_ms,
+            },
+        };
     }
 
     std::int32_t decode_greedy(std::int32_t token) override {
         validate_decode();
         if (!decode_greedy_graph_) {
             decode_greedy_graph_ = std::make_unique<ForwardGraph>(
-                tensors_, hparams_, cache_, scheduler_.get(), capacity_, 1,
-                OutputKind::GreedyToken
+                tensors_, hparams_, cache_, decode_scheduler_.get(), capacity_, 1,
+                OutputKind::GreedyToken, InputKind::Decode
             );
         }
         const std::span<const std::int32_t> tokens(&token, 1);
         const std::int32_t output = decode_greedy_graph_->compute_greedy_token(tokens, position_);
         ++position_;
         return output;
+    }
+
+    ExecutionBufferMetrics execution_buffers() const override {
+        return ExecutionBufferMetrics{
+            .kv_cache_bytes = cache_buffer_ == nullptr
+                ? 0U
+                : ggml_backend_buffer_get_size(cache_buffer_.get()),
+            .prefill_scratch_bytes = scheduler_buffer_bytes(prefill_scheduler_.get()),
+            .decode_scratch_bytes = scheduler_buffer_bytes(decode_scheduler_.get()),
+            .prefill_host_input_bytes = prefill_greedy_graph_ == nullptr
+                ? 0U
+                : prefill_greedy_graph_->host_input_bytes(),
+        };
     }
 
 private:
@@ -544,14 +676,25 @@ private:
         ggml_backend_buffer_clear(cache_buffer_.get(), 0);
     }
 
-    void create_scheduler() {
+    ggml_backend_sched_ptr create_scheduler() {
         std::span<ggml_backend_t> backends = tensors_.scheduler_backends();
-        scheduler_.reset(ggml_backend_sched_new(
+        ggml_backend_sched_ptr scheduler(ggml_backend_sched_new(
             backends.data(), nullptr, backends.size(), kGraphSize, false, true
         ));
-        if (!scheduler_) {
+        if (!scheduler) {
             throw std::runtime_error("could not create native Qwen2 scheduler");
         }
+        return scheduler;
+    }
+
+    static std::uint64_t scheduler_buffer_bytes(ggml_backend_sched_t scheduler) {
+        std::uint64_t bytes = 0;
+        const int backend_count = ggml_backend_sched_get_n_backends(scheduler);
+        for (int index = 0; index < backend_count; ++index) {
+            ggml_backend_t backend = ggml_backend_sched_get_backend(scheduler, index);
+            bytes += ggml_backend_sched_get_buffer_size(scheduler, backend);
+        }
+        return bytes;
     }
 
     TensorStore& tensors_;
@@ -560,8 +703,11 @@ private:
     std::size_t position_ = 0;
     ggml_context_ptr cache_context_;
     ggml_backend_buffer_ptr cache_buffer_;
-    ggml_backend_sched_ptr scheduler_;
+    ggml_backend_sched_ptr prefill_scheduler_;
+    ggml_backend_sched_ptr decode_scheduler_;
     std::vector<LayerCache> cache_;
+    std::unique_ptr<ForwardGraph> prefill_greedy_graph_;
+    std::size_t prefill_token_count_ = 0;
     std::unique_ptr<ForwardGraph> decode_greedy_graph_;
 };
 

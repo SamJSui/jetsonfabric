@@ -48,10 +48,23 @@ class NativeEngineMatrixTest(unittest.TestCase):
             "source_sha256": "abc",
             "prompt_tokens": [1],
             "sampled_tokens": [2],
+            "session_policy": "exact_shape_reuse_enabled",
         }
         llama = {"prompt_tokens": [1], "sampled_tokens": [3]}
         with self.assertRaisesRegex(RuntimeError, "greedy token IDs differ"):
             native_engine_matrix.validate_pair(native, llama, "abc")
+
+    def test_native_command_enables_exact_shape_reuse(self):
+        class Args:
+            native_bin = Path("native")
+            package = Path("model.jfm")
+            backend = "cuda"
+            warmups = 1
+            iterations = 2
+            threads = 6
+
+        command = native_engine_matrix.native_command(Args(), [1, 2], 3)
+        self.assertEqual(command[command.index("--session-policy") + 1], "warm")
 
     @staticmethod
     def metrics(ttft, itl, decode, end_to_end):

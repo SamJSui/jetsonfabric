@@ -14,6 +14,8 @@
 
 namespace {
 
+enum class SessionPolicy { Warm, Cold, Mixed };
+
 struct Arguments {
     std::string package_path;
     jetsonfabric::native::Backend backend = jetsonfabric::native::Backend::Cpu;
@@ -23,7 +25,10 @@ struct Arguments {
     std::uint32_t iterations = 1;
     int threads = 1;
     bool incremental = true;
+    SessionPolicy session_policy = SessionPolicy::Warm;
+    std::optional<std::vector<std::int32_t>> alternate_tokens;
     std::optional<std::vector<std::int32_t>> expected_tokens;
+    std::optional<std::vector<std::int32_t>> expected_alternate_tokens;
 };
 
 std::uint32_t parse_u32(const std::string& value, const char * name) {
@@ -67,6 +72,17 @@ Arguments parse_args(int argc, char ** argv) {
         else if (option == "--iterations") args.iterations = parse_u32(value, "--iterations");
         else if (option == "--threads") args.threads = static_cast<int>(parse_u32(value, "--threads"));
         else if (option == "--expected-tokens") args.expected_tokens = parse_tokens(value);
+        else if (option == "--expected-alternate-tokens") {
+            args.expected_alternate_tokens = parse_tokens(value);
+        }
+        else if (option == "--alternate-tokens") args.alternate_tokens = parse_tokens(value);
+        else if (option == "--session-policy" && value == "warm") {
+            args.session_policy = SessionPolicy::Warm;
+        } else if (option == "--session-policy" && value == "cold") {
+            args.session_policy = SessionPolicy::Cold;
+        } else if (option == "--session-policy" && value == "mixed") {
+            args.session_policy = SessionPolicy::Mixed;
+        }
         else if (option == "--decode-policy" && value == "incremental") args.incremental = true;
         else if (option == "--decode-policy" && value == "full-prefix") args.incremental = false;
         else if (option == "--backend" && value == "cpu") args.backend = jetsonfabric::native::Backend::Cpu;
@@ -79,7 +95,22 @@ Arguments parse_args(int argc, char ** argv) {
             "--package, --tokens, positive --max-tokens, --iterations, and --threads are required"
         );
     }
+    if (args.session_policy == SessionPolicy::Mixed &&
+        (!args.incremental || !args.alternate_tokens)) {
+        throw std::invalid_argument(
+            "--session-policy mixed requires incremental decode and --alternate-tokens"
+        );
+    }
     return args;
+}
+
+const char * session_policy_name(SessionPolicy policy) {
+    switch (policy) {
+    case SessionPolicy::Warm: return "exact_shape_reuse_enabled";
+    case SessionPolicy::Cold: return "fresh_session";
+    case SessionPolicy::Mixed: return "mixed_shape";
+    }
+    throw std::logic_error("unknown session policy");
 }
 
 double median(std::vector<double> values) {
@@ -149,6 +180,33 @@ jetsonfabric::native::GenerationResult generate_full_prefix(
     return result;
 }
 
+struct RunResult {
+    jetsonfabric::native::GenerationResult primary;
+    std::optional<jetsonfabric::native::GenerationResult> alternate;
+};
+
+RunResult run_generation(
+    jetsonfabric::native::NativeEngine& engine,
+    const Arguments& args
+) {
+    if (args.session_policy == SessionPolicy::Cold) engine.release_session();
+    RunResult run;
+    run.primary = args.incremental
+        ? engine.generate(args.tokens, args.max_tokens)
+        : generate_full_prefix(engine, args.tokens, args.max_tokens);
+    if (args.session_policy == SessionPolicy::Mixed) {
+        const std::size_t capacity = args.tokens.size() + args.max_tokens - 1U;
+        if (args.alternate_tokens->size() > capacity) {
+            throw std::invalid_argument("alternate tokens exceed the primary session capacity");
+        }
+        const auto alternate_max_tokens = static_cast<std::uint32_t>(
+            capacity - args.alternate_tokens->size() + 1U
+        );
+        run.alternate = engine.generate(*args.alternate_tokens, alternate_max_tokens);
+    }
+    return run;
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -156,19 +214,27 @@ int main(int argc, char ** argv) {
         const Arguments args = parse_args(argc, argv);
         jetsonfabric::native::NativeEngine engine(args.package_path, args.backend, args.threads);
         for (std::uint32_t index = 0; index < args.warmups; ++index) {
-            if (args.incremental) (void) engine.generate(args.tokens, args.max_tokens);
-            else (void) generate_full_prefix(engine, args.tokens, args.max_tokens);
+            (void) run_generation(engine, args);
         }
 
         std::vector<double> ttft;
         std::vector<double> itl;
         std::vector<double> decode_throughput;
         std::vector<double> end_to_end_throughput;
+        std::vector<double> prefill_graph_build;
+        std::vector<double> prefill_graph_allocation;
+        std::vector<double> prefill_host_input_preparation;
+        std::vector<double> prefill_compute;
+        std::vector<double> prefill_output_read;
+        std::uint32_t prefill_plan_reuse_count = 0;
+        jetsonfabric::native::ExecutionBufferMetrics buffers;
         std::vector<std::int32_t> sampled_tokens;
+        std::vector<std::int32_t> alternate_sampled_tokens;
+        std::vector<double> alternate_ttft;
+        std::vector<double> alternate_end_to_end_throughput;
         for (std::uint32_t index = 0; index < args.iterations; ++index) {
-            const auto result = args.incremental
-                ? engine.generate(args.tokens, args.max_tokens)
-                : generate_full_prefix(engine, args.tokens, args.max_tokens);
+            const RunResult run = run_generation(engine, args);
+            const auto& result = run.primary;
             if (index == 0) sampled_tokens = result.sampled_tokens;
             if (result.sampled_tokens != sampled_tokens) {
                 throw std::runtime_error("native greedy output changed between iterations");
@@ -177,9 +243,37 @@ int main(int argc, char ** argv) {
             itl.push_back(result.inter_token_latency_ms);
             decode_throughput.push_back(result.decode_tokens_per_second);
             end_to_end_throughput.push_back(result.end_to_end_tokens_per_second);
+            prefill_graph_build.push_back(result.prefill.planning_ms);
+            prefill_graph_allocation.push_back(result.prefill.allocation_ms);
+            prefill_host_input_preparation.push_back(
+                result.prefill.host_input_preparation_ms
+            );
+            prefill_compute.push_back(result.prefill.compute_ms);
+            prefill_output_read.push_back(result.prefill.output_read_ms);
+            if (result.prefill.plan_reused) ++prefill_plan_reuse_count;
+            buffers = result.buffers;
+            if (run.alternate) {
+                if (index == 0) alternate_sampled_tokens = run.alternate->sampled_tokens;
+                if (run.alternate->sampled_tokens != alternate_sampled_tokens) {
+                    throw std::runtime_error(
+                        "native alternate greedy output changed between iterations"
+                    );
+                }
+                alternate_ttft.push_back(run.alternate->time_to_first_token_ms);
+                alternate_end_to_end_throughput.push_back(
+                    run.alternate->end_to_end_tokens_per_second
+                );
+                buffers = run.alternate->buffers;
+            }
         }
         if (args.expected_tokens && sampled_tokens != *args.expected_tokens) {
             throw std::runtime_error("native token sequence does not match expected oracle tokens");
+        }
+        if (args.expected_alternate_tokens &&
+            alternate_sampled_tokens != *args.expected_alternate_tokens) {
+            throw std::runtime_error(
+                "native alternate token sequence does not match expected oracle tokens"
+            );
         }
 
         const auto& info = engine.model_info();
@@ -200,9 +294,13 @@ int main(int argc, char ** argv) {
         print_tokens(args.tokens);
         std::cout << ",\n  \"sampled_tokens\": ";
         print_tokens(sampled_tokens);
+        std::cout << ",\n  \"alternate_sampled_tokens\": ";
+        print_tokens(alternate_sampled_tokens);
         std::cout << ",\n"
                   << "  \"warmups\": " << args.warmups << ",\n"
                   << "  \"iterations\": " << args.iterations << ",\n"
+                  << "  \"session_policy\": \""
+                  << session_policy_name(args.session_policy) << "\",\n"
                   << "  \"load_ms\": " << engine.load_time_ms() << ",\n"
                   << "  \"ttft_ms\": ";
         print_samples(ttft);
@@ -212,6 +310,20 @@ int main(int argc, char ** argv) {
         print_samples(decode_throughput);
         std::cout << ",\n  \"end_to_end_tokens_per_second\": ";
         print_samples(end_to_end_throughput);
+        std::cout << ",\n  \"alternate_ttft_ms\": ";
+        print_samples(alternate_ttft);
+        std::cout << ",\n  \"alternate_end_to_end_tokens_per_second\": ";
+        print_samples(alternate_end_to_end_throughput);
+        std::cout << ",\n  \"prefill_planning_ms\": ";
+        print_samples(prefill_graph_build);
+        std::cout << ",\n  \"prefill_allocation_ms\": ";
+        print_samples(prefill_graph_allocation);
+        std::cout << ",\n  \"prefill_host_input_preparation_ms\": ";
+        print_samples(prefill_host_input_preparation);
+        std::cout << ",\n  \"prefill_compute_ms\": ";
+        print_samples(prefill_compute);
+        std::cout << ",\n  \"prefill_output_read_ms\": ";
+        print_samples(prefill_output_read);
         std::cout << ",\n"
                   << "  \"ttft_p50_ms\": " << median(ttft) << ",\n"
                   << "  \"itl_p50_ms\": " << median(itl) << ",\n"
@@ -219,6 +331,25 @@ int main(int argc, char ** argv) {
                   << median(decode_throughput) << ",\n"
                   << "  \"end_to_end_tokens_per_second_p50\": "
                   << median(end_to_end_throughput) << ",\n"
+                  << "  \"prefill_plan_reuse_count\": "
+                  << prefill_plan_reuse_count << ",\n"
+                  << "  \"prefill_planning_p50_ms\": "
+                  << median(prefill_graph_build) << ",\n"
+                  << "  \"prefill_allocation_p50_ms\": "
+                  << median(prefill_graph_allocation) << ",\n"
+                  << "  \"prefill_host_input_preparation_p50_ms\": "
+                  << median(prefill_host_input_preparation) << ",\n"
+                  << "  \"prefill_compute_p50_ms\": "
+                  << median(prefill_compute) << ",\n"
+                  << "  \"prefill_output_read_p50_ms\": "
+                  << median(prefill_output_read) << ",\n"
+                  << "  \"kv_cache_bytes\": " << buffers.kv_cache_bytes << ",\n"
+                  << "  \"prefill_scratch_bytes\": "
+                  << buffers.prefill_scratch_bytes << ",\n"
+                  << "  \"decode_scratch_bytes\": "
+                  << buffers.decode_scratch_bytes << ",\n"
+                  << "  \"prefill_host_input_bytes\": "
+                  << buffers.prefill_host_input_bytes << ",\n"
                   << "  \"kv_cache\": " << (args.incremental ? "true" : "false") << ",\n"
                   << "  \"decode_policy\": \""
                   << (args.incremental ? "incremental" : "full_prefix_recompute")
