@@ -17,6 +17,7 @@ namespace {
 struct Arguments {
     std::string model_path;
     std::string prompt;
+    std::vector<llama_token> tokens;
     std::uint32_t max_tokens = 1;
     std::uint32_t warmups = 0;
     std::uint32_t iterations = 1;
@@ -33,6 +34,25 @@ std::uint32_t parse_u32(const std::string& value, const char * name) {
     return static_cast<std::uint32_t>(parsed);
 }
 
+std::vector<llama_token> parse_tokens(const std::string& value) {
+    std::vector<llama_token> tokens;
+    std::size_t start = 0;
+    while (start < value.size()) {
+        const std::size_t end = value.find(',', start);
+        const std::string part = value.substr(start, end - start);
+        std::size_t consumed = 0;
+        const long parsed = std::stol(part, &consumed);
+        if (consumed != part.size() || parsed < 0 || parsed > INT32_MAX) {
+            throw std::invalid_argument("invalid --tokens value");
+        }
+        tokens.push_back(static_cast<llama_token>(parsed));
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    if (tokens.empty()) throw std::invalid_argument("--tokens cannot be empty");
+    return tokens;
+}
+
 Arguments parse_args(int argc, char ** argv) {
     Arguments args;
     for (int index = 1; index < argc; ++index) {
@@ -41,6 +61,7 @@ Arguments parse_args(int argc, char ** argv) {
         const std::string value = argv[++index];
         if (option == "--model") args.model_path = value;
         else if (option == "--prompt") args.prompt = value;
+        else if (option == "--tokens") args.tokens = parse_tokens(value);
         else if (option == "--max-tokens") args.max_tokens = parse_u32(value, option.c_str());
         else if (option == "--warmups") args.warmups = parse_u32(value, option.c_str());
         else if (option == "--iterations") args.iterations = parse_u32(value, option.c_str());
@@ -50,10 +71,13 @@ Arguments parse_args(int argc, char ** argv) {
             args.threads = static_cast<int>(parse_u32(value, option.c_str()));
         } else throw std::invalid_argument("unknown option " + option);
     }
-    if (args.model_path.empty() || args.prompt.empty() || args.max_tokens == 0 ||
+    const bool has_prompt = !args.prompt.empty();
+    const bool has_tokens = !args.tokens.empty();
+    if (args.model_path.empty() || has_prompt == has_tokens || args.max_tokens == 0 ||
         args.iterations == 0 || args.threads <= 0) {
         throw std::invalid_argument(
-            "--model, --prompt, positive --max-tokens, --iterations, and --threads are required"
+            "--model, exactly one of --prompt or --tokens, positive --max-tokens, "
+            "--iterations, and --threads are required"
         );
     }
     return args;
@@ -167,7 +191,15 @@ int main(int argc, char ** argv) {
         );
         if (!model) throw std::runtime_error("llama.cpp could not load oracle model");
         const llama_vocab * vocabulary = llama_model_get_vocab(model.get());
-        std::vector<llama_token> prompt_tokens = tokenize(vocabulary, args.prompt);
+        std::vector<llama_token> prompt_tokens = args.tokens.empty()
+            ? tokenize(vocabulary, args.prompt)
+            : args.tokens;
+        const std::int32_t vocabulary_size = llama_vocab_n_tokens(vocabulary);
+        for (const llama_token token : prompt_tokens) {
+            if (token < 0 || token >= vocabulary_size) {
+                throw std::invalid_argument("prompt token ID is outside model vocabulary");
+            }
+        }
 
         llama_context_params context_params = llama_context_default_params();
         context_params.n_ctx = static_cast<std::uint32_t>(
