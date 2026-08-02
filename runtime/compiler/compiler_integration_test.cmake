@@ -68,7 +68,8 @@ if(NOT QWEN_RESULT EQUAL 0)
   message(FATAL_ERROR "native Qwen execution failed: ${QWEN_OUTPUT}${QWEN_ERROR}")
 endif()
 if(NOT QWEN_OUTPUT MATCHES "\"engine\": \"jetsonfabric-native\"" OR
-   NOT QWEN_OUTPUT MATCHES "\"sampled_tokens\": \[7,7\]")
+   NOT QWEN_OUTPUT MATCHES "\"sampled_tokens\": \[7,7\]" OR
+   NOT QWEN_OUTPUT MATCHES "\"decode_policy\": \"incremental\"")
   message(FATAL_ERROR "native Qwen benchmark returned unexpected output: ${QWEN_OUTPUT}")
 endif()
 
