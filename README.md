@@ -79,19 +79,19 @@ decode reached 6.50 tok/s while experimental tensor sharding reached 1.68 tok/s;
 
 ![Quality versus fixed-output throughput](docs/benchmarks/figures/quality-throughput.svg)
 
-The experimental native engine matched llama.cpp's exact greedy token IDs in a
-12-workload, 20-sample matrix on one Orin Nano. Native decode measured 32.34 to
-47.25 tok/s versus 29.63 to 37.57 tok/s for llama.cpp: a 9.1% to 26.4% increase
-with a 20.5% median. Native TTFT was 2.2% to 2.8% lower at 32 prompt tokens but
-21.8% to 22.5% higher at 2,048, exposing prefill as the next bottleneck. This is
-a direct-engine Qwen2 result, not a general serving claim.
+The experimental native engine's fused CUDA prefill reduced 2,048-token TTFT
+by **37.4%** versus its same-build Unfused control and reduced prefill scratch
+memory by **20.8%**, leaving a 4.2% TTFT gap to pinned llama.cpp. Native decode
+was 3.7% to 16.9% faster than llama.cpp through 512-token prompts but 13.0%
+slower at 2,048. This is a direct-engine Qwen2 result, not a serving claim.
 
 Benchmark reports and claim boundaries:
 [model scaling and HumanEval](docs/benchmarks/2026-07-27-two-orin-nano.md),
 [serving matrix](docs/benchmarks/2026-07-29-serving-matrix.md),
 [32B capacity](docs/benchmarks/2026-07-30-32b-capacity.md),
 [tensor comparison](docs/benchmarks/2026-08-01-tensor-parallel-runtime.md), and
-[native engine matrix](docs/benchmarks/2026-08-01-native-engine-matrix.md).
+[native engine matrix](docs/benchmarks/2026-08-01-native-engine-matrix.md), and
+[native Flash prefill](docs/benchmarks/2026-08-02-native-flash-prefill.md).
 
 ## Quick Start
 

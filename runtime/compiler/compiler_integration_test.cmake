@@ -69,8 +69,84 @@ if(NOT QWEN_RESULT EQUAL 0)
 endif()
 if(NOT QWEN_OUTPUT MATCHES "\"engine\": \"jetsonfabric-native\"" OR
    NOT QWEN_OUTPUT MATCHES "\"sampled_tokens\": \[7,7\]" OR
+   NOT QWEN_OUTPUT MATCHES "\"prefill_attention_kernel\": \"unfused\"" OR
+   NOT QWEN_OUTPUT MATCHES "\"decode_attention_kernel\": \"unfused\"" OR
+   NOT QWEN_OUTPUT MATCHES "\"prefill_plan_reuse_count\": 1" OR
+   NOT QWEN_OUTPUT MATCHES "\"prefill_compute_p50_ms\":" OR
+   NOT QWEN_OUTPUT MATCHES "\"session_policy\": \"exact_shape_reuse_enabled\"" OR
+   NOT QWEN_OUTPUT MATCHES "\"prefill_scratch_bytes\":" OR
    NOT QWEN_OUTPUT MATCHES "\"decode_policy\": \"incremental\"")
   message(FATAL_ERROR "native Qwen benchmark returned unexpected output: ${QWEN_OUTPUT}")
+endif()
+
+execute_process(
+  COMMAND "${INFERENCE_BENCH_BIN}"
+    --package "${WORK_DIR}/fixture.jfm"
+    --backend cpu
+    --prefill-attention-kernel flash
+    --tokens 2
+    --max-tokens 1
+    --iterations 1
+    --threads 1
+  RESULT_VARIABLE CPU_FLASH_RESULT
+  OUTPUT_VARIABLE CPU_FLASH_OUTPUT
+  ERROR_VARIABLE CPU_FLASH_ERROR
+)
+if(CPU_FLASH_RESULT EQUAL 0 OR
+   NOT CPU_FLASH_ERROR MATCHES "flash attention requires the CUDA backend")
+  message(FATAL_ERROR
+    "native Qwen accepted CUDA flash attention on CPU: "
+    "${CPU_FLASH_OUTPUT}${CPU_FLASH_ERROR}"
+  )
+endif()
+
+execute_process(
+  COMMAND "${INFERENCE_BENCH_BIN}"
+    --package "${WORK_DIR}/fixture.jfm"
+    --backend cpu
+    --tokens 2
+    --alternate-tokens 2,2
+    --max-tokens 2
+    --warmups 1
+    --iterations 2
+    --threads 1
+    --session-policy mixed
+    --expected-tokens 7,7
+    --expected-alternate-tokens 7
+  RESULT_VARIABLE MIXED_RESULT
+  OUTPUT_VARIABLE MIXED_OUTPUT
+  ERROR_VARIABLE MIXED_ERROR
+)
+if(NOT MIXED_RESULT EQUAL 0 OR
+   NOT MIXED_OUTPUT MATCHES "\"sampled_tokens\": \[7,7\]" OR
+   NOT MIXED_OUTPUT MATCHES "\"alternate_sampled_tokens\": \[7\]" OR
+   NOT MIXED_OUTPUT MATCHES "\"prefill_plan_reuse_count\": 0" OR
+   NOT MIXED_OUTPUT MATCHES "\"session_policy\": \"mixed_shape\"")
+  message(FATAL_ERROR
+    "native mixed-shape execution failed: ${MIXED_OUTPUT}${MIXED_ERROR}"
+  )
+endif()
+
+execute_process(
+  COMMAND "${INFERENCE_BENCH_BIN}"
+    --package "${WORK_DIR}/fixture.jfm"
+    --backend cpu
+    --tokens 2
+    --max-tokens 2
+    --iterations 2
+    --threads 1
+    --session-policy cold
+    --expected-tokens 7,7
+  RESULT_VARIABLE COLD_RESULT
+  OUTPUT_VARIABLE COLD_OUTPUT
+  ERROR_VARIABLE COLD_ERROR
+)
+if(NOT COLD_RESULT EQUAL 0 OR
+   NOT COLD_OUTPUT MATCHES "\"prefill_plan_reuse_count\": 0" OR
+   NOT COLD_OUTPUT MATCHES "\"session_policy\": \"fresh_session\"")
+  message(FATAL_ERROR
+    "native fresh-session execution failed: ${COLD_OUTPUT}${COLD_ERROR}"
+  )
 endif()
 
 execute_process(
