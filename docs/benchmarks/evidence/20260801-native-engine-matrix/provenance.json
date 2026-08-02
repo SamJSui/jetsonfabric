@@ -1,0 +1,39 @@
+{
+  "benchmark_id": "20260801-native-engine-matrix",
+  "implementation_commit": "09bfd72",
+  "branch": "feature/native-kv-cache",
+  "host": {
+    "node_name": "dopey",
+    "device": "NVIDIA Jetson Orin Nano 8GB",
+    "power_mode": "MAXN_SUPER",
+    "gpu_hz": 1020000000,
+    "emc_hz": 3199000000
+  },
+  "software": {
+    "llama_cpp_revision": "bf2c86ddc0685f580595954056c2e77ebabfab4f",
+    "native_backend": "GGML CUDA",
+    "oracle_backend": "llama.cpp CUDA",
+    "control": "upstream llama-bench"
+  },
+  "model": {
+    "id": "qwen2.5-coder-1.5b-q4",
+    "format": "Q4_K_M",
+    "source_sha256": "cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046"
+  },
+  "workload": {
+    "prompt_seed": [12522, 5193, 264, 882],
+    "prompt_lengths": [32, 128, 512, 2048],
+    "output_lengths": [32, 128, 512],
+    "warmups": 1,
+    "iterations": 20,
+    "sampling": "greedy",
+    "kv_cache": "f16",
+    "engine_order": "alternating"
+  },
+  "upstream_control": {
+    "warmups": 1,
+    "iterations": 5,
+    "tokenization_included": false,
+    "sampling_included": false
+  }
+}

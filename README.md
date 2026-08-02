@@ -79,26 +79,19 @@ decode reached 6.50 tok/s while experimental tensor sharding reached 1.68 tok/s;
 
 ![Quality versus fixed-output throughput](docs/benchmarks/figures/quality-throughput.svg)
 
-The experimental native engine also matched the pinned llama.cpp oracle's exact
-32-token greedy output on one Orin Nano:
-
-| Engine | TTFT p50 | ITL p50 | Decode p50 | End-to-end p50 |
-| --- | ---: | ---: | ---: | ---: |
-| JetsonFabric native | 43.39 ms | **21.03 ms** | **47.56 tok/s** | **46.03 tok/s** |
-| llama.cpp oracle | **42.22 ms** | 26.73 ms | 37.41 tok/s | 36.74 tok/s |
-
-Both engines use incremental F16 KV caches. The native result was 27.1% faster
-in decode for this one-model, one-prompt direct-engine microbenchmark; it is not
-a general serving claim. The matched full-prefix ablation measured 23.31 tok/s,
-showing that native KV caching doubled the previous native decode rate rather
-than introducing a capability absent from llama.cpp.
+The experimental native engine matched llama.cpp's exact greedy token IDs in a
+12-workload, 20-sample matrix on one Orin Nano. Native decode measured 32.34 to
+47.25 tok/s versus 29.63 to 37.57 tok/s for llama.cpp: a 9.1% to 26.4% increase
+with a 20.5% median. Native TTFT was 2.2% to 2.8% lower at 32 prompt tokens but
+21.8% to 22.5% higher at 2,048, exposing prefill as the next bottleneck. This is
+a direct-engine Qwen2 result, not a general serving claim.
 
 Benchmark reports and claim boundaries:
 [model scaling and HumanEval](docs/benchmarks/2026-07-27-two-orin-nano.md),
 [serving matrix](docs/benchmarks/2026-07-29-serving-matrix.md),
 [32B capacity](docs/benchmarks/2026-07-30-32b-capacity.md),
 [tensor comparison](docs/benchmarks/2026-08-01-tensor-parallel-runtime.md), and
-[native KV-cache comparison](docs/benchmarks/2026-08-01-native-kv-cache.md).
+[native engine matrix](docs/benchmarks/2026-08-01-native-engine-matrix.md).
 
 ## Quick Start
 
