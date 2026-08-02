@@ -38,7 +38,7 @@ runtime::protocol::StageResponse response_for(
     return response;
 }
 
-class RecordingLayerExecutor final : public runtime::pipeline_parallel::LayerExecutor {
+class RecordingLayerExecutor final : public runtime::inference::Executor {
 public:
     runtime::inference::ExecutionResult execute(
         const runtime::inference::StageInput& input
@@ -107,6 +107,25 @@ public:
     mutable int close_calls = 0;
 };
 
+class LocalTokenExecutor final : public runtime::inference::Executor {
+public:
+    runtime::inference::ExecutionResult execute(
+        const runtime::inference::StageInput& input
+    ) const override {
+        runtime::inference::StageOutput output;
+        output.payload.kind = runtime::inference::PayloadKind::SampledToken;
+        output.payload.tensor.dtype = "u32";
+        output.payload.tensor.shape = {1};
+        output.payload.tensor.byte_order = "little";
+        output.payload.tensor.layout = "row_major";
+        output.payload.bytes = {42, 0, 0, 0};
+        output.prompt_tokens = input.phase == runtime::inference::Phase::Prefill ? 4 : 0;
+        output.completion_tokens = 1;
+        output.token_text = " answer";
+        return runtime::inference::ExecutionResult::success(std::move(output));
+    }
+};
+
 runtime::protocol::GenerationRequest generation_request() {
     return runtime::protocol::GenerationRequest{
         .request_id = "request-a",
@@ -156,7 +175,7 @@ void test_generation_dispatches_local_and_remote_stages() {
             .layer_end = 1,
         },
         runtime::InferenceEngineParts{
-            .layer_executor = std::move(executor),
+            .executor = std::move(executor),
             .model_residency = std::nullopt,
         }
     );
@@ -205,7 +224,7 @@ void test_generation_rejects_wrong_stage_zero_node() {
             .layer_end = 1,
         },
         runtime::InferenceEngineParts{
-            .layer_executor = std::move(executor),
+            .executor = std::move(executor),
             .model_residency = std::nullopt,
         }
     );
@@ -222,8 +241,48 @@ void test_generation_rejects_wrong_stage_zero_node() {
     const auto result = service.generate(request, [](const auto&) { return true; });
 
     expect(!result.ok, "generation accepted the wrong stage-zero node");
-    expect(result.error_code == "invalid_pipeline_leader", "wrong validation error");
+    expect(result.error_code == "invalid_generation_leader", "wrong validation error");
     expect(transport.execute_calls == 0, "invalid generation reached the transport");
+}
+
+void test_tensor_generation_uses_one_logical_local_stage() {
+    runtime::deployment::ModelManager model_manager(
+        "dopey",
+        runtime::deployment::DeploymentIdentity{
+            .deployment_id = "model-a",
+            .epoch = 0,
+            .model_id = "model-a",
+            .model_sha256 = "",
+        },
+        runtime::pipeline_parallel::StageAssignment{
+            .stage_index = 0,
+            .stage_count = 1,
+            .layer_start = 0,
+            .layer_end = 2,
+        },
+        runtime::InferenceEngineParts{
+            .executor = std::make_unique<LocalTokenExecutor>(),
+            .model_residency = std::nullopt,
+        }
+    );
+    RecordingStageTransport transport;
+    runtime::GenerationService service(
+        "dopey",
+        runtime::ExecutionMode::TensorParallel,
+        model_manager,
+        transport
+    );
+    auto request = generation_request();
+    request.stages.resize(1);
+    request.stages[0].stage_count = 1;
+    request.stages[0].layer_end = 2;
+
+    const auto result = service.generate(request, [](const auto&) { return true; });
+
+    expect(result.ok, "tensor generation failed");
+    expect(result.sampled_tokens == std::vector<std::uint32_t>{42}, "tensor token changed");
+    expect(result.remote_stage_calls == 0, "tensor generation used stage transport");
+    expect(transport.execute_calls == 0, "tensor generation reached remote stage transport");
 }
 
 } // namespace
@@ -232,6 +291,7 @@ int main() {
     try {
         test_generation_dispatches_local_and_remote_stages();
         test_generation_rejects_wrong_stage_zero_node();
+        test_tensor_generation_uses_one_logical_local_stage();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

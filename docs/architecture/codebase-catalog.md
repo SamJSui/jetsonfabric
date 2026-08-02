@@ -150,19 +150,24 @@ prefill and decode and closes every stage session afterward.
 | `engine` | `RuntimeService` | Implements `RuntimeAPI`; translates JSON/binary contracts and delegates lifecycle to `ModelManager` and generation to `GenerationService`. |
 | `engine` | `GenerationService` | Validates a generation request, selects the executable deployment, invokes local stages through `ModelManager`, and remote stages through `StageTransport`. |
 | `engine` | `InferenceEngineFactory` | Registry from engine name to an `InferenceEngineParts` builder. |
-| `engine` | `InferenceEngineParts` | A newly loaded `LayerExecutor` plus measured model residency. |
+| `engine` | `InferenceEngineParts` | A newly loaded engine-neutral `Executor`, measured model residency, and any engine-normalized stage assignment. |
 | `deployment` | `ModelManager` | Owns resident deployment epochs, active/draining state, model executors, stage workers, admission checks, and unload safety. Its storage is hidden behind `Impl`. |
 | `deployment` | deployment records | `DeploymentIdentity`, `ModelResidency`, `DeploymentStatus`, and operation results are lifecycle data contracts. |
 | `pipeline_parallel` | `GenerationRunner` | Runs prefill once and decode repeatedly across ordered stages, emits tokens, validates transitions, tracks bytes/calls, and closes sessions. |
-| `pipeline_parallel` | `StageWorker` | Validates one stage request, decodes incoming activation data, invokes a `LayerExecutor`, encodes outgoing activation data, and builds the stage response. |
-| `pipeline_parallel` | `LayerExecutor` | Engine-neutral interface for one local model stage. |
-| `pipeline_parallel` | `LlamaCppStageExecutor` | Adapts partial-layer llama.cpp execution to `LayerExecutor`. |
-| `pipeline_parallel` | `LlamaCppFullModelExecutor` | Adapts ordinary single-stage llama.cpp generation to `LayerExecutor`. |
+| `pipeline_parallel` | `StageWorker` | Validates one stage request, decodes incoming activation data, invokes an `Executor`, encodes outgoing activation data, and builds the stage response. |
+| `inference` | `Executor` | Engine-neutral interface shared by local stages, full-model execution, batching decorators, and tensor-sharded execution. |
+| `pipeline_parallel` | `LlamaCppStageExecutor` | Adapts partial-layer llama.cpp execution to `Executor`. |
+| `pipeline_parallel` | `LlamaCppFullModelExecutor` | Adapts ordinary single-stage llama.cpp generation to `Executor`. |
 | `pipeline_parallel` | `SyntheticActivationExecutor` | Deterministic CI-only executor for binary transport and stage-contract tests; it is not a model implementation. |
 | `pipeline_parallel` | `StageAssignment` | Runtime-local stage index/count and layer range. |
 | `adapters` | `LlamaCppModel` | Owns the patched llama.cpp model and reports loaded layer/tensor residency. |
 | `adapters` | `LlamaCppStageAdapter` | Owns session-keyed partial-layer llama contexts and their KV state; executes prefill/decode and reaps idle sessions. |
 | `adapters` | `LlamaCppAdapter` | Owns the ordinary full-model llama context used by single-stage execution. |
+| `adapters` | `LlamaCppTensorParallel` | Maps an engine-neutral device mesh to llama.cpp CUDA and RPC devices without exposing GGML types to runtime orchestration. |
+| `engines/native` | `jf_model` | Dependency-light C owner of one validated JFM v2 stage view, preserved GGUF metadata, and memory-mapped tensor data. It is not yet a serving executor. |
+| `compiler` | `jf-model-compile` | Offline GGUF-to-JFM v2 importer with stable tensor types, per-segment hashes, source mutation detection, and atomic publication. |
+| `tensor_parallel` | `DeviceMesh` | Validated transport endpoints and optional per-device tensor proportions. |
+| `tensor_parallel` | `jetsonfabric-tensor-worker` | Exposes a Jetson CUDA device through unauthenticated GGML RPC for trusted-LAN experiments. |
 | `activation` | `ActivationCodec` | Strategy interface between engine-native F32 activations and wire encoding. |
 | `activation` | `F32ActivationCodec` | Pass-through encoding with type validation. |
 | `activation` | `F16ActivationCodec` | Converts F32 activations to F16 for transport and restores F32 before execution. |
@@ -182,7 +187,7 @@ additional architecture layers.
 The runtime uses three narrow strategy boundaries:
 
 ```text
-engine name              -> InferenceEngineFactory -> LayerExecutor
+engine name              -> InferenceEngineFactory -> Executor
 stage transport name     -> StageTransportFactory  -> StageTransport
 activation encoding name -> ActivationCodecFactory -> ActivationCodec
 ```

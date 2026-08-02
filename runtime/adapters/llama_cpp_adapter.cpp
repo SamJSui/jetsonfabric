@@ -148,6 +148,7 @@ LlamaCppAdapter::LlamaCppAdapter(LlamaCppConfig config)
           std::make_shared<LlamaCppModel>(LlamaCppModelConfig{
               .model_path = std::move(config.model_path),
               .n_gpu_layers = config.n_gpu_layers,
+              .tensor_parallel = std::nullopt,
           }),
           config.ctx_size,
           config.threads,

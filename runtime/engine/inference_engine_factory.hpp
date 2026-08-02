@@ -1,7 +1,8 @@
 #pragma once
 
 #include "deployment/deployment.hpp"
-#include "pipeline_parallel/layer_executor.hpp"
+#include "inference/executor.hpp"
+#include "pipeline_parallel/stage_assignment.hpp"
 #include "worker/config.hpp"
 
 #include <functional>
@@ -13,8 +14,9 @@
 namespace jetsonfabric::runtime {
 
 struct InferenceEngineParts {
-    std::unique_ptr<pipeline_parallel::LayerExecutor> layer_executor;
+    std::unique_ptr<inference::Executor> executor;
     std::optional<deployment::ModelResidency> model_residency;
+    std::optional<pipeline_parallel::StageAssignment> execution_assignment = std::nullopt;
 };
 
 // Dispatches engine construction by configured engine name. Adding an engine

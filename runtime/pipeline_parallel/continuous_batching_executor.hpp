@@ -1,6 +1,6 @@
 #pragma once
 
-#include "pipeline_parallel/layer_executor.hpp"
+#include "inference/executor.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -16,10 +16,10 @@ struct ContinuousBatchingConfig {
 // Coalesces concurrently arriving decode steps. Prefill remains immediate so a
 // long prompt cannot delay active decoders. Engine adapters decide how a batch
 // maps to their native multi-sequence execution API.
-class ContinuousBatchingExecutor final : public LayerExecutor {
+class ContinuousBatchingExecutor final : public inference::Executor {
 public:
     ContinuousBatchingExecutor(
-        std::unique_ptr<LayerExecutor> delegate,
+        std::unique_ptr<inference::Executor> delegate,
         ContinuousBatchingConfig config
     );
     ~ContinuousBatchingExecutor() override;

@@ -20,7 +20,7 @@ void expect(bool condition, const std::string& message) {
     if (!condition) fail(message);
 }
 
-class RecordingExecutor final : public runtime::pipeline_parallel::LayerExecutor {
+class RecordingExecutor final : public runtime::inference::Executor {
 public:
     explicit RecordingExecutor(int* destruction_count)
         : destruction_count_(destruction_count) {}
@@ -140,7 +140,7 @@ void test_prepare_activate_drain_handoff() {
                 auto executor = std::make_unique<RecordingExecutor>(&destruction_count);
                 recording_a = executor.get();
                 return runtime::InferenceEngineParts{
-                    .layer_executor = std::move(executor),
+                    .executor = std::move(executor),
                     .model_residency = residency(),
                 };
             }
@@ -229,7 +229,7 @@ void test_prepare_activate_drain_handoff() {
                 auto executor = std::make_unique<RecordingExecutor>(&destruction_count);
                 recording_b = executor.get();
                 return runtime::InferenceEngineParts{
-                    .layer_executor = std::move(executor),
+                    .executor = std::move(executor),
                     .model_residency = residency(),
                 };
             }

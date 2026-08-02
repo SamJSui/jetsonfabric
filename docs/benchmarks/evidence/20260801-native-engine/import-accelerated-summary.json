@@ -1,0 +1,10 @@
+{
+  "format": "jfm-v1",
+  "architecture": "qwen2",
+  "sha256_backend": "openssl",
+  "source_sha256": "c1e659736d89ac1065fb495330fb824d94001974a4bfa78e7270e43476a8d940",
+  "layer_count": 48,
+  "tensor_count": 579,
+  "tensor_bytes": 8982142976,
+  "package_bytes": 8982208627
+}

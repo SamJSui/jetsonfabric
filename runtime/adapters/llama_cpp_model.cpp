@@ -1,5 +1,7 @@
 #include "adapters/llama_cpp_model.hpp"
 
+#include "adapters/llama_cpp_tensor_parallel.hpp"
+
 #include "llama-ext.h"
 #include "llama.h"
 
@@ -14,6 +16,7 @@ namespace jetsonfabric::runtime::adapters {
 namespace {
 
 std::once_flag backend_init_once;
+std::mutex tensor_model_load_mutex;
 
 void ensure_backend_loaded() {
     std::call_once(backend_init_once, [] {
@@ -37,6 +40,14 @@ std::string model_metadata_string(const llama_model* model, const char* key) {
     return std::string(buffer.data(), static_cast<std::size_t>(size));
 }
 
+llama_model* load_model(const LlamaCppModelConfig& config, llama_model_params params) {
+    if (!config.tensor_parallel.has_value()) {
+        return llama_model_load_from_file(config.model_path.c_str(), params);
+    }
+    const std::lock_guard lock(tensor_model_load_mutex);
+    return llama_model_load_from_file(config.model_path.c_str(), params);
+}
+
 } // namespace
 
 struct LlamaCppModel::Impl {
@@ -49,12 +60,24 @@ struct LlamaCppModel::Impl {
             (config.layer_end != 0 && config.layer_start >= config.layer_end)) {
             throw std::runtime_error("invalid llama.cpp model layer residency range");
         }
+        if (config.tensor_parallel.has_value() &&
+            (config.layer_start != 0 || config.layer_end != 0)) {
+            throw std::runtime_error(
+                "tensor_parallel requires full-layer model residency"
+            );
+        }
         ensure_backend_loaded();
         llama_model_params params = llama_model_default_params();
         params.n_gpu_layers = config.n_gpu_layers;
         params.layer_start = static_cast<std::uint32_t>(config.layer_start);
         params.layer_end = static_cast<std::uint32_t>(config.layer_end);
-        model = llama_model_load_from_file(config.model_path.c_str(), params);
+        if (config.tensor_parallel.has_value()) {
+            tensor_parallel_backend = std::make_unique<LlamaCppTensorParallel>(
+                *config.tensor_parallel
+            );
+            tensor_parallel_backend->configure(params);
+        }
+        model = load_model(config, params);
         if (model == nullptr) {
             throw std::runtime_error("failed to load llama.cpp model: " + config.model_path);
         }
@@ -75,6 +98,7 @@ struct LlamaCppModel::Impl {
     }
 
     LlamaCppModelConfig config;
+    std::unique_ptr<LlamaCppTensorParallel> tensor_parallel_backend;
     llama_model* model = nullptr;
     const llama_vocab* vocab = nullptr;
     std::string architecture;

@@ -1,0 +1,54 @@
+{
+  "benchmark_id": "20260801-native-inference-qwen2.5-coder-1.5b",
+  "repository_commit": "adb4bef62d9da817b9346458256877122d727d98",
+  "repository_tree": "f47d40cc1bca4f33c9858059784b9700f516c7cf",
+  "repository_worktree_clean": true,
+  "llama_cpp_revision": "bf2c86ddc0685f580595954056c2e77ebabfab4f",
+  "node_name": "dopey",
+  "hardware": {
+    "device": "NVIDIA Jetson Orin Nano 8GB Developer Kit Super",
+    "memory_mib": 7546,
+    "power_mode": "MAXN_SUPER",
+    "jetson_clocks": true,
+    "gpu_compute_capability": "8.7"
+  },
+  "software": {
+    "jetson_linux": "R39.2.0",
+    "kernel": "6.8.12-1021-tegra",
+    "cuda": "13.2.78"
+  },
+  "build": {
+    "type": "Release",
+    "cuda_architecture": 87,
+    "ggml_cuda": true,
+    "ggml_cuda_flash_attention": false,
+    "native_binary_links_libllama": false
+  },
+  "model": {
+    "id": "qwen2.5-coder-1.5b-q4_k_m",
+    "source_sha256": "cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046",
+    "source_bytes": 1117320768,
+    "weight_bytes": 1111370240,
+    "layer_count": 28
+  },
+  "workload": {
+    "prompt": "Once upon a time",
+    "prompt_tokens": [12522, 5193, 264, 882],
+    "expected_tokens": [11, 1052, 572, 264],
+    "max_tokens": 4,
+    "greedy": true,
+    "warmups": 1,
+    "iterations": 10,
+    "kv_cache": false,
+    "decode_policy": "full_prefix_recompute"
+  },
+  "cuda_tegrastats": {
+    "sample_interval_ms": 250,
+    "sample_count": 135,
+    "peak_ram_mib": 1922,
+    "peak_gpu_utilization_percent": 99,
+    "peak_input_power_mw": 12536,
+    "peak_gpu_temperature_c": 52.75
+  }
+}
+

@@ -14,6 +14,11 @@
 namespace jetsonfabric::runtime {
 namespace {
 
+bool uses_stage_execution(ExecutionMode mode) {
+    return mode == ExecutionMode::PipelineParallel ||
+        mode == ExecutionMode::TensorParallel;
+}
+
 std::shared_ptr<adapters::LlamaCppModel> load_llama_model(const Config& config) {
     const bool pipeline = config.mode == ExecutionMode::PipelineParallel;
     return std::make_shared<adapters::LlamaCppModel>(adapters::LlamaCppModelConfig{
@@ -21,6 +26,9 @@ std::shared_ptr<adapters::LlamaCppModel> load_llama_model(const Config& config) 
         .n_gpu_layers = config.compute_backend == "cuda" ? config.n_gpu_layers : 0,
         .layer_start = pipeline ? config.stage_assignment.layer_start : 0,
         .layer_end = pipeline ? config.stage_assignment.layer_end : 0,
+        .tensor_parallel = config.mode == ExecutionMode::TensorParallel
+            ? std::optional<tensor_parallel::DeviceMesh>(config.tensor_mesh)
+            : std::nullopt,
     });
 }
 
@@ -35,7 +43,7 @@ deployment::ModelResidency describe_residency(const adapters::LlamaCppModel& mod
     };
 }
 
-class LlamaCppFullModelAdapter final : public pipeline_parallel::LayerExecutor {
+class LlamaCppFullModelAdapter final : public inference::Executor {
 public:
     LlamaCppFullModelAdapter(
         std::shared_ptr<adapters::LlamaCppModel> model,
@@ -70,8 +78,21 @@ InferenceEngineParts create_llama_cpp_engine(const Config& config) {
     }
     std::shared_ptr<adapters::LlamaCppModel> model = load_llama_model(config);
     const deployment::ModelResidency residency = describe_residency(*model);
-    if (config.mode == ExecutionMode::PipelineParallel) {
-        std::unique_ptr<pipeline_parallel::LayerExecutor> executor =
+    if (uses_stage_execution(config.mode)) {
+        const bool tensor_parallel = config.mode == ExecutionMode::TensorParallel;
+        const inference::StagePosition position = tensor_parallel
+            ? inference::StagePosition{.index = 0, .count = 1}
+            : inference::StagePosition{
+                  .index = config.stage_assignment.stage_index,
+                  .count = config.stage_assignment.stage_count,
+              };
+        const inference::LayerRange layers = tensor_parallel
+            ? inference::LayerRange{.start = 0, .end = model->n_layer()}
+            : inference::LayerRange{
+                  .start = config.stage_assignment.layer_start,
+                  .end = config.stage_assignment.layer_end,
+              };
+        std::unique_ptr<inference::Executor> executor =
             std::make_unique<pipeline_parallel::LlamaCppStageExecutor>(
                 adapters::LlamaCppStageConfig{
                     .model = std::move(model),
@@ -84,14 +105,8 @@ InferenceEngineParts create_llama_cpp_engine(const Config& config) {
                         : config.speculative_max_tokens,
                     .kv_cache_type = config.kv_cache_type,
                     .threads = config.threads,
-                    .position = inference::StagePosition{
-                        .index = config.stage_assignment.stage_index,
-                        .count = config.stage_assignment.stage_count,
-                    },
-                    .layers = inference::LayerRange{
-                        .start = config.stage_assignment.layer_start,
-                        .end = config.stage_assignment.layer_end,
-                    },
+                    .position = position,
+                    .layers = layers,
                 }
             );
         if (config.decode_batch_size > 1) {
@@ -103,20 +118,28 @@ InferenceEngineParts create_llama_cpp_engine(const Config& config) {
             );
         }
         return InferenceEngineParts{
-            .layer_executor = std::move(executor),
+            .executor = std::move(executor),
             .model_residency = residency,
+            .execution_assignment = pipeline_parallel::StageAssignment{
+                .stage_index = position.index,
+                .stage_count = position.count,
+                .layer_start = layers.start,
+                .layer_end = layers.end,
+            },
         };
     }
     return InferenceEngineParts{
-        .layer_executor = std::make_unique<LlamaCppFullModelAdapter>(std::move(model), config),
+        .executor = std::make_unique<LlamaCppFullModelAdapter>(std::move(model), config),
         .model_residency = residency,
+        .execution_assignment = std::nullopt,
     };
 }
 
 InferenceEngineParts create_synthetic_engine(const Config&) {
     return InferenceEngineParts{
-        .layer_executor = std::make_unique<pipeline_parallel::SyntheticActivationExecutor>(),
+        .executor = std::make_unique<pipeline_parallel::SyntheticActivationExecutor>(),
         .model_residency = std::nullopt,
+        .execution_assignment = std::nullopt,
     };
 }
 

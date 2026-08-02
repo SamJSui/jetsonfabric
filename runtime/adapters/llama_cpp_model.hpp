@@ -1,7 +1,10 @@
 #pragma once
 
+#include "tensor_parallel/device_mesh.hpp"
+
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -16,6 +19,7 @@ struct LlamaCppModelConfig {
     int n_gpu_layers = 0;
     int layer_start = 0;
     int layer_end = 0;
+    std::optional<tensor_parallel::DeviceMesh> tensor_parallel;
 };
 
 class LlamaCppModel final {

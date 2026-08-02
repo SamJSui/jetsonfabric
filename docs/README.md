@@ -29,6 +29,10 @@ validation procedures.
 - [Stagewire v2](stagewire-v2.md) - binary inter-stage frame, rollback, and payload contract.
 - [llama.cpp partial-layer execution](llama-cpp-partial-layer.md) - pinned engine
   integration and stage-range behavior.
+- [Native engine](native-engine.md) - JFM model packages, exact stage selection,
+  build commands, and serving correctness gates.
+- [JFM v2 binary format](jfm-v2-format.md) - byte layout, tensor-type ABI,
+  topology, validation, and trust boundary.
 
 ## Validation
 
@@ -50,6 +54,18 @@ validation procedures.
 - [Tensor-parallel feasibility](benchmarks/2026-07-31-tensor-parallel-feasibility.md)
   - wired-network lower bound and a two-rank CUDA SwiGLU MLP sublayer proof for
   Qwen2.5-Coder 1.5B and 14B shapes.
+- [Tensor-parallel runtime](benchmarks/2026-08-01-tensor-parallel-runtime.md) -
+  full-model 14B CUDA tensor sharding compared with the matched two-node
+  pipeline on the same Jetsons and Gigabit Ethernet.
+- [Native engine foundation](benchmarks/2026-08-01-native-engine-foundation.md)
+  - 14B JFM import, exact stage selection, NVMe first-touch optimization, and
+  explicit native-serving limitations.
+- [Native KV-cache benchmark](benchmarks/2026-08-01-native-kv-cache.md) -
+  matched llama.cpp token parity, full-prefix ablation, direct-engine latency,
+  and CUDA transfer evidence.
+- [Native engine workload matrix](benchmarks/2026-08-01-native-engine-matrix.md) -
+  12 matched prompt/output workloads, exact token parity, confidence intervals,
+  and the prefill/decode crossover.
 
 Real-model local integration commands are documented in
 [Local development](local-development.md). The source repository does not keep

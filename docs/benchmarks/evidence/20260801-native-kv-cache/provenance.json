@@ -1,0 +1,45 @@
+{
+  "benchmark_id": "20260801-native-kv-cache",
+  "implementation_commit": "1240c089ff4bb9f68bfa5edf04a40fed12dad731",
+  "branch": "feature/native-kv-cache",
+  "host": {
+    "node_name": "dopey",
+    "device": "NVIDIA Jetson Orin Nano 8GB",
+    "power_mode": "MAXN_SUPER",
+    "cpu_hz": 1728000000,
+    "gpu_hz": 1020000000,
+    "emc_hz": 3199000000
+  },
+  "software": {
+    "llama_cpp_revision": "bf2c86ddc0685f580595954056c2e77ebabfab4f",
+    "native_backend": "GGML CUDA",
+    "oracle_backend": "llama.cpp CUDA"
+  },
+  "model": {
+    "id": "qwen2.5-coder-1.5b-q4",
+    "format": "Q4_K_M",
+    "source_sha256": "cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046"
+  },
+  "workload": {
+    "prompt": "Once upon a time",
+    "prompt_tokens": [12522, 5193, 264, 882],
+    "max_tokens": 32,
+    "warmups": 1,
+    "iterations": 10,
+    "sampling": "greedy",
+    "kv_cache": "f16"
+  },
+  "relative_result": {
+    "decode_throughput_increase_percent": 27.1,
+    "end_to_end_throughput_increase_percent": 25.3,
+    "itl_reduction_percent": 21.4,
+    "ttft_increase_percent": 2.8
+  },
+  "kv_cache_ablation": {
+    "baseline": "full_prefix_recompute",
+    "decode_throughput_increase_percent": 104.0,
+    "end_to_end_throughput_increase_percent": 97.6,
+    "itl_reduction_percent": 51.0,
+    "ttft_reduction_percent": 1.2
+  }
+}

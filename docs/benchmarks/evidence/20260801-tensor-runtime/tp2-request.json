@@ -1,0 +1,19 @@
+{
+  "request_id": "replaced-by-benchmark",
+  "session_id": "replaced-by-benchmark",
+  "model_id": "qwen2.5-coder-14b-q4km",
+  "prompt": "Once upon a time",
+  "max_tokens": 32,
+  "stages": [
+    {
+      "stage_index": 0,
+      "stage_count": 1,
+      "node_id": "dopey-tensor-driver",
+      "node_name": "dopey",
+      "api_url": "http://dopey.local:52521",
+      "runtime_url": "http://dopey.local:52521",
+      "layer_start": 0,
+      "layer_end": 48
+    }
+  ]
+}

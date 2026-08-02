@@ -69,10 +69,11 @@ std::optional<pipeline_parallel::GenerationResult> GenerationService::validate_r
     const protocol::GenerationRequest& request,
     const std::optional<deployment::DeploymentIdentity>& selected
 ) const {
-    if (execution_mode_ != ExecutionMode::PipelineParallel) {
+    if (execution_mode_ != ExecutionMode::PipelineParallel &&
+        execution_mode_ != ExecutionMode::TensorParallel) {
         return generation_error(
             "invalid_execution_mode",
-            "runtime-owned generation requires pipeline_parallel mode"
+            "runtime-owned generation requires pipeline_parallel or tensor_parallel mode"
         );
     }
     if (!selected.has_value()) {
@@ -107,8 +108,15 @@ std::optional<pipeline_parallel::GenerationResult> GenerationService::validate_r
         request.stages.front().stage_index != 0 ||
         request.stages.front().node_name != node_name_) {
         return generation_error(
-            "invalid_pipeline_leader",
-            "generation must be sent to the runtime assigned stage zero"
+            "invalid_generation_leader",
+            "generation must be sent to the runtime assigned logical stage zero"
+        );
+    }
+    if (execution_mode_ == ExecutionMode::TensorParallel &&
+        (request.stages.size() != 1 || request.stages.front().stage_count != 1)) {
+        return generation_error(
+            "invalid_tensor_route",
+            "tensor_parallel generation uses one logical runtime stage backed by its device mesh"
         );
     }
     return std::nullopt;

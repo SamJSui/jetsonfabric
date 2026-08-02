@@ -1,0 +1,19 @@
+{
+  "benchmark": "jf_native_model_load_v2",
+  "iterations": 20,
+  "verify_hashes": false,
+  "evict_before_open": false,
+  "prefetch": false,
+  "prefetch_threads": 1,
+  "layer_start": 0,
+  "layer_end": 48,
+  "layer_count": 48,
+  "source_sha256": "c1e659736d89ac1065fb495330fb824d94001974a4bfa78e7270e43476a8d940",
+  "selected_weight_bytes": 8982142976,
+  "total_weight_bytes": 8982142976,
+  "mapped_bytes": 8988175296,
+  "selected_tensor_count": 579,
+  "total_tensor_count": 579,
+  "prefetch_checksum": 0,
+  "open": {"min_ms": 0.671, "median_ms": 0.685, "max_ms": 0.918, "p95_ms": 0.717}
+}

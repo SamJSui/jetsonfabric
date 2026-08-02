@@ -4,7 +4,7 @@ if(POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
 endif()
 
-project(jetsonfabric_runtime LANGUAGES CXX)
+project(jetsonfabric_runtime LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -85,6 +85,7 @@ set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
+set(GGML_RPC ON CACHE BOOL "" FORCE)
 
 add_subdirectory(
   "${JF_LLAMA_CPP_SOURCE_DIR}"
@@ -98,6 +99,64 @@ elseif(TARGET llama::llama)
   set(JF_LLAMA_TARGET llama::llama)
 else()
   message(FATAL_ERROR "llama.cpp was added, but no llama target was found")
+endif()
+
+add_subdirectory(engines/native)
+
+add_executable(jf-model-compile
+  compiler/jf_model_compile.cpp
+)
+target_include_directories(jf-model-compile PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/engines/native/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/engines/native/src
+  ${JF_LLAMA_CPP_SOURCE_DIR}/ggml/include
+)
+target_compile_options(jf-model-compile PRIVATE
+  -Wall
+  -Wextra
+  -Wpedantic
+)
+target_link_libraries(jf-model-compile PRIVATE
+  jetsonfabric-native-engine
+  ggml
+  ${CMAKE_DL_LIBS}
+)
+
+add_executable(jf-llama-greedy-oracle
+  benchmarks/llama_greedy_oracle.cpp
+)
+target_compile_options(jf-llama-greedy-oracle PRIVATE
+  -Wall
+  -Wextra
+  -Wpedantic
+)
+target_link_libraries(jf-llama-greedy-oracle PRIVATE
+  ${JF_LLAMA_TARGET}
+)
+
+if(BUILD_TESTING)
+  add_executable(jf-model-fixture
+    compiler/model_fixture.cpp
+  )
+  target_include_directories(jf-model-fixture PRIVATE
+    ${JF_LLAMA_CPP_SOURCE_DIR}/ggml/include
+  )
+  target_compile_options(jf-model-fixture PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  target_link_libraries(jf-model-fixture PRIVATE ggml)
+  add_test(
+    NAME native-model-compiler
+    COMMAND ${CMAKE_COMMAND}
+      -DFIXTURE_BIN=$<TARGET_FILE:jf-model-fixture>
+      -DCOMPILER_BIN=$<TARGET_FILE:jf-model-compile>
+      -DBENCH_BIN=$<TARGET_FILE:jf-native-model-bench>
+      -DINFERENCE_BENCH_BIN=$<TARGET_FILE:jf-native-inference-bench>
+      -DWORK_DIR=/tmp/jetsonfabric-native-model-compiler-test
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/compiler/compiler_integration_test.cmake
+  )
 endif()
 
 set(JF_RUNTIME_SOURCES
@@ -123,6 +182,9 @@ set(JF_RUNTIME_SOURCES
   adapters/llama_cpp_model.cpp
   adapters/llama_cpp_adapter.cpp
   adapters/llama_cpp_stage_adapter.cpp
+  adapters/llama_cpp_tensor_parallel.cpp
+
+  tensor_parallel/device_mesh.cpp
 
   pipeline_parallel/stage_assignment.cpp
   pipeline_parallel/continuous_batching_executor.cpp
@@ -169,6 +231,24 @@ target_link_libraries(jetsonfabric-runtime-worker PRIVATE
   nlohmann_json::nlohmann_json
   ${JF_LLAMA_TARGET}
 )
+
+if(GGML_CUDA)
+  add_executable(jetsonfabric-tensor-worker
+    tensor_parallel/rpc_worker.cpp
+  )
+  target_include_directories(jetsonfabric-tensor-worker PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${JF_LLAMA_CPP_SOURCE_DIR}/ggml/include
+  )
+  target_compile_options(jetsonfabric-tensor-worker PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  target_link_libraries(jetsonfabric-tensor-worker PRIVATE
+    ggml
+  )
+endif()
 
 add_executable(jetsonfabric-two-node-collective-bench
   benchmarks/collective_stats.cpp
@@ -217,6 +297,23 @@ if(JF_BUILD_CUDA_BENCHMARKS)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(jetsonfabric-tensor-device-mesh-test
+    tensor_parallel/device_mesh.cpp
+    tensor_parallel/device_mesh_test.cpp
+  )
+  target_include_directories(jetsonfabric-tensor-device-mesh-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-tensor-device-mesh-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME tensor-device-mesh
+    COMMAND jetsonfabric-tensor-device-mesh-test
+  )
+
   add_executable(jetsonfabric-collective-stats-test
     benchmarks/collective_stats.cpp
     benchmarks/collective_stats_test.cpp
@@ -610,6 +707,48 @@ if(BUILD_TESTING)
   )
 
   add_test(
+    NAME runtime-rejects-tensor-without-rpc-peer
+    COMMAND ${CMAKE_COMMAND}
+      -DRUNTIME_BIN=$<TARGET_FILE:jetsonfabric-runtime-worker>
+      -DOPTION=--mode
+      -DVALUE=tensor_parallel
+      "-DEXPECTED=tensor_parallel requires at least one remote RPC endpoint"
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/worker/startup_rejection_test.cmake
+  )
+
+  add_test(
+    NAME runtime-rejects-tensor-peer-outside-tensor-mode
+    COMMAND ${CMAKE_COMMAND}
+      -DRUNTIME_BIN=$<TARGET_FILE:jetsonfabric-runtime-worker>
+      -DOPTION=--tensor-rpc-peers
+      -DVALUE=127.0.0.1:52520
+      "-DEXPECTED=tensor RPC peers and tensor split require --mode tensor_parallel"
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/worker/startup_rejection_test.cmake
+  )
+
+  add_test(
+    NAME runtime-rejects-tensor-synthetic-engine
+    COMMAND ${CMAKE_COMMAND}
+      -DRUNTIME_BIN=$<TARGET_FILE:jetsonfabric-runtime-worker>
+      -DOPTION=--mode
+      -DVALUE=tensor_parallel
+      "-DEXTRA_ARGS=--tensor-rpc-peers;127.0.0.1:52520;--engine;synthetic"
+      "-DEXPECTED=tensor_parallel currently requires --engine llama.cpp"
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/worker/startup_rejection_test.cmake
+  )
+
+  add_test(
+    NAME runtime-rejects-quantized-tensor-kv-cache
+    COMMAND ${CMAKE_COMMAND}
+      -DRUNTIME_BIN=$<TARGET_FILE:jetsonfabric-runtime-worker>
+      -DOPTION=--mode
+      -DVALUE=tensor_parallel
+      "-DEXTRA_ARGS=--tensor-rpc-peers;127.0.0.1:52520;--kv-cache-type;q8_0"
+      "-DEXPECTED=tensor_parallel currently requires --kv-cache-type f16"
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/worker/startup_rejection_test.cmake
+  )
+
+  add_test(
     NAME runtime-rejects-unauthenticated-external-listen
     COMMAND ${CMAKE_COMMAND}
       -DRUNTIME_BIN=$<TARGET_FILE:jetsonfabric-runtime-worker>
@@ -621,9 +760,11 @@ if(BUILD_TESTING)
 
   add_executable(jetsonfabric-llama-stage-test
     inference/stage.cpp
+    tensor_parallel/device_mesh.cpp
     adapters/llama_cpp_model.cpp
     adapters/llama_cpp_adapter.cpp
     adapters/llama_cpp_stage_adapter.cpp
+    adapters/llama_cpp_tensor_parallel.cpp
     adapters/llama_cpp_stage_adapter_test.cpp
   )
   target_include_directories(jetsonfabric-llama-stage-test PRIVATE

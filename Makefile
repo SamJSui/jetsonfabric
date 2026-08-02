@@ -13,6 +13,12 @@ RUNTIME_BUILD_JOBS ?= 1
 RUNTIME_CUDA_ARCH ?= 87
 CUDA_NVCC ?= /usr/local/cuda/bin/nvcc
 RUNTIME_BIN ?= $(DIST_DIR)/jetsonfabric-runtime-worker
+TENSOR_WORKER_BIN ?= $(DIST_DIR)/jetsonfabric-tensor-worker
+NATIVE_ENGINE_BUILD_DIR ?= runtime/build-native-engine
+MODEL_COMPILER_BIN ?= $(DIST_DIR)/jf-model-compile
+NATIVE_MODEL_BENCH_BIN ?= $(DIST_DIR)/jf-native-model-bench
+NATIVE_INFERENCE_BENCH_BIN ?= $(DIST_DIR)/jf-native-inference-bench
+LLAMA_GREEDY_ORACLE_BIN ?= $(DIST_DIR)/jf-llama-greedy-oracle
 NODE_BIN ?= $(DIST_DIR)/jetsonfabric-node
 INTEGRATION_BUILD_DIR ?= runtime/build-integration-cpu
 INTEGRATION_RUNTIME_BIN ?= $(DIST_DIR)/jetsonfabric-runtime-worker-integration-cpu
@@ -29,6 +35,22 @@ MODELS_PATH ?= configs/models.example.json
 
 MODEL ?= qwen2.5-coder-1.5b-q4
 MODEL_PATH ?=
+JFM_PACKAGE ?=
+JFM_LAYER_START ?= 0
+JFM_LAYER_END ?= 28
+JFM_BENCH_ITERATIONS ?= 5
+JFM_BENCH_VERIFY ?= false
+JFM_BENCH_PREFETCH ?= true
+JFM_BENCH_EVICT ?= false
+JFM_PREFETCH_THREADS ?= 4
+JFM_INFERENCE_BACKEND ?= cpu
+JFM_INFERENCE_THREADS ?= 6
+JFM_TOKENS ?=
+JFM_MAX_TOKENS ?= 1
+JFM_INFERENCE_WARMUPS ?= 1
+JFM_INFERENCE_ITERATIONS ?= 3
+JFM_EXPECTED_TOKENS ?=
+JFM_DECODE_POLICY ?= incremental
 
 # Node defaults: multi-instance safe.
 NODE_NAME ?=
@@ -64,6 +86,14 @@ RUNTIME_DECODE_BATCH_SIZE ?= 1
 RUNTIME_SPECULATIVE_DRAFT ?= none
 RUNTIME_SPECULATIVE_MAX_TOKENS ?= 4
 RUNTIME_START_IDLE ?= false
+RUNTIME_TENSOR_TRANSPORT ?= llama_rpc
+RUNTIME_TENSOR_RPC_PEERS ?=
+RUNTIME_TENSOR_SPLIT ?=
+
+TENSOR_WORKER_LISTEN ?= 127.0.0.1:52520
+TENSOR_WORKER_CACHE_DIR ?=
+TENSOR_WORKER_THREADS ?= 6
+TENSOR_WORKER_ALLOW_REMOTE ?= false
 
 STAGE_INDEX ?= 0
 STAGE_COUNT ?= 1
@@ -110,6 +140,12 @@ help:
 	@printf 'Run:\n'
 	@printf '  make run-node                    Run one jetsonfabric-node in the foreground\n'
 	@printf '  make run-runtime                 Run one runtime worker in the foreground\n'
+	@printf '  make run-tensor-worker          Expose one CUDA device to a trusted tensor driver\n'
+	@printf '  make native-engine              Build and test the dependency-light native model core\n'
+	@printf '  make model-compiler             Build the GGUF to JFM importer\n'
+	@printf '  make model-compile              Import MODEL_PATH into JFM_PACKAGE\n'
+	@printf '  make bench-native-model         Measure JFM stage mapping and prefetch\n'
+	@printf '  make bench-native-inference     Measure architecture-selected native inference\n'
 	@printf '  make dev-up                      Run one full-model pipeline stage\n'
 	@printf '  make dev-status                  Inspect the running development node\n'
 	@printf '  make dev-chat                    Send a chat request to the development node\n'
@@ -128,6 +164,11 @@ help:
 	@printf '  RUNTIME_PARALLEL_SESSIONS=4      Reserve shared KV capacity for batching\n'
 	@printf '  RUNTIME_DECODE_BATCH_SIZE=2      Enable continuous decode batching\n'
 	@printf '  RUNTIME_SPECULATIVE_DRAFT=prompt_lookup  Enable target-verified lookup drafting\n'
+	@printf '  RUNTIME_TENSOR_RPC_PEERS=host:52520  Enable llama.cpp tensor sharding to remote CUDA\n'
+	@printf '  JFM_PACKAGE=/path/model.jfm     Canonical native model package\n'
+	@printf '  JFM_LAYER_START=0 JFM_LAYER_END=14  Native stage range\n'
+	@printf '  JFM_TOKENS=1,2,3               Fixed token IDs for native inference\n'
+	@printf '  JFM_DECODE_POLICY=incremental   Native decode policy\n'
 	@printf '  RUNTIME_BUILD_JOBS=1             Safer on Jetson; try 2 or 4 if memory allows\n'
 	@printf '  RUNTIME_CUDA_ARCH=87             Jetson Orin default\n'
 	@printf '  JF_NODE0_PORT=19180              Fixed local node port\n'
@@ -211,6 +252,87 @@ runtime: setup
 	chmod +x $(RUNTIME_BIN).tmp
 	mv -f $(RUNTIME_BIN).tmp $(RUNTIME_BIN)
 
+.PHONY: native-engine
+native-engine:
+	$(CMAKE) -S runtime/engines/native -B $(NATIVE_ENGINE_BUILD_DIR) \
+		-DCMAKE_BUILD_TYPE=Release
+	$(CMAKE) --build $(NATIVE_ENGINE_BUILD_DIR) --parallel $(RUNTIME_BUILD_JOBS)
+	ctest --test-dir $(NATIVE_ENGINE_BUILD_DIR) --output-on-failure
+
+.PHONY: model-compiler
+model-compiler: setup
+	$(CMAKE) -S runtime -B $(RUNTIME_BUILD_DIR) \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DJF_LLAMA_CPP_SOURCE_DIR=$(abspath $(LLAMA_CPP_DIR))
+	$(CMAKE) --build $(RUNTIME_BUILD_DIR) \
+		--target jf-model-compile jf-native-model-bench jf-native-inference-bench \
+			jf-llama-greedy-oracle \
+		--parallel $(RUNTIME_BUILD_JOBS)
+	mkdir -p $(DIST_DIR)
+	cp $(RUNTIME_BUILD_DIR)/jf-model-compile $(MODEL_COMPILER_BIN).tmp
+	cp $(RUNTIME_BUILD_DIR)/engines/native/jf-native-model-bench $(NATIVE_MODEL_BENCH_BIN).tmp
+	cp $(RUNTIME_BUILD_DIR)/engines/native/jf-native-inference-bench $(NATIVE_INFERENCE_BENCH_BIN).tmp
+	cp $(RUNTIME_BUILD_DIR)/jf-llama-greedy-oracle $(LLAMA_GREEDY_ORACLE_BIN).tmp
+	chmod +x $(MODEL_COMPILER_BIN).tmp $(NATIVE_MODEL_BENCH_BIN).tmp \
+		$(NATIVE_INFERENCE_BENCH_BIN).tmp $(LLAMA_GREEDY_ORACLE_BIN).tmp
+	mv -f $(MODEL_COMPILER_BIN).tmp $(MODEL_COMPILER_BIN)
+	mv -f $(NATIVE_MODEL_BENCH_BIN).tmp $(NATIVE_MODEL_BENCH_BIN)
+	mv -f $(NATIVE_INFERENCE_BENCH_BIN).tmp $(NATIVE_INFERENCE_BENCH_BIN)
+	mv -f $(LLAMA_GREEDY_ORACLE_BIN).tmp $(LLAMA_GREEDY_ORACLE_BIN)
+
+.PHONY: model-compile
+model-compile: model-compiler
+	@if [ -z "$(MODEL_PATH)" ] || [ -z "$(JFM_PACKAGE)" ]; then \
+		printf 'MODEL_PATH and JFM_PACKAGE are required.\n' >&2; \
+		exit 2; \
+	fi
+	$(MODEL_COMPILER_BIN) --input "$(MODEL_PATH)" --output "$(JFM_PACKAGE)"
+
+.PHONY: bench-native-model
+bench-native-model:
+	@if [ ! -x "$(NATIVE_MODEL_BENCH_BIN)" ]; then \
+		printf 'native model benchmark missing. Run make model-compiler.\n' >&2; \
+		exit 2; \
+	fi
+	@if [ -z "$(JFM_PACKAGE)" ]; then \
+		printf 'JFM_PACKAGE is required.\n' >&2; \
+		exit 2; \
+	fi
+	@if [ "$(JFM_BENCH_VERIFY)" = "true" ] && [ "$(JFM_BENCH_PREFETCH)" = "true" ]; then \
+		printf 'Set only one of JFM_BENCH_VERIFY or JFM_BENCH_PREFETCH; verification faults pages.\n' >&2; \
+		exit 2; \
+	fi
+	$(NATIVE_MODEL_BENCH_BIN) \
+		--package "$(JFM_PACKAGE)" \
+		--layer-start "$(JFM_LAYER_START)" \
+		--layer-end "$(JFM_LAYER_END)" \
+		--iterations "$(JFM_BENCH_ITERATIONS)" \
+		$(if $(filter true,$(JFM_BENCH_VERIFY)),--verify) \
+		$(if $(filter true,$(JFM_BENCH_EVICT)),--evict) \
+		--prefetch-threads "$(JFM_PREFETCH_THREADS)" \
+		$(if $(filter true,$(JFM_BENCH_PREFETCH)),--prefetch)
+
+.PHONY: bench-native-inference
+bench-native-inference:
+	@if [ ! -x "$(NATIVE_INFERENCE_BENCH_BIN)" ]; then \
+		printf 'native inference benchmark missing. Run make model-compiler.\n' >&2; \
+		exit 2; \
+	fi
+	@if [ -z "$(JFM_PACKAGE)" ] || [ -z "$(JFM_TOKENS)" ]; then \
+		printf 'JFM_PACKAGE and JFM_TOKENS are required.\n' >&2; \
+		exit 2; \
+	fi
+	$(NATIVE_INFERENCE_BENCH_BIN) \
+		--package "$(JFM_PACKAGE)" \
+		--backend "$(JFM_INFERENCE_BACKEND)" \
+		--threads "$(JFM_INFERENCE_THREADS)" \
+		--tokens "$(JFM_TOKENS)" \
+		--max-tokens "$(JFM_MAX_TOKENS)" \
+		--warmups "$(JFM_INFERENCE_WARMUPS)" \
+		--iterations "$(JFM_INFERENCE_ITERATIONS)" \
+		--decode-policy "$(JFM_DECODE_POLICY)" \
+		$(if $(JFM_EXPECTED_TOKENS),--expected-tokens "$(JFM_EXPECTED_TOKENS)")
+
 .PHONY: runtime-cuda
 runtime-cuda: setup
 	@if [ ! -x "$(CUDA_NVCC)" ]; then \
@@ -229,6 +351,19 @@ runtime-cuda: setup
 	cp $(RUNTIME_BUILD_DIR)/jetsonfabric-runtime-worker $(RUNTIME_BIN).tmp
 	chmod +x $(RUNTIME_BIN).tmp
 	mv -f $(RUNTIME_BIN).tmp $(RUNTIME_BIN)
+	cp $(RUNTIME_BUILD_DIR)/jetsonfabric-tensor-worker $(TENSOR_WORKER_BIN).tmp
+	chmod +x $(TENSOR_WORKER_BIN).tmp
+	mv -f $(TENSOR_WORKER_BIN).tmp $(TENSOR_WORKER_BIN)
+	cp $(RUNTIME_BUILD_DIR)/jf-model-compile $(MODEL_COMPILER_BIN).tmp
+	cp $(RUNTIME_BUILD_DIR)/engines/native/jf-native-model-bench $(NATIVE_MODEL_BENCH_BIN).tmp
+	cp $(RUNTIME_BUILD_DIR)/engines/native/jf-native-inference-bench $(NATIVE_INFERENCE_BENCH_BIN).tmp
+	cp $(RUNTIME_BUILD_DIR)/jf-llama-greedy-oracle $(LLAMA_GREEDY_ORACLE_BIN).tmp
+	chmod +x $(MODEL_COMPILER_BIN).tmp $(NATIVE_MODEL_BENCH_BIN).tmp \
+		$(NATIVE_INFERENCE_BENCH_BIN).tmp $(LLAMA_GREEDY_ORACLE_BIN).tmp
+	mv -f $(MODEL_COMPILER_BIN).tmp $(MODEL_COMPILER_BIN)
+	mv -f $(NATIVE_MODEL_BENCH_BIN).tmp $(NATIVE_MODEL_BENCH_BIN)
+	mv -f $(NATIVE_INFERENCE_BENCH_BIN).tmp $(NATIVE_INFERENCE_BENCH_BIN)
+	mv -f $(LLAMA_GREEDY_ORACLE_BIN).tmp $(LLAMA_GREEDY_ORACLE_BIN)
 
 .PHONY: run-node
 run-node:
@@ -307,11 +442,26 @@ run-runtime:
 		--decode-batch-size "$(RUNTIME_DECODE_BATCH_SIZE)" \
 		--speculative-draft "$(RUNTIME_SPECULATIVE_DRAFT)" \
 		--speculative-max-tokens "$(RUNTIME_SPECULATIVE_MAX_TOKENS)" \
+		--tensor-transport "$(RUNTIME_TENSOR_TRANSPORT)" \
+		--tensor-rpc-peers "$(RUNTIME_TENSOR_RPC_PEERS)" \
+		--tensor-split "$(RUNTIME_TENSOR_SPLIT)" \
 		--mode "$(RUNTIME_MODE)" \
 		--stage-index "$(STAGE_INDEX)" \
 		--stage-count "$(STAGE_COUNT)" \
 		--layer-start "$(LAYER_START)" \
 		--layer-end "$(LAYER_END)"
+
+.PHONY: run-tensor-worker
+run-tensor-worker:
+	@if [ ! -x "$(TENSOR_WORKER_BIN)" ]; then \
+		printf 'tensor worker binary missing. Run make runtime-cuda first.\n' >&2; \
+		exit 2; \
+	fi
+	$(TENSOR_WORKER_BIN) \
+		--listen "$(TENSOR_WORKER_LISTEN)" \
+		--threads "$(TENSOR_WORKER_THREADS)" \
+		$(if $(TENSOR_WORKER_CACHE_DIR),--cache-dir "$(TENSOR_WORKER_CACHE_DIR)") \
+		$(if $(filter true,$(TENSOR_WORKER_ALLOW_REMOTE)),--allow-remote)
 
 .PHONY: dev-up
 dev-up:
@@ -396,4 +546,4 @@ bench:
 
 .PHONY: clean
 clean:
-	rm -rf $(DIST_DIR) $(RUNTIME_BUILD_DIR) $(INTEGRATION_BUILD_DIR)
+	rm -rf $(DIST_DIR) $(RUNTIME_BUILD_DIR) $(INTEGRATION_BUILD_DIR) $(NATIVE_ENGINE_BUILD_DIR)

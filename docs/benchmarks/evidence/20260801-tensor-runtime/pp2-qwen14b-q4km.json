@@ -1,0 +1,1232 @@
+{
+  "name": "pp2-qwen14b-q4km",
+  "url": "http://dopey.local:52521/v1/generate",
+  "request_count": 3,
+  "warmup_count": 1,
+  "started_at": "2026-08-01T05:50:31.245365+00:00",
+  "finished_at": "2026-08-01T05:50:46.678855+00:00",
+  "elapsed_seconds": 15.434076899997308,
+  "summary": {
+    "latency_ms": {
+      "min": 5140.6683,
+      "mean": 5144.5443000000005,
+      "p50": 5144.4251,
+      "p95": 5148.5395,
+      "max": 5148.5395
+    },
+    "ttft_ms": {
+      "min": 358.7423,
+      "mean": 361.3932,
+      "p50": 360.5155,
+      "p95": 364.9218,
+      "max": 364.9218
+    },
+    "inter_token_latency_ms": {
+      "min": 140.9809,
+      "mean": 153.752411827957,
+      "p50": 153.3515,
+      "p95": 158.1091,
+      "max": 165.6607
+    },
+    "output_tokens": 96,
+    "output_token_throughput": 6.220002700648507,
+    "end_to_end_tokens_per_second": 6.220181639800439,
+    "decode_tokens_per_second": 6.503963015025492
+  },
+  "results": [
+    {
+      "latency_ms": 5148.5395,
+      "ttft_ms": 364.9218,
+      "inter_token_latency_ms": [
+        158.1091,
+        161.1043,
+        153.6093,
+        153.456,
+        153.5023,
+        153.3515,
+        153.8469,
+        152.9365,
+        153.351,
+        153.3409,
+        153.3682,
+        153.4057,
+        153.2695,
+        153.2854,
+        153.3728,
+        153.9145,
+        153.0254,
+        153.3248,
+        153.3691,
+        153.7147,
+        152.9631,
+        153.3253,
+        153.3148,
+        153.4954,
+        153.1587,
+        165.6607,
+        140.9809,
+        153.2483,
+        153.4045,
+        153.3135,
+        153.3785
+      ],
+      "sampled_tokens": [
+        11,
+        1052,
+        572,
+        264,
+        11477,
+        879,
+        21286,
+        916,
+        264,
+        12767,
+        25079,
+        13,
+        576,
+        11477,
+        572,
+        3881,
+        369,
+        806,
+        23389,
+        323,
+        50741,
+        11,
+        323,
+        566,
+        572,
+        10245,
+        553,
+        806,
+        1251,
+        13,
+        3776,
+        1899
+      ],
+      "generated_text": ", there was a king who ruled over a vast kingdom. The king was known for his wisdom and fairness, and he was loved by his people. One day",
+      "finish_reason": "length",
+      "prompt_tokens": 4,
+      "completion_tokens": 32,
+      "events": [
+        {
+          "type": "token",
+          "token": 11,
+          "text": ",",
+          "index": 0
+        },
+        {
+          "type": "token",
+          "token": 1052,
+          "text": " there",
+          "index": 1
+        },
+        {
+          "type": "token",
+          "token": 572,
+          "text": " was",
+          "index": 2
+        },
+        {
+          "type": "token",
+          "token": 264,
+          "text": " a",
+          "index": 3
+        },
+        {
+          "type": "token",
+          "token": 11477,
+          "text": " king",
+          "index": 4
+        },
+        {
+          "type": "token",
+          "token": 879,
+          "text": " who",
+          "index": 5
+        },
+        {
+          "type": "token",
+          "token": 21286,
+          "text": " ruled",
+          "index": 6
+        },
+        {
+          "type": "token",
+          "token": 916,
+          "text": " over",
+          "index": 7
+        },
+        {
+          "type": "token",
+          "token": 264,
+          "text": " a",
+          "index": 8
+        },
+        {
+          "type": "token",
+          "token": 12767,
+          "text": " vast",
+          "index": 9
+        },
+        {
+          "type": "token",
+          "token": 25079,
+          "text": " kingdom",
+          "index": 10
+        },
+        {
+          "type": "token",
+          "token": 13,
+          "text": ".",
+          "index": 11
+        },
+        {
+          "type": "token",
+          "token": 576,
+          "text": " The",
+          "index": 12
+        },
+        {
+          "type": "token",
+          "token": 11477,
+          "text": " king",
+          "index": 13
+        },
+        {
+          "type": "token",
+          "token": 572,
+          "text": " was",
+          "index": 14
+        },
+        {
+          "type": "token",
+          "token": 3881,
+          "text": " known",
+          "index": 15
+        },
+        {
+          "type": "token",
+          "token": 369,
+          "text": " for",
+          "index": 16
+        },
+        {
+          "type": "token",
+          "token": 806,
+          "text": " his",
+          "index": 17
+        },
+        {
+          "type": "token",
+          "token": 23389,
+          "text": " wisdom",
+          "index": 18
+        },
+        {
+          "type": "token",
+          "token": 323,
+          "text": " and",
+          "index": 19
+        },
+        {
+          "type": "token",
+          "token": 50741,
+          "text": " fairness",
+          "index": 20
+        },
+        {
+          "type": "token",
+          "token": 11,
+          "text": ",",
+          "index": 21
+        },
+        {
+          "type": "token",
+          "token": 323,
+          "text": " and",
+          "index": 22
+        },
+        {
+          "type": "token",
+          "token": 566,
+          "text": " he",
+          "index": 23
+        },
+        {
+          "type": "token",
+          "token": 572,
+          "text": " was",
+          "index": 24
+        },
+        {
+          "type": "token",
+          "token": 10245,
+          "text": " loved",
+          "index": 25
+        },
+        {
+          "type": "token",
+          "token": 553,
+          "text": " by",
+          "index": 26
+        },
+        {
+          "type": "token",
+          "token": 806,
+          "text": " his",
+          "index": 27
+        },
+        {
+          "type": "token",
+          "token": 1251,
+          "text": " people",
+          "index": 28
+        },
+        {
+          "type": "token",
+          "token": 13,
+          "text": ".",
+          "index": 29
+        },
+        {
+          "type": "token",
+          "token": 3776,
+          "text": " One",
+          "index": 30
+        },
+        {
+          "type": "token",
+          "token": 1899,
+          "text": " day",
+          "index": 31
+        },
+        {
+          "type": "done",
+          "finish_reason": "length",
+          "prompt_tokens": 4,
+          "completion_tokens": 32,
+          "sampled_tokens": [
+            11,
+            1052,
+            572,
+            264,
+            11477,
+            879,
+            21286,
+            916,
+            264,
+            12767,
+            25079,
+            13,
+            576,
+            11477,
+            572,
+            3881,
+            369,
+            806,
+            23389,
+            323,
+            50741,
+            11,
+            323,
+            566,
+            572,
+            10245,
+            553,
+            806,
+            1251,
+            13,
+            3776,
+            1899
+          ],
+          "stage_calls": 64,
+          "remote_stage_calls": 32,
+          "rollback_stage_calls": 0,
+          "remote_rollback_stage_calls": 0,
+          "rollback_stage_us": 0,
+          "rollback_remote_call_us": 0,
+          "bytes_in": 716940,
+          "bytes_out": 716928,
+          "stage_timings": [
+            {
+              "phase": "prefill",
+              "stage_index": 0,
+              "node_name": "dopey",
+              "remote": false,
+              "calls": 1,
+              "batch_items": 1,
+              "max_execution_batch_size": 1,
+              "verification_items": 1,
+              "max_verification_width": 1,
+              "execution_us": 167556,
+              "activation_decode_us": 0,
+              "activation_encode_us": 3,
+              "stage_total_us": 167566,
+              "remote_call_us": 0,
+              "remote_overhead_us": 0,
+              "bytes_in": 16,
+              "bytes_out": 81920
+            },
+            {
+              "phase": "prefill",
+              "stage_index": 1,
+              "node_name": "grumpy",
+              "remote": true,
+              "calls": 1,
+              "batch_items": 1,
+              "max_execution_batch_size": 1,
+              "verification_items": 1,
+              "max_verification_width": 1,
+              "execution_us": 162804,
+              "activation_decode_us": 1,
+              "activation_encode_us": 0,
+              "stage_total_us": 162853,
+              "remote_call_us": 174125,
+              "remote_overhead_us": 11272,
+              "bytes_in": 81920,
+              "bytes_out": 4
+            },
+            {
+              "phase": "decode",
+              "stage_index": 0,
+              "node_name": "dopey",
+              "remote": false,
+              "calls": 31,
+              "batch_items": 31,
+              "max_execution_batch_size": 1,
+              "verification_items": 31,
+              "max_verification_width": 1,
+              "execution_us": 2177021,
+              "activation_decode_us": 0,
+              "activation_encode_us": 20,
+              "stage_total_us": 2177133,
+              "remote_call_us": 0,
+              "remote_overhead_us": 0,
+              "bytes_in": 124,
+              "bytes_out": 634880
+            },
+            {
+              "phase": "decode",
+              "stage_index": 1,
+              "node_name": "grumpy",
+              "remote": true,
+              "calls": 31,
+              "batch_items": 31,
+              "max_execution_batch_size": 1,
+              "verification_items": 31,
+              "max_verification_width": 1,
+              "execution_us": 2526392,
+              "activation_decode_us": 3,
+              "activation_encode_us": 0,
+              "stage_total_us": 2526554,
+              "remote_call_us": 2588078,
+              "remote_overhead_us": 61524,
+              "bytes_in": 634880,
+              "bytes_out": 124
+            }
+          ],
+          "target_decode_passes": 31,
+          "speculative_draft_tokens": 0,
+          "speculative_accepted_tokens": 0
+        }
+      ]
+    },
+    {
+      "latency_ms": 5144.4251,
+      "ttft_ms": 360.5155,
+      "inter_token_latency_ms": [
+        158.0658,
+        160.2521,
+        154.1646,
+        152.8792,
+        153.5236,
+        153.8584,
+        153.2769,
+        153.4206,
+        153.4266,
+        153.3619,
+        153.4306,
+        153.3943,
+        153.4669,
+        153.2361,
+        153.5872,
+        153.2521,
+        153.4251,
+        153.325,
+        153.4278,
+        153.2524,
+        153.9102,
+        153.0736,
+        153.2814,
+        153.3576,
+        153.3403,
+        153.3769,
+        153.6631,
+        152.9143,
+        153.4299,
+        153.2313,
+        153.3151
+      ],
+      "sampled_tokens": [
+        11,
+        1052,
+        572,
+        264,
+        11477,
+        879,
+        21286,
+        916,
+        264,
+        12767,
+        25079,
+        13,
+        576,
+        11477,
+        572,
+        3881,
+        369,
+        806,
+        23389,
+        323,
+        50741,
+        11,
+        323,
+        566,
+        572,
+        10245,
+        553,
+        806,
+        1251,
+        13,
+        3776,
+        1899
+      ],
+      "generated_text": ", there was a king who ruled over a vast kingdom. The king was known for his wisdom and fairness, and he was loved by his people. One day",
+      "finish_reason": "length",
+      "prompt_tokens": 4,
+      "completion_tokens": 32,
+      "events": [
+        {
+          "type": "token",
+          "token": 11,
+          "text": ",",
+          "index": 0
+        },
+        {
+          "type": "token",
+          "token": 1052,
+          "text": " there",
+          "index": 1
+        },
+        {
+          "type": "token",
+          "token": 572,
+          "text": " was",
+          "index": 2
+        },
+        {
+          "type": "token",
+          "token": 264,
+          "text": " a",
+          "index": 3
+        },
+        {
+          "type": "token",
+          "token": 11477,
+          "text": " king",
+          "index": 4
+        },
+        {
+          "type": "token",
+          "token": 879,
+          "text": " who",
+          "index": 5
+        },
+        {
+          "type": "token",
+          "token": 21286,
+          "text": " ruled",
+          "index": 6
+        },
+        {
+          "type": "token",
+          "token": 916,
+          "text": " over",
+          "index": 7
+        },
+        {
+          "type": "token",
+          "token": 264,
+          "text": " a",
+          "index": 8
+        },
+        {
+          "type": "token",
+          "token": 12767,
+          "text": " vast",
+          "index": 9
+        },
+        {
+          "type": "token",
+          "token": 25079,
+          "text": " kingdom",
+          "index": 10
+        },
+        {
+          "type": "token",
+          "token": 13,
+          "text": ".",
+          "index": 11
+        },
+        {
+          "type": "token",
+          "token": 576,
+          "text": " The",
+          "index": 12
+        },
+        {
+          "type": "token",
+          "token": 11477,
+          "text": " king",
+          "index": 13
+        },
+        {
+          "type": "token",
+          "token": 572,
+          "text": " was",
+          "index": 14
+        },
+        {
+          "type": "token",
+          "token": 3881,
+          "text": " known",
+          "index": 15
+        },
+        {
+          "type": "token",
+          "token": 369,
+          "text": " for",
+          "index": 16
+        },
+        {
+          "type": "token",
+          "token": 806,
+          "text": " his",
+          "index": 17
+        },
+        {
+          "type": "token",
+          "token": 23389,
+          "text": " wisdom",
+          "index": 18
+        },
+        {
+          "type": "token",
+          "token": 323,
+          "text": " and",
+          "index": 19
+        },
+        {
+          "type": "token",
+          "token": 50741,
+          "text": " fairness",
+          "index": 20
+        },
+        {
+          "type": "token",
+          "token": 11,
+          "text": ",",
+          "index": 21
+        },
+        {
+          "type": "token",
+          "token": 323,
+          "text": " and",
+          "index": 22
+        },
+        {
+          "type": "token",
+          "token": 566,
+          "text": " he",
+          "index": 23
+        },
+        {
+          "type": "token",
+          "token": 572,
+          "text": " was",
+          "index": 24
+        },
+        {
+          "type": "token",
+          "token": 10245,
+          "text": " loved",
+          "index": 25
+        },
+        {
+          "type": "token",
+          "token": 553,
+          "text": " by",
+          "index": 26
+        },
+        {
+          "type": "token",
+          "token": 806,
+          "text": " his",
+          "index": 27
+        },
+        {
+          "type": "token",
+          "token": 1251,
+          "text": " people",
+          "index": 28
+        },
+        {
+          "type": "token",
+          "token": 13,
+          "text": ".",
+          "index": 29
+        },
+        {
+          "type": "token",
+          "token": 3776,
+          "text": " One",
+          "index": 30
+        },
+        {
+          "type": "token",
+          "token": 1899,
+          "text": " day",
+          "index": 31
+        },
+        {
+          "type": "done",
+          "finish_reason": "length",
+          "prompt_tokens": 4,
+          "completion_tokens": 32,
+          "sampled_tokens": [
+            11,
+            1052,
+            572,
+            264,
+            11477,
+            879,
+            21286,
+            916,
+            264,
+            12767,
+            25079,
+            13,
+            576,
+            11477,
+            572,
+            3881,
+            369,
+            806,
+            23389,
+            323,
+            50741,
+            11,
+            323,
+            566,
+            572,
+            10245,
+            553,
+            806,
+            1251,
+            13,
+            3776,
+            1899
+          ],
+          "stage_calls": 64,
+          "remote_stage_calls": 32,
+          "rollback_stage_calls": 0,
+          "remote_rollback_stage_calls": 0,
+          "rollback_stage_us": 0,
+          "rollback_remote_call_us": 0,
+          "bytes_in": 716940,
+          "bytes_out": 716928,
+          "stage_timings": [
+            {
+              "phase": "prefill",
+              "stage_index": 0,
+              "node_name": "dopey",
+              "remote": false,
+              "calls": 1,
+              "batch_items": 1,
+              "max_execution_batch_size": 1,
+              "verification_items": 1,
+              "max_verification_width": 1,
+              "execution_us": 167390,
+              "activation_decode_us": 0,
+              "activation_encode_us": 2,
+              "stage_total_us": 167399,
+              "remote_call_us": 0,
+              "remote_overhead_us": 0,
+              "bytes_in": 16,
+              "bytes_out": 81920
+            },
+            {
+              "phase": "prefill",
+              "stage_index": 1,
+              "node_name": "grumpy",
+              "remote": true,
+              "calls": 1,
+              "batch_items": 1,
+              "max_execution_batch_size": 1,
+              "verification_items": 1,
+              "max_verification_width": 1,
+              "execution_us": 158932,
+              "activation_decode_us": 1,
+              "activation_encode_us": 0,
+              "stage_total_us": 158947,
+              "remote_call_us": 169884,
+              "remote_overhead_us": 10937,
+              "bytes_in": 81920,
+              "bytes_out": 4
+            },
+            {
+              "phase": "decode",
+              "stage_index": 0,
+              "node_name": "dopey",
+              "remote": false,
+              "calls": 31,
+              "batch_items": 31,
+              "max_execution_batch_size": 1,
+              "verification_items": 31,
+              "max_verification_width": 1,
+              "execution_us": 2175285,
+              "activation_decode_us": 0,
+              "activation_encode_us": 4,
+              "stage_total_us": 2175387,
+              "remote_call_us": 0,
+              "remote_overhead_us": 0,
+              "bytes_in": 124,
+              "bytes_out": 634880
+            },
+            {
+              "phase": "decode",
+              "stage_index": 1,
+              "node_name": "grumpy",
+              "remote": true,
+              "calls": 31,
+              "batch_items": 31,
+              "max_execution_batch_size": 1,
+              "verification_items": 31,
+              "max_verification_width": 1,
+              "execution_us": 2526321,
+              "activation_decode_us": 3,
+              "activation_encode_us": 0,
+              "stage_total_us": 2526488,
+              "remote_call_us": 2589858,
+              "remote_overhead_us": 63370,
+              "bytes_in": 634880,
+              "bytes_out": 124
+            }
+          ],
+          "target_decode_passes": 31,
+          "speculative_draft_tokens": 0,
+          "speculative_accepted_tokens": 0
+        }
+      ]
+    },
+    {
+      "latency_ms": 5140.6683,
+      "ttft_ms": 358.7423,
+      "inter_token_latency_ms": [
+        157.9771,
+        160.3547,
+        153.9992,
+        153.0756,
+        153.8775,
+        153.4496,
+        153.3815,
+        153.2695,
+        153.374,
+        153.3773,
+        153.335,
+        153.3216,
+        153.2709,
+        153.1922,
+        153.317,
+        153.2916,
+        153.3213,
+        153.3849,
+        153.2553,
+        153.6107,
+        153.1247,
+        153.2342,
+        153.3046,
+        153.2348,
+        153.2693,
+        153.5798,
+        152.9297,
+        153.251,
+        153.2416,
+        153.2877,
+        153.2579
+      ],
+      "sampled_tokens": [
+        11,
+        1052,
+        572,
+        264,
+        11477,
+        879,
+        21286,
+        916,
+        264,
+        12767,
+        25079,
+        13,
+        576,
+        11477,
+        572,
+        3881,
+        369,
+        806,
+        23389,
+        323,
+        50741,
+        11,
+        323,
+        566,
+        572,
+        10245,
+        553,
+        806,
+        1251,
+        13,
+        3776,
+        1899
+      ],
+      "generated_text": ", there was a king who ruled over a vast kingdom. The king was known for his wisdom and fairness, and he was loved by his people. One day",
+      "finish_reason": "length",
+      "prompt_tokens": 4,
+      "completion_tokens": 32,
+      "events": [
+        {
+          "type": "token",
+          "token": 11,
+          "text": ",",
+          "index": 0
+        },
+        {
+          "type": "token",
+          "token": 1052,
+          "text": " there",
+          "index": 1
+        },
+        {
+          "type": "token",
+          "token": 572,
+          "text": " was",
+          "index": 2
+        },
+        {
+          "type": "token",
+          "token": 264,
+          "text": " a",
+          "index": 3
+        },
+        {
+          "type": "token",
+          "token": 11477,
+          "text": " king",
+          "index": 4
+        },
+        {
+          "type": "token",
+          "token": 879,
+          "text": " who",
+          "index": 5
+        },
+        {
+          "type": "token",
+          "token": 21286,
+          "text": " ruled",
+          "index": 6
+        },
+        {
+          "type": "token",
+          "token": 916,
+          "text": " over",
+          "index": 7
+        },
+        {
+          "type": "token",
+          "token": 264,
+          "text": " a",
+          "index": 8
+        },
+        {
+          "type": "token",
+          "token": 12767,
+          "text": " vast",
+          "index": 9
+        },
+        {
+          "type": "token",
+          "token": 25079,
+          "text": " kingdom",
+          "index": 10
+        },
+        {
+          "type": "token",
+          "token": 13,
+          "text": ".",
+          "index": 11
+        },
+        {
+          "type": "token",
+          "token": 576,
+          "text": " The",
+          "index": 12
+        },
+        {
+          "type": "token",
+          "token": 11477,
+          "text": " king",
+          "index": 13
+        },
+        {
+          "type": "token",
+          "token": 572,
+          "text": " was",
+          "index": 14
+        },
+        {
+          "type": "token",
+          "token": 3881,
+          "text": " known",
+          "index": 15
+        },
+        {
+          "type": "token",
+          "token": 369,
+          "text": " for",
+          "index": 16
+        },
+        {
+          "type": "token",
+          "token": 806,
+          "text": " his",
+          "index": 17
+        },
+        {
+          "type": "token",
+          "token": 23389,
+          "text": " wisdom",
+          "index": 18
+        },
+        {
+          "type": "token",
+          "token": 323,
+          "text": " and",
+          "index": 19
+        },
+        {
+          "type": "token",
+          "token": 50741,
+          "text": " fairness",
+          "index": 20
+        },
+        {
+          "type": "token",
+          "token": 11,
+          "text": ",",
+          "index": 21
+        },
+        {
+          "type": "token",
+          "token": 323,
+          "text": " and",
+          "index": 22
+        },
+        {
+          "type": "token",
+          "token": 566,
+          "text": " he",
+          "index": 23
+        },
+        {
+          "type": "token",
+          "token": 572,
+          "text": " was",
+          "index": 24
+        },
+        {
+          "type": "token",
+          "token": 10245,
+          "text": " loved",
+          "index": 25
+        },
+        {
+          "type": "token",
+          "token": 553,
+          "text": " by",
+          "index": 26
+        },
+        {
+          "type": "token",
+          "token": 806,
+          "text": " his",
+          "index": 27
+        },
+        {
+          "type": "token",
+          "token": 1251,
+          "text": " people",
+          "index": 28
+        },
+        {
+          "type": "token",
+          "token": 13,
+          "text": ".",
+          "index": 29
+        },
+        {
+          "type": "token",
+          "token": 3776,
+          "text": " One",
+          "index": 30
+        },
+        {
+          "type": "token",
+          "token": 1899,
+          "text": " day",
+          "index": 31
+        },
+        {
+          "type": "done",
+          "finish_reason": "length",
+          "prompt_tokens": 4,
+          "completion_tokens": 32,
+          "sampled_tokens": [
+            11,
+            1052,
+            572,
+            264,
+            11477,
+            879,
+            21286,
+            916,
+            264,
+            12767,
+            25079,
+            13,
+            576,
+            11477,
+            572,
+            3881,
+            369,
+            806,
+            23389,
+            323,
+            50741,
+            11,
+            323,
+            566,
+            572,
+            10245,
+            553,
+            806,
+            1251,
+            13,
+            3776,
+            1899
+          ],
+          "stage_calls": 64,
+          "remote_stage_calls": 32,
+          "rollback_stage_calls": 0,
+          "remote_rollback_stage_calls": 0,
+          "rollback_stage_us": 0,
+          "rollback_remote_call_us": 0,
+          "bytes_in": 716940,
+          "bytes_out": 716928,
+          "stage_timings": [
+            {
+              "phase": "prefill",
+              "stage_index": 0,
+              "node_name": "dopey",
+              "remote": false,
+              "calls": 1,
+              "batch_items": 1,
+              "max_execution_batch_size": 1,
+              "verification_items": 1,
+              "max_verification_width": 1,
+              "execution_us": 172365,
+              "activation_decode_us": 0,
+              "activation_encode_us": 2,
+              "stage_total_us": 172374,
+              "remote_call_us": 0,
+              "remote_overhead_us": 0,
+              "bytes_in": 16,
+              "bytes_out": 81920
+            },
+            {
+              "phase": "prefill",
+              "stage_index": 1,
+              "node_name": "grumpy",
+              "remote": true,
+              "calls": 1,
+              "batch_items": 1,
+              "max_execution_batch_size": 1,
+              "verification_items": 1,
+              "max_verification_width": 1,
+              "execution_us": 157752,
+              "activation_decode_us": 1,
+              "activation_encode_us": 0,
+              "stage_total_us": 157790,
+              "remote_call_us": 169084,
+              "remote_overhead_us": 11294,
+              "bytes_in": 81920,
+              "bytes_out": 4
+            },
+            {
+              "phase": "decode",
+              "stage_index": 0,
+              "node_name": "dopey",
+              "remote": false,
+              "calls": 31,
+              "batch_items": 31,
+              "max_execution_batch_size": 1,
+              "verification_items": 31,
+              "max_verification_width": 1,
+              "execution_us": 2175246,
+              "activation_decode_us": 0,
+              "activation_encode_us": 11,
+              "stage_total_us": 2175359,
+              "remote_call_us": 0,
+              "remote_overhead_us": 0,
+              "bytes_in": 124,
+              "bytes_out": 634880
+            },
+            {
+              "phase": "decode",
+              "stage_index": 1,
+              "node_name": "grumpy",
+              "remote": true,
+              "calls": 31,
+              "batch_items": 31,
+              "max_execution_batch_size": 1,
+              "verification_items": 31,
+              "max_verification_width": 1,
+              "execution_us": 2525818,
+              "activation_decode_us": 4,
+              "activation_encode_us": 0,
+              "stage_total_us": 2525976,
+              "remote_call_us": 2588043,
+              "remote_overhead_us": 62067,
+              "bytes_in": 634880,
+              "bytes_out": 124
+            }
+          ],
+          "target_decode_passes": 31,
+          "speculative_draft_tokens": 0,
+          "speculative_accepted_tokens": 0
+        }
+      ]
+    }
+  ]
+}

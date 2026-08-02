@@ -115,6 +115,26 @@ void validate_engine_config(const Config& cfg) {
             "speculative decoding requires an engine with multi-token verification and KV rollback"
         );
     }
+    if (cfg.mode == ExecutionMode::TensorParallel) {
+        if (cfg.engine != "llama.cpp") {
+            throw std::invalid_argument("tensor_parallel currently requires --engine llama.cpp");
+        }
+        if (cfg.compute_backend != "cuda") {
+            throw std::invalid_argument("tensor_parallel requires --compute-backend cuda");
+        }
+        if (cfg.kv_cache_type != KVCacheType::F16) {
+            throw std::invalid_argument("tensor_parallel currently requires --kv-cache-type f16");
+        }
+        const std::string mesh_error = tensor_parallel::validate_device_mesh(cfg.tensor_mesh);
+        if (!mesh_error.empty()) {
+            throw std::invalid_argument(mesh_error);
+        }
+    } else if (!cfg.tensor_mesh.remote_endpoints.empty() ||
+               !cfg.tensor_mesh.tensor_split.empty()) {
+        throw std::invalid_argument(
+            "tensor RPC peers and tensor split require --mode tensor_parallel"
+        );
+    }
 }
 
 } // namespace
@@ -133,6 +153,10 @@ void validate_deployment_config(const Config& cfg) {
     }
     if (cfg.mode != ExecutionMode::PipelineParallel && cfg.stage_assignment.stage_count > 1) {
         throw std::invalid_argument("multi-stage assignment requires --mode pipeline_parallel");
+    }
+    if (cfg.mode == ExecutionMode::TensorParallel &&
+        (cfg.stage_assignment.stage_index != 0 || cfg.stage_assignment.stage_count != 1)) {
+        throw std::invalid_argument("tensor_parallel requires one logical stage at index zero");
     }
     const std::string stage_error = pipeline_parallel::validate_stage_assignment(cfg.stage_assignment);
     if (!stage_error.empty()) {
@@ -177,6 +201,9 @@ void print_help() {
         << "  --stage-count n          total number of ordered stages\n"
         << "  --layer-start n          first transformer layer, inclusive\n"
         << "  --layer-end n            transformer layer end, exclusive\n"
+        << "  --tensor-transport n     tensor transport, currently llama_rpc\n"
+        << "  --tensor-rpc-peers n     comma-separated remote GGML RPC host:port endpoints\n"
+        << "  --tensor-split n         optional local,remote device weight proportions\n"
         << "  --engine engine          registered inference engine name\n"
         << "  --stage-transport name   registered peer-stage transport name\n"
         << "  --activation-encoding n  inter-stage activation encoding: f32 or f16\n"
@@ -224,6 +251,20 @@ Config parse_args(int argc, char** argv) {
             cfg.stage_assignment.layer_start = parse_int(require_value(i, argc, argv, arg), arg);
         } else if (arg == "--layer-end") {
             cfg.stage_assignment.layer_end = parse_int(require_value(i, argc, argv, arg), arg);
+        } else if (arg == "--tensor-transport") {
+            cfg.tensor_mesh.transport = require_value(i, argc, argv, arg);
+        } else if (arg == "--tensor-rpc-peers") {
+            cfg.tensor_mesh.remote_endpoints = tensor_parallel::parse_remote_endpoints(
+                require_value(i, argc, argv, arg)
+            );
+        } else if (arg == "--tensor-split") {
+            try {
+                cfg.tensor_mesh.tensor_split = tensor_parallel::parse_tensor_split(
+                    require_value(i, argc, argv, arg)
+                );
+            } catch (const std::exception& error) {
+                fail(std::string("invalid --tensor-split: ") + error.what());
+            }
         } else if (arg == "--engine") {
             cfg.engine = require_value(i, argc, argv, arg);
         } else if (arg == "--stage-transport") {
@@ -288,6 +329,11 @@ Config parse_args(int argc, char** argv) {
         << " decode_batch_size=" << cfg.decode_batch_size
         << " speculative_draft=" << cfg.speculative_draft
         << " speculative_max_tokens=" << cfg.speculative_max_tokens;
+    if (cfg.mode == ExecutionMode::TensorParallel) {
+        std::cerr
+            << " tensor_transport=" << cfg.tensor_mesh.transport
+            << " tensor_world_size=" << cfg.tensor_mesh.world_size();
+    }
     if (!cfg.start_idle) {
         std::cerr
             << " stage=" << cfg.stage_assignment.stage_index << "/" << cfg.stage_assignment.stage_count

@@ -143,13 +143,13 @@ StageWorker::StageWorker(
     std::string node_name,
     std::string model_id,
     StageAssignment assignment,
-    const LayerExecutor& layer_executor,
+    const inference::Executor& executor,
     std::shared_ptr<const activation::ActivationCodec> activation_codec
 )
     : node_name_(std::move(node_name)),
       model_id_(std::move(model_id)),
       assignment_(assignment),
-      layer_executor_(layer_executor),
+      executor_(executor),
       activation_codec_(std::move(activation_codec)) {
     if (!activation_codec_) {
         throw std::invalid_argument("stage worker requires an activation codec");
@@ -196,7 +196,7 @@ StageRunResult StageWorker::run(const protocol::StageRequest& request) const {
     }
 
     const auto execution_start = std::chrono::steady_clock::now();
-    inference::ExecutionResult execution = layer_executor_.execute(input);
+    inference::ExecutionResult execution = executor_.execute(input);
     timings.execution_us = elapsed_us(execution_start);
     if (!execution.ok) {
         const std::string status = execution.error.kind == inference::ErrorKind::InvalidInput
@@ -254,7 +254,7 @@ StageRunResult StageWorker::close_session(const protocol::StageRequest& request)
 
     const auto start = std::chrono::steady_clock::now();
     try {
-        layer_executor_.close_session(request.session_id);
+        executor_.close_session(request.session_id);
     } catch (const std::exception& error) {
         return error_result("502 Bad Gateway", "stage_session_close_failed", error.what());
     }
@@ -281,7 +281,7 @@ StageRunResult StageWorker::rollback_session(const protocol::StageRequest& reque
 
     const auto start = std::chrono::steady_clock::now();
     try {
-        layer_executor_.rollback_session(request.session_id, request.rollback_tokens);
+        executor_.rollback_session(request.session_id, request.rollback_tokens);
     } catch (const std::invalid_argument& error) {
         return bad_request("stage_session_rollback_rejected", error.what());
     } catch (const std::exception& error) {
