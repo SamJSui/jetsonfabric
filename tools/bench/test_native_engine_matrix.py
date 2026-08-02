@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from tools.bench import native_engine_matrix
 
@@ -15,6 +17,13 @@ class NativeEngineMatrixTest(unittest.TestCase):
             native_engine_matrix.parse_int_list("0,2", "prompt", allow_zero=True),
             [0, 2],
         )
+
+    def test_existing_path_accepts_jfm_directory(self):
+        with TemporaryDirectory() as directory:
+            self.assertEqual(
+                native_engine_matrix.existing_path(directory),
+                Path(directory).resolve(),
+            )
 
     def test_distribution_preserves_count_and_mean(self):
         summary = native_engine_matrix.distribution([1.0, 2.0, 3.0])

@@ -193,6 +193,13 @@ def existing_file(value):
     return path
 
 
+def existing_path(value):
+    path = Path(value).expanduser().resolve()
+    if not path.exists():
+        raise argparse.ArgumentTypeError(f"path does not exist: {path}")
+    return path
+
+
 def write_report(report, output):
     rendered = json.dumps(report, indent=2) + "\n"
     if output:
@@ -206,7 +213,7 @@ def arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--native-bin", required=True, type=existing_file)
     parser.add_argument("--llama-bin", required=True, type=existing_file)
-    parser.add_argument("--package", required=True, type=existing_file)
+    parser.add_argument("--package", required=True, type=existing_path)
     parser.add_argument("--model", required=True, type=existing_file)
     parser.add_argument("--backend", choices=("cpu", "cuda"), default="cuda")
     parser.add_argument("--n-gpu-layers", type=int, default=999)
