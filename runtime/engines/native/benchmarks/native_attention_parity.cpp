@@ -109,7 +109,7 @@ std::vector<std::vector<float>> candidate_trace(
         jetsonfabric::native::EngineOptions{
             .backend = args.backend,
             .prefill_attention_kernel = jetsonfabric::native::AttentionKernel::Flash,
-            .decode_attention_kernel = jetsonfabric::native::AttentionKernel::Unfused,
+            .decode_attention_kernel = jetsonfabric::native::AttentionKernel::Flash,
             .threads = args.threads,
         }
     );
@@ -207,6 +207,8 @@ int main(int argc, char ** argv) {
                   << jetsonfabric::native::backend_name(args.backend) << "\",\n"
                   << "  \"reference_prefill_attention_kernel\": \"unfused\",\n"
                   << "  \"candidate_prefill_attention_kernel\": \"flash\",\n"
+                  << "  \"reference_decode_attention_kernel\": \"unfused\",\n"
+                  << "  \"candidate_decode_attention_kernel\": \"flash\",\n"
                   << "  \"prompt_token_count\": " << args.tokens.size() << ",\n"
                   << "  \"decode_steps\": " << args.decode_steps << ",\n"
                   << "  \"vocabulary_size\": " << reference.logits.front().size() << ",\n"

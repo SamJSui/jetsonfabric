@@ -22,7 +22,7 @@ struct Arguments {
     jetsonfabric::native::AttentionKernel prefill_attention_kernel =
         jetsonfabric::native::AttentionKernel::Automatic;
     jetsonfabric::native::AttentionKernel decode_attention_kernel =
-        jetsonfabric::native::AttentionKernel::Unfused;
+        jetsonfabric::native::AttentionKernel::Automatic;
     std::vector<std::int32_t> tokens;
     std::uint32_t max_tokens = 1;
     std::uint32_t warmups = 0;

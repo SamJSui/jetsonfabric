@@ -1,0 +1,20 @@
+{
+  "captured_at": "2026-08-02T15:18:46-05:00",
+  "hardware": "Jetson Orin Nano 8 GB",
+  "kernel": "6.8.12-1021-tegra",
+  "jetson_linux": "R39.2",
+  "power_mode": "MAXN_SUPER",
+  "gpu_hz": 1020000000,
+  "emc_hz": 3199000000,
+  "source_base_commit": "dd4044096303e89e199c76654bc48ef09ee994fa",
+  "source_state": "codex/native-decode benchmark worktree",
+  "llama_cpp_commit": "bf2c86ddc0685f580595954056c2e77ebabfab4f",
+  "models": {
+    "qwen2.5-coder-1.5b-instruct-q4_k_m": "cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046",
+    "qwen2.5-coder-3b-instruct-q4_k_m": "724fb256bec1ff062b2f65e4569e871ad2e95ab2a3989723d1769c54294730b7",
+    "qwen2.5-coder-7b-instruct-q4_k_m": "509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c"
+  },
+  "native_benchmark_sha256": "660bf996444eb78669b3ff85d92a1afceee02af3eada5cb25aa789a5e8086f6c",
+  "native_parity_sha256": "c174352de61e36f37e058111d77c4341a928c8ec58b2bcf77bf5aee614807c20",
+  "llama_oracle_sha256": "d7733a37f1c286c8255d88697383fc9177fa63ef94b0288550a2958937768115"
+}

@@ -270,7 +270,10 @@ jobs:
         run: ctest --test-dir "$CI_RUNTIME_BUILD_DIR" --output-on-failure
 
       - name: Run benchmark client unit tests
-        run: python3 -m unittest tools.bench.test_runtime_jsonl
+        run: |
+          python3 -m unittest \
+            tools.bench.test_runtime_jsonl \
+            tools.bench.test_native_engine_matrix
 
       - name: Run Qwen2 partition residency equivalence
         run: CI_MODEL_PATH="$CI_QWEN_MODEL_PATH" "$CI_RUNTIME_BUILD_DIR/jetsonfabric-llama-stage-test"

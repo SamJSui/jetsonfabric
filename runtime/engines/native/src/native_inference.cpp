@@ -51,7 +51,7 @@ NativeEngine::NativeEngine(const std::string& package_path, Backend backend, int
     : NativeEngine(package_path, EngineOptions{
           .backend = backend,
           .prefill_attention_kernel = AttentionKernel::Automatic,
-          .decode_attention_kernel = AttentionKernel::Unfused,
+          .decode_attention_kernel = AttentionKernel::Automatic,
           .threads = threads,
       }) {}
 
