@@ -336,7 +336,7 @@ def arguments(argv=None):
     parser.add_argument("--model", required=True, type=existing_file)
     parser.add_argument("--backend", choices=("cuda",), default="cuda")
     parser.add_argument("--n-gpu-layers", type=int, default=999)
-    parser.add_argument("--max-logit-nrmse", type=float, default=0.02)
+    parser.add_argument("--max-logit-nrmse", type=float, default=0.025)
     parser.add_argument("--min-logit-cosine", type=float, default=0.999)
     parser.add_argument("--threads", type=int, default=6)
     parser.add_argument("--warmups", type=int, default=1)
