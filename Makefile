@@ -50,6 +50,7 @@ JFM_MAX_TOKENS ?= 1
 JFM_INFERENCE_WARMUPS ?= 1
 JFM_INFERENCE_ITERATIONS ?= 3
 JFM_EXPECTED_TOKENS ?=
+JFM_DECODE_POLICY ?= incremental
 
 # Node defaults: multi-instance safe.
 NODE_NAME ?=
@@ -167,6 +168,7 @@ help:
 	@printf '  JFM_PACKAGE=/path/model.jfm     Canonical native model package\n'
 	@printf '  JFM_LAYER_START=0 JFM_LAYER_END=14  Native stage range\n'
 	@printf '  JFM_TOKENS=1,2,3               Fixed token IDs for native inference\n'
+	@printf '  JFM_DECODE_POLICY=incremental   Native decode policy\n'
 	@printf '  RUNTIME_BUILD_JOBS=1             Safer on Jetson; try 2 or 4 if memory allows\n'
 	@printf '  RUNTIME_CUDA_ARCH=87             Jetson Orin default\n'
 	@printf '  JF_NODE0_PORT=19180              Fixed local node port\n'
@@ -328,6 +330,7 @@ bench-native-inference:
 		--max-tokens "$(JFM_MAX_TOKENS)" \
 		--warmups "$(JFM_INFERENCE_WARMUPS)" \
 		--iterations "$(JFM_INFERENCE_ITERATIONS)" \
+		--decode-policy "$(JFM_DECODE_POLICY)" \
 		$(if $(JFM_EXPECTED_TOKENS),--expected-tokens "$(JFM_EXPECTED_TOKENS)")
 
 .PHONY: runtime-cuda

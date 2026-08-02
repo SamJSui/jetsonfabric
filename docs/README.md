@@ -60,6 +60,12 @@ validation procedures.
 - [Native engine foundation](benchmarks/2026-08-01-native-engine-foundation.md)
   - 14B JFM import, exact stage selection, NVMe first-touch optimization, and
   explicit native-serving limitations.
+- [Native KV-cache benchmark](benchmarks/2026-08-01-native-kv-cache.md) -
+  matched llama.cpp token parity, full-prefix ablation, direct-engine latency,
+  and CUDA transfer evidence.
+- [Native engine workload matrix](benchmarks/2026-08-01-native-engine-matrix.md) -
+  12 matched prompt/output workloads, exact token parity, confidence intervals,
+  and the prefill/decode crossover.
 
 Real-model local integration commands are documented in
 [Local development](local-development.md). The source repository does not keep

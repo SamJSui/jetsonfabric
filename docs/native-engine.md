@@ -5,11 +5,11 @@ The native engine isolates the model hot path from node orchestration and from
 and an experimental architecture-selected inference path over GGML backends.
 
 It is not yet registered as a serving engine. The first architecture strategy
-implements Qwen2/Qwen2.5 attention, FFN, logits, optional output bias, and
-greedy token selection. It currently accepts token IDs, reloads the full model
-on one node, and recomputes the full prefix for every output token. llama.cpp
-remains the serving implementation and correctness oracle until tokenizer,
-KV-cache, lifecycle, and distributed-stage parity gates pass.
+implements Qwen2/Qwen2.5 attention, FFN, logits, optional output bias, greedy
+token selection, and incremental F16 KV caching. It currently accepts token
+IDs and loads the full model on one node. llama.cpp remains the serving
+implementation and correctness oracle until tokenizer, lifecycle, and
+distributed-stage parity gates pass.
 
 ## Boundaries
 
@@ -118,7 +118,7 @@ evict each clean segment before mapping it, providing a non-root approximation
 of cold NVMe residency. `JFM_PREFETCH_THREADS` measures whether concurrent
 segment faulting improves that storage-bound phase on the target device.
 
-## Native Inference Baseline
+## Native Inference Benchmark
 
 The inference benchmark consumes explicit token IDs so tokenizer behavior is
 not mixed with graph correctness. Use the separate llama.cpp oracle to obtain
@@ -143,11 +143,35 @@ make bench-native-inference \
 ```
 
 The benchmark verifies JFM segment hashes, reports the source GGUF SHA-256 and
-actual GGML backend/device, and emits raw timing samples. `ttft` measures the
-first full-prefix graph. `itl` and `decode_tokens_per_second` describe repeated
-full-prefix execution and are not comparable to KV-cached decode. The output
-therefore declares `kv_cache: false` and
-`decode_policy: full_prefix_recompute`.
+actual GGML backend/device, and emits raw timing samples. Incremental decode is
+the default: prefill populates an F16 KV cache, then each decode step processes
+only the sampled token. The output declares `kv_cache: true` and
+`decode_policy: incremental_kv_cache`.
+
+Use `JFM_DECODE_POLICY=full-prefix` to rerun the historical full-prefix policy
+as an ablation. That mode declares `kv_cache: false` and
+`decode_policy: full_prefix_recompute`; it is not representative of llama.cpp,
+which also uses incremental KV-cached decode.
+
+Run the matched native-versus-llama.cpp workload matrix with explicit prompt
+token IDs:
+
+```bash
+python3 tools/bench/native_engine_matrix.py \
+  --native-bin dist/jf-native-inference-bench \
+  --llama-bin dist/jf-llama-greedy-oracle \
+  --package /var/lib/jetsonfabric/models/model.jfm \
+  --model /var/lib/jetsonfabric/models/model.gguf \
+  --prompt-lengths 32,128,512,2048 \
+  --output-lengths 32,128,512 \
+  --warmups 1 \
+  --iterations 20 \
+  --revision "$(git rev-parse --short HEAD)" \
+  --output native-engine-matrix.json
+```
+
+The runner alternates engine order, retains raw timing vectors and executable
+hashes, and fails on any model, prompt-token, or generated-token mismatch.
 
 ## Native Serving Gates
 

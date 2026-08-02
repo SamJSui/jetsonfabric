@@ -25,6 +25,9 @@ public:
     );
 
     ggml_backend_t backend() const { return backend_.get(); }
+    ggml_backend_t input_backend() const {
+        return cpu_fallback_ ? cpu_fallback_.get() : backend_.get();
+    }
     std::span<ggml_backend_t> scheduler_backends() {
         return {scheduler_backends_.data(), scheduler_backend_count_};
     }
@@ -47,7 +50,9 @@ private:
     std::array<ggml_backend_t, 2> scheduler_backends_{};
     std::size_t scheduler_backend_count_ = 0;
     ggml_context_ptr context_;
+    ggml_context_ptr host_context_;
     ggml_backend_buffer_ptr buffer_;
+    ggml_backend_buffer_ptr host_buffer_;
     std::unordered_map<std::string, ggml_tensor *> tensors_;
     std::vector<std::byte> metadata_;
     std::string source_sha256_;

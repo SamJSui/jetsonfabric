@@ -3,23 +3,11 @@
 #include "model_architecture.hpp"
 #include "tensor_store.hpp"
 
-#include <algorithm>
 #include <chrono>
 #include <stdexcept>
 #include <utility>
 
 namespace jetsonfabric::native {
-namespace {
-
-std::int32_t greedy_token(const std::vector<float>& logits) {
-    if (logits.empty()) throw std::runtime_error("native engine produced no logits");
-    return static_cast<std::int32_t>(
-        std::distance(logits.begin(), std::max_element(logits.begin(), logits.end()))
-    );
-}
-
-} // namespace
-
 class NativeEngine::Impl {
 public:
     Impl(const std::string& package_path, Backend backend, int threads)
@@ -35,7 +23,16 @@ public:
 
     TensorStore tensors;
     std::unique_ptr<ModelArchitecture> architecture;
+    std::unique_ptr<InferenceSession> session;
     ModelInfo info;
+
+    InferenceSession& reset_session(std::size_t required_capacity) {
+        if (!session || session->capacity() != required_capacity) {
+            session = architecture->create_session(tensors, required_capacity);
+        }
+        session->reset();
+        return *session;
+    }
 };
 
 NativeEngine::NativeEngine(const std::string& package_path, Backend backend, int threads) {
@@ -62,7 +59,8 @@ std::vector<float> NativeEngine::logits(std::span<const std::int32_t> tokens) {
             throw std::invalid_argument("native token ID is outside model vocabulary");
         }
     }
-    return impl_->architecture->logits(impl_->tensors, tokens);
+    auto session = impl_->architecture->create_session(impl_->tensors, tokens.size());
+    return session->prefill_logits(tokens);
 }
 
 GenerationResult NativeEngine::generate(
@@ -72,13 +70,24 @@ GenerationResult NativeEngine::generate(
     if (prompt_tokens.empty() || max_tokens == 0) {
         throw std::invalid_argument("native generation requires prompt and output tokens");
     }
-    std::vector<std::int32_t> sequence(prompt_tokens.begin(), prompt_tokens.end());
+    const std::size_t required_capacity = prompt_tokens.size() + max_tokens - 1U;
+    if (required_capacity > impl_->info.context_length) {
+        throw std::invalid_argument("native generation exceeds model context");
+    }
+    for (const std::int32_t token : prompt_tokens) {
+        if (token < 0 || static_cast<std::uint32_t>(token) >= impl_->info.vocabulary_size) {
+            throw std::invalid_argument("native token ID is outside model vocabulary");
+        }
+    }
+    InferenceSession& session = impl_->reset_session(required_capacity);
     GenerationResult result;
     double total_ms = 0.0;
     double decode_ms = 0.0;
     for (std::uint32_t index = 0; index < max_tokens; ++index) {
         const auto start = std::chrono::steady_clock::now();
-        const std::int32_t token = greedy_token(logits(sequence));
+        const std::int32_t token = index == 0
+            ? session.prefill_greedy(prompt_tokens)
+            : session.decode_greedy(result.sampled_tokens.back());
         const double elapsed = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - start
         ).count();
@@ -86,7 +95,6 @@ GenerationResult NativeEngine::generate(
         else decode_ms += elapsed;
         total_ms += elapsed;
         result.sampled_tokens.push_back(token);
-        sequence.push_back(token);
     }
     if (max_tokens > 1) {
         result.inter_token_latency_ms = decode_ms / static_cast<double>(max_tokens - 1);

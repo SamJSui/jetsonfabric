@@ -96,6 +96,14 @@ TensorStore::TensorStore(
     if (!buffer_) {
         throw std::runtime_error("could not allocate native model weights on backend");
     }
+    if (host_context_) {
+        host_buffer_.reset(
+            ggml_backend_alloc_ctx_tensors(host_context_.get(), cpu_fallback_.get())
+        );
+        if (!host_buffer_) {
+            throw std::runtime_error("could not allocate native host-resident weights");
+        }
+    }
     copy_tensors(model.get());
     ggml_backend_synchronize(backend_.get());
 }
@@ -129,6 +137,16 @@ void TensorStore::create_tensors(jf_model * model) {
     if (!context_) {
         throw std::runtime_error("could not allocate native tensor metadata");
     }
+    if (cpu_fallback_) {
+        host_context_.reset(ggml_init(ggml_init_params{
+            .mem_size = metadata_bytes,
+            .mem_buffer = nullptr,
+            .no_alloc = true,
+        }));
+        if (!host_context_) {
+            throw std::runtime_error("could not allocate native host tensor metadata");
+        }
+    }
     for (std::size_t index = 0; index < tensor_count; ++index) {
         jf_tensor_view view{};
         require_ok(jf_model_tensor_at(model, index, &view), "read JFM tensor");
@@ -139,13 +157,17 @@ void TensorStore::create_tensors(jf_model * model) {
             }
             shape[dimension] = static_cast<std::int64_t>(view.shape[dimension]);
         }
+        const std::string name(view.name, view.name_length);
+        ggml_context * tensor_context =
+            host_context_ && name == "token_embd.weight"
+            ? host_context_.get()
+            : context_.get();
         ggml_tensor * tensor = ggml_new_tensor(
-            context_.get(),
+            tensor_context,
             to_ggml_type(view.type),
             static_cast<int>(view.rank),
             shape.data()
         );
-        const std::string name(view.name, view.name_length);
         ggml_set_name(tensor, name.c_str());
         if (!tensors_.emplace(name, tensor).second) {
             throw std::runtime_error("duplicate native tensor " + name);

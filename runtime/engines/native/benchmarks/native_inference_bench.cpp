@@ -1,6 +1,8 @@
 #include "jetsonfabric/native_inference.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <iomanip>
@@ -20,6 +22,7 @@ struct Arguments {
     std::uint32_t warmups = 0;
     std::uint32_t iterations = 1;
     int threads = 1;
+    bool incremental = true;
     std::optional<std::vector<std::int32_t>> expected_tokens;
 };
 
@@ -64,6 +67,8 @@ Arguments parse_args(int argc, char ** argv) {
         else if (option == "--iterations") args.iterations = parse_u32(value, "--iterations");
         else if (option == "--threads") args.threads = static_cast<int>(parse_u32(value, "--threads"));
         else if (option == "--expected-tokens") args.expected_tokens = parse_tokens(value);
+        else if (option == "--decode-policy" && value == "incremental") args.incremental = true;
+        else if (option == "--decode-policy" && value == "full-prefix") args.incremental = false;
         else if (option == "--backend" && value == "cpu") args.backend = jetsonfabric::native::Backend::Cpu;
         else if (option == "--backend" && value == "cuda") args.backend = jetsonfabric::native::Backend::Cuda;
         else throw std::invalid_argument("unknown option or backend: " + option + " " + value);
@@ -103,6 +108,47 @@ void print_samples(const std::vector<double>& samples) {
     std::cout << ']';
 }
 
+std::int32_t greedy_token(const std::vector<float>& logits) {
+    if (logits.empty() || !std::all_of(logits.begin(), logits.end(), [](float value) {
+        return std::isfinite(value);
+    })) {
+        throw std::runtime_error("native benchmark received invalid logits");
+    }
+    return static_cast<std::int32_t>(
+        std::distance(logits.begin(), std::max_element(logits.begin(), logits.end()))
+    );
+}
+
+jetsonfabric::native::GenerationResult generate_full_prefix(
+    jetsonfabric::native::NativeEngine& engine,
+    const std::vector<std::int32_t>& prompt,
+    std::uint32_t max_tokens
+) {
+    std::vector<std::int32_t> sequence = prompt;
+    jetsonfabric::native::GenerationResult result;
+    double total_ms = 0.0;
+    double decode_ms = 0.0;
+    for (std::uint32_t index = 0; index < max_tokens; ++index) {
+        const auto start = std::chrono::steady_clock::now();
+        const std::int32_t token = greedy_token(engine.logits(sequence));
+        const double token_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start
+        ).count();
+        if (index == 0) result.time_to_first_token_ms = token_ms;
+        else decode_ms += token_ms;
+        total_ms += token_ms;
+        result.sampled_tokens.push_back(token);
+        sequence.push_back(token);
+    }
+    if (max_tokens > 1) {
+        result.inter_token_latency_ms = decode_ms / static_cast<double>(max_tokens - 1);
+        result.decode_tokens_per_second = 1000.0 / result.inter_token_latency_ms;
+    }
+    result.end_to_end_tokens_per_second =
+        1000.0 * static_cast<double>(max_tokens) / total_ms;
+    return result;
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -110,7 +156,8 @@ int main(int argc, char ** argv) {
         const Arguments args = parse_args(argc, argv);
         jetsonfabric::native::NativeEngine engine(args.package_path, args.backend, args.threads);
         for (std::uint32_t index = 0; index < args.warmups; ++index) {
-            (void) engine.generate(args.tokens, args.max_tokens);
+            if (args.incremental) (void) engine.generate(args.tokens, args.max_tokens);
+            else (void) generate_full_prefix(engine, args.tokens, args.max_tokens);
         }
 
         std::vector<double> ttft;
@@ -119,7 +166,9 @@ int main(int argc, char ** argv) {
         std::vector<double> end_to_end_throughput;
         std::vector<std::int32_t> sampled_tokens;
         for (std::uint32_t index = 0; index < args.iterations; ++index) {
-            const auto result = engine.generate(args.tokens, args.max_tokens);
+            const auto result = args.incremental
+                ? engine.generate(args.tokens, args.max_tokens)
+                : generate_full_prefix(engine, args.tokens, args.max_tokens);
             if (index == 0) sampled_tokens = result.sampled_tokens;
             if (result.sampled_tokens != sampled_tokens) {
                 throw std::runtime_error("native greedy output changed between iterations");
@@ -170,8 +219,10 @@ int main(int argc, char ** argv) {
                   << median(decode_throughput) << ",\n"
                   << "  \"end_to_end_tokens_per_second_p50\": "
                   << median(end_to_end_throughput) << ",\n"
-                  << "  \"kv_cache\": false,\n"
-                  << "  \"decode_policy\": \"full_prefix_recompute\"\n"
+                  << "  \"kv_cache\": " << (args.incremental ? "true" : "false") << ",\n"
+                  << "  \"decode_policy\": \""
+                  << (args.incremental ? "incremental" : "full_prefix_recompute")
+                  << "\"\n"
                   << "}\n";
         return 0;
     } catch (const std::exception& error) {

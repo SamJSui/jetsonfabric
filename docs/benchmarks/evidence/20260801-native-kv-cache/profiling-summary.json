@@ -1,0 +1,45 @@
+{
+  "profiler": "NVIDIA Nsight Systems",
+  "source_table": "CUPTI_ACTIVITY_KIND_MEMCPY",
+  "query_fields": [
+    "copyKind",
+    "count(*)",
+    "sum(bytes)",
+    "max(bytes)",
+    "sum(end-start)"
+  ],
+  "copy_kind": {
+    "1": "Host-to-Device",
+    "2": "Device-to-Host",
+    "8": "Device-to-Device"
+  },
+  "profiles": {
+    "native_before_host_embedding_fix_32_tokens": {
+      "device_to_host": {
+        "count": 64,
+        "total_bytes": 4200726656,
+        "max_bytes": 131272704,
+        "total_duration_ns": 576561318
+      },
+      "interpretation": "32 embedding transfers of 131272704 bytes plus 32 token transfers of 4 bytes"
+    },
+    "native_commit_1240c08_8_tokens": {
+      "device_to_host": {
+        "count": 8,
+        "total_bytes": 32,
+        "max_bytes": 4,
+        "total_duration_ns": 12160
+      },
+      "interpretation": "one 4-byte greedy token ID per generated token"
+    },
+    "llama_cpp_oracle_32_tokens": {
+      "device_to_host": {
+        "count": 32,
+        "total_bytes": 19447808,
+        "max_bytes": 607744,
+        "total_duration_ns": 806387
+      },
+      "interpretation": "one 151936-element F32 logits vector per generated token"
+    }
+  }
+}
