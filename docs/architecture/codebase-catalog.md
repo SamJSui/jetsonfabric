@@ -164,7 +164,7 @@ prefill and decode and closes every stage session afterward.
 | `adapters` | `LlamaCppStageAdapter` | Owns session-keyed partial-layer llama contexts and their KV state; executes prefill/decode and reaps idle sessions. |
 | `adapters` | `LlamaCppAdapter` | Owns the ordinary full-model llama context used by single-stage execution. |
 | `adapters` | `LlamaCppTensorParallel` | Maps an engine-neutral device mesh to llama.cpp CUDA and RPC devices without exposing GGML types to runtime orchestration. |
-| `engines/native` | `jf_model` | Dependency-light C owner of one validated JFM v2 stage view, preserved GGUF metadata, and memory-mapped tensor data. It is not yet a serving executor. |
+| `engines/native` | `jf_model` | Dependency-light C owner of one validated JFM v2 stage view, preserved GGUF metadata, and memory-mapped tensor data used by the native serving executor. |
 | `compiler` | `jf-model-compile` | Offline GGUF-to-JFM v2 importer with stable tensor types, per-segment hashes, source mutation detection, and atomic publication. |
 | `tensor_parallel` | `DeviceMesh` | Validated transport endpoints and optional per-device tensor proportions. |
 | `tensor_parallel` | `jetsonfabric-tensor-worker` | Exposes a Jetson CUDA device through unauthenticated GGML RPC for trusted-LAN experiments. |

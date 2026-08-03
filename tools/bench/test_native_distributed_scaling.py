@@ -143,6 +143,25 @@ class NativeDistributedScalingTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "CRCs do not match"):
             scaling.validate_trace_chain(traces, stage_count=2, generated_tokens=1)
 
+    def test_benchmark_result_rejects_zero_success(self):
+        result = {
+            "success_count": 0,
+            "failure_count": 2,
+            "results": [{"error": "runtime exited"}, {"error": "runtime exited"}],
+        }
+        with self.assertRaisesRegex(RuntimeError, "C2 benchmark completed 0/2"):
+            scaling.validate_benchmark_result(result, expected_count=2, concurrency=2)
+
+    def test_benchmark_result_accepts_complete_streaming_run(self):
+        result = {
+            "success_count": 2,
+            "failure_count": 0,
+            "output_tokens": 256,
+            "output_token_throughput": 12.5,
+            "ttft": {"p50_ms": 100},
+        }
+        scaling.validate_benchmark_result(result, expected_count=2, concurrency=2)
+
     @staticmethod
     def manifest():
         return {

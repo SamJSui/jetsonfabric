@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -202,6 +203,18 @@ void run_distributed_serving_test(const std::string& package_path) {
     final_prefill.layers = LayerRange{.start = 1, .end = 2};
     final_prefill.payload = first_prefill_result.output.payload;
     require_sampled_token(final.execute(final_prefill));
+
+    StageInput oversized_activation = final_prefill;
+    oversized_activation.session_id = "oversized-activation";
+    oversized_activation.payload.tensor.shape[0] =
+        std::numeric_limits<std::int64_t>::max();
+    oversized_activation.payload.bytes.clear();
+    const ExecutionResult oversized_result = final.execute(oversized_activation);
+    require(!oversized_result.ok, "native stage accepted an oversized activation shape");
+    require(
+        oversized_result.error.code == "invalid_native_stage_input",
+        "oversized activation returned the wrong error"
+    );
 
     StageInput first_decode = first_prefill;
     first_decode.phase = Phase::Decode;

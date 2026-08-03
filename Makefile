@@ -127,6 +127,8 @@ BENCH_STREAM ?= false
 NATIVE_SCALING_MANIFEST ?= examples/native-scaling-manifest.json
 NATIVE_SCALING_URL ?= http://127.0.0.1:52415
 NATIVE_SCALING_OUTPUT ?= data/native-distributed-scaling.json
+NATIVE_SCALING_MODELS ?=
+NATIVE_SCALING_RUN_ID ?= native-scaling
 
 .PHONY: help
 help:
@@ -177,6 +179,7 @@ help:
 	@printf '  JFM_LAYER_START=0 JFM_LAYER_END=14  Native stage range\n'
 	@printf '  JFM_TOKENS=1,2,3               Fixed token IDs for native inference\n'
 	@printf '  NATIVE_SCALING_URL=http://node:52415  Coordinator used by native scaling\n'
+	@printf '  NATIVE_SCALING_MODELS=7b          Optional model labels after a cold start\n'
 	@printf '  JFM_DECODE_POLICY=incremental   Native decode policy\n'
 	@printf '  RUNTIME_BUILD_JOBS=1             Safer on Jetson; try 2 or 4 if memory allows\n'
 	@printf '  RUNTIME_CUDA_ARCH=87             Jetson Orin default\n'
@@ -351,7 +354,9 @@ bench-native-scaling:
 		--manifest "$(NATIVE_SCALING_MANIFEST)" \
 		--coordinator-url "$(NATIVE_SCALING_URL)" \
 		--bench-bin "$(BENCH_BIN)" \
-		--output "$(NATIVE_SCALING_OUTPUT)"
+		--output "$(NATIVE_SCALING_OUTPUT)" \
+		--run-id "$(NATIVE_SCALING_RUN_ID)" \
+		$(if $(NATIVE_SCALING_MODELS),--models "$(NATIVE_SCALING_MODELS)",--continue-on-error)
 
 .PHONY: runtime-cuda
 runtime-cuda: setup

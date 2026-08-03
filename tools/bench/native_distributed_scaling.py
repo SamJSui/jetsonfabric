@@ -326,7 +326,34 @@ def run_benchmark(bench_bin, endpoint, template, model_id, warmups, count, concu
             raise RuntimeError(
                 f"jf-bench failed ({completed.returncode}): {completed.stderr.strip()}"
             )
-        return json.loads(output_path.read_text(encoding="utf-8"))
+        result = json.loads(output_path.read_text(encoding="utf-8"))
+        validate_benchmark_result(result, count, concurrency)
+        return result
+
+
+def validate_benchmark_result(result, expected_count, concurrency):
+    success = result.get("success_count")
+    failures = result.get("failure_count")
+    if success != expected_count or failures != 0:
+        errors = sorted(
+            {
+                row.get("error", "unknown error")
+                for row in result.get("results", [])
+                if row.get("error")
+            }
+        )
+        detail = "; ".join(errors[:3])
+        raise RuntimeError(
+            f"C{concurrency} benchmark completed {success}/{expected_count} requests"
+            + (f": {detail}" if detail else "")
+        )
+    if (
+        result.get("output_tokens", 0) <= 0
+        or result.get("output_token_throughput", 0) <= 0
+    ):
+        raise RuntimeError(f"C{concurrency} benchmark reported no output throughput")
+    if result.get("ttft", {}).get("p50_ms", 0) <= 0:
+        raise RuntimeError(f"C{concurrency} streaming benchmark reported no TTFT")
 
 
 def write_report(report, output):
@@ -336,8 +363,8 @@ def write_report(report, output):
     temporary.replace(output)
 
 
-def run_model(client, args, manifest, model):
-    deployment = client.post(
+def run_model(client, args, manifest, model, model_report, checkpoint):
+    model_report["deployment"] = client.post(
         "/v1/deployments/switch",
         {
             "deployment_id": f"{args.run_id}-{model['label']}",
@@ -347,8 +374,9 @@ def run_model(client, args, manifest, model):
             "ctx_size": model["context_size"],
         },
     )
-    active = validate_active_deployment(deployment, model)
-    residency = collect_residency(client, active)
+    active = validate_active_deployment(model_report["deployment"], model)
+    model_report["residency"] = collect_residency(client, active)
+    checkpoint()
     correctness_spec = manifest["correctness"]
     correctness = client.post(
         "/v1/layer-split/run",
@@ -361,12 +389,12 @@ def run_model(client, args, manifest, model):
             "allow_colocated_stages": False,
         },
     )
-    correctness = validate_correctness_result(
+    model_report["correctness"] = validate_correctness_result(
         correctness, active, model, model.get("expected_tokens")
     )
-    benchmarks = {}
+    checkpoint()
     for concurrency in manifest["concurrencies"]:
-        benchmarks[f"c{concurrency}"] = run_benchmark(
+        model_report["benchmarks"][f"c{concurrency}"] = run_benchmark(
             args.bench_bin,
             args.coordinator_url,
             manifest["request_template"],
@@ -375,15 +403,9 @@ def run_model(client, args, manifest, model):
             manifest["requests"],
             concurrency,
         )
-    return {
-        "label": model["label"],
-        "model_id": model["model_id"],
-        "status": "complete",
-        "deployment": deployment,
-        "residency": residency,
-        "correctness": correctness,
-        "benchmarks": benchmarks,
-    }
+        checkpoint()
+    model_report["status"] = "complete"
+    return model_report
 
 
 def arguments(argv=None):
@@ -439,17 +461,22 @@ def main(argv=None):
     try:
         report["cluster"] = client.get("/v1/cluster/members")
         for model in models:
+            model_report = {
+                "label": model["label"],
+                "model_id": model["model_id"],
+                "status": "running",
+                "benchmarks": {},
+            }
+            report["models"].append(model_report)
+
+            def checkpoint():
+                write_report(report, args.output)
+
             try:
-                report["models"].append(run_model(client, args, manifest, model))
+                run_model(client, args, manifest, model, model_report, checkpoint)
             except Exception as error:
-                report["models"].append(
-                    {
-                        "label": model["label"],
-                        "model_id": model["model_id"],
-                        "status": "failed",
-                        "error": str(error),
-                    }
-                )
+                model_report["status"] = "failed"
+                model_report["error"] = str(error)
                 write_report(report, args.output)
                 if not args.continue_on_error:
                     raise

@@ -26,8 +26,16 @@ std::vector<float> activation_values(
             "native activation must be f32[sequence_length, hidden_size]"
         );
     }
-    const std::size_t value_count =
-        static_cast<std::size_t>(payload.tensor.shape[0]) * embedding_length;
+    const std::size_t sequence_length =
+        static_cast<std::size_t>(payload.tensor.shape[0]);
+    const std::size_t max_size = std::numeric_limits<std::size_t>::max();
+    if (embedding_length == 0 || sequence_length > max_size / embedding_length) {
+        throw std::invalid_argument("native activation shape exceeds addressable memory");
+    }
+    const std::size_t value_count = sequence_length * embedding_length;
+    if (value_count > max_size / sizeof(float)) {
+        throw std::invalid_argument("native activation byte count exceeds addressable memory");
+    }
     if (payload.bytes.size() != value_count * sizeof(float)) {
         throw std::invalid_argument("native activation byte count does not match its shape");
     }
