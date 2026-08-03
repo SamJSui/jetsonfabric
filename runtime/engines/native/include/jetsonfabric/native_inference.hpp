@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string>
@@ -24,6 +25,8 @@ struct EngineOptions {
     AttentionKernel prefill_attention_kernel = AttentionKernel::Automatic;
     AttentionKernel decode_attention_kernel = AttentionKernel::Automatic;
     int threads = 1;
+    std::uint32_t layer_start = 0;
+    std::uint32_t layer_end = std::numeric_limits<std::uint32_t>::max();
 };
 
 struct ModelInfo {
@@ -38,6 +41,16 @@ struct ModelInfo {
     std::uint64_t weight_bytes = 0;
     std::uint64_t total_weight_bytes = 0;
     std::uint64_t tensor_count = 0;
+    std::uint32_t resident_layer_start = 0;
+    std::uint32_t resident_layer_end = 0;
+};
+
+struct StageResult {
+    std::vector<float> activations;
+    std::int32_t sampled_token = -1;
+
+    bool has_activations() const noexcept { return !activations.empty(); }
+    bool has_sampled_token() const noexcept { return sampled_token >= 0; }
 };
 
 struct PrefillMetrics {
@@ -81,6 +94,13 @@ public:
     std::size_t position() const;
     std::int32_t prefill_greedy(std::span<const std::int32_t> tokens);
     std::int32_t decode_greedy(std::int32_t token);
+    StageResult prefill_stage_tokens(std::span<const std::int32_t> tokens);
+    StageResult prefill_stage_activations(
+        std::span<const float> activations,
+        std::size_t token_count
+    );
+    StageResult decode_stage_token(std::int32_t token);
+    StageResult decode_stage_activation(std::span<const float> activation);
     void rollback(std::size_t token_count);
 
 private:

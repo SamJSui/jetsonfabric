@@ -21,7 +21,9 @@ public:
     TensorStore(
         const std::string& package_path,
         Backend backend,
-        int threads
+        int threads,
+        std::uint32_t layer_start,
+        std::uint32_t layer_end
     );
 
     ggml_backend_t backend() const { return backend_.get(); }
@@ -41,6 +43,8 @@ public:
     const std::string& source_sha256() const { return source_sha256_; }
     const std::string& backend_name() const { return backend_name_; }
     const std::string& device_name() const { return device_name_; }
+    std::uint32_t layer_start() const { return layer_start_; }
+    std::uint32_t layer_end() const { return layer_end_; }
 
 private:
     static ggml_backend_ptr create_backend(Backend backend, int threads);
@@ -63,6 +67,8 @@ private:
     std::uint64_t weight_bytes_ = 0;
     std::uint64_t total_weight_bytes_ = 0;
     std::uint64_t tensor_count_ = 0;
+    std::uint32_t layer_start_ = 0;
+    std::uint32_t layer_end_ = 0;
 };
 
 } // namespace jetsonfabric::native

@@ -153,12 +153,6 @@ void validate_deployment_config(const Config& cfg) {
                 "native serving currently requires --mode pipeline_parallel"
             );
         }
-        if (cfg.stage_assignment.stage_index != 0 ||
-            cfg.stage_assignment.stage_count != 1) {
-            throw std::invalid_argument(
-                "native serving currently requires one logical stage at index zero"
-            );
-        }
         if (cfg.compute_backend != "cpu" && cfg.compute_backend != "cuda") {
             throw std::invalid_argument("native compute backend must be cpu or cuda");
         }

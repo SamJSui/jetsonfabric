@@ -165,22 +165,30 @@ InferenceEngineParts create_native_engine(const Config& config) {
     const int threads = config.threads > 0
         ? config.threads
         : static_cast<int>(std::max(1U, std::thread::hardware_concurrency()));
+    if (config.stage_assignment.layer_start < 0 ||
+        config.stage_assignment.layer_end <= config.stage_assignment.layer_start) {
+        throw std::invalid_argument("native engine requires a valid stage layer range");
+    }
     auto engine = std::make_shared<native::NativeEngine>(
         config.model_path,
-        backend,
-        threads
+        native::EngineOptions{
+            .backend = backend,
+            .prefill_attention_kernel = native::AttentionKernel::Automatic,
+            .decode_attention_kernel = native::AttentionKernel::Automatic,
+            .threads = threads,
+            .layer_start = static_cast<std::uint32_t>(
+                config.stage_assignment.layer_start
+            ),
+            .layer_end = static_cast<std::uint32_t>(
+                config.stage_assignment.layer_end
+            ),
+        }
     );
     const native::ModelInfo info = engine->model_info();
     if (!config.model_sha256.empty() &&
         lowercase(config.model_sha256) != lowercase(info.source_sha256)) {
         throw std::invalid_argument(
             "native JFM source SHA-256 does not match the deployment model"
-        );
-    }
-    if (config.stage_assignment.layer_start != 0 ||
-        config.stage_assignment.layer_end != static_cast<int>(info.layer_count)) {
-        throw std::invalid_argument(
-            "native serving currently requires the complete model layer range"
         );
     }
     auto tokenizer = std::make_shared<adapters::LlamaCppTokenizer>(config.model_path);

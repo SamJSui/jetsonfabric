@@ -57,7 +57,9 @@ std::string sha256_hex(const std::array<std::uint8_t, 32>& digest) {
 TensorStore::TensorStore(
     const std::string& package_path,
     Backend backend,
-    int threads
+    int threads,
+    std::uint32_t layer_start,
+    std::uint32_t layer_end
 ) : backend_(create_backend(backend, threads)) {
     scheduler_backends_[scheduler_backend_count_++] = backend_.get();
     if (backend == Backend::Cuda) {
@@ -69,8 +71,8 @@ TensorStore::TensorStore(
     device_name_ = device == nullptr ? "unknown" : ggml_backend_dev_name(device);
     jf_model * raw_model = nullptr;
     const jf_stage_plan plan{
-        .layer_start = 0,
-        .layer_end = JF_ALL_LAYERS,
+        .layer_start = layer_start,
+        .layer_end = layer_end,
         .verify_hashes = 1,
         .evict_before_open = 0,
     };
@@ -91,6 +93,8 @@ TensorStore::TensorStore(
     );
     source_sha256_ = sha256_hex(source_sha);
     const jf_model_stats stats = jf_model_get_stats(model.get());
+    layer_start_ = stats.layer_start;
+    layer_end_ = stats.layer_end;
     weight_bytes_ = stats.selected_weight_bytes;
     total_weight_bytes_ = stats.total_weight_bytes;
     tensor_count_ = stats.selected_tensor_count;
@@ -140,7 +144,7 @@ void TensorStore::create_tensors(jf_model * model) {
     if (!context_) {
         throw std::runtime_error("could not allocate native tensor metadata");
     }
-    if (cpu_fallback_) {
+    if (cpu_fallback_ && layer_start_ == 0) {
         host_context_.reset(ggml_init(ggml_init_params{
             .mem_size = metadata_bytes,
             .mem_buffer = nullptr,
@@ -205,7 +209,10 @@ ggml_tensor * TensorStore::require(const std::string& name) const {
 }
 
 std::uint32_t TensorStore::vocabulary_size() const {
-    const std::int64_t size = require("token_embd.weight")->ne[1];
+    ggml_tensor * vocabulary_tensor = find("token_embd.weight");
+    if (vocabulary_tensor == nullptr) vocabulary_tensor = find("output.weight");
+    if (vocabulary_tensor == nullptr) return 0;
+    const std::int64_t size = vocabulary_tensor->ne[1];
     if (size <= 0 || size > std::numeric_limits<std::uint32_t>::max()) {
         throw std::runtime_error("native vocabulary size is outside uint32 range");
     }

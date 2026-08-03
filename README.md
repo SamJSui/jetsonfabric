@@ -10,9 +10,9 @@ communication.
 
 Two Jetson Orin Nano 8 GB nodes have served Qwen2.5-Coder models across
 contiguous layer ranges over wired Ethernet. The cluster demonstrated 11.46 GiB
-of resident 32B Q2_K weights that cannot fit on either node alone. Replicas
-remain faster when a model fits on one node; pipeline parallelism primarily
-extends model capacity.
+of resident 32B Q2_K weights that cannot fit on either node alone. Pipeline
+parallelism extends model capacity; the native 1.5B pipeline also produced the
+highest aggregate throughput measured on this cluster.
 
 JetsonFabric is experimental source software for trusted-LAN research, not a
 production inference service. See [the documentation index](docs/README.md) for
@@ -38,16 +38,17 @@ stage-local KV caches, sampling, and direct runtime transport. The coordinator
 selects the route once; it is not in the token-by-token data path.
 
 The default serving path uses a pinned `llama.cpp` integration. A selectable
-JetsonFabric-native Qwen2 engine now serves full-model, single-node requests
-through the same API using GGML/GGML-CUDA directly. This boundary keeps engine
-and transport implementations replaceable without changing the node API.
+JetsonFabric-native Qwen2 engine also executes contiguous layer stages from JFM
+packages through the same API using GGML/GGML-CUDA directly. This boundary
+keeps engine and transport implementations replaceable without changing the
+node API.
 
 Implemented behavior includes:
 
 - identical nodes with static and mDNS discovery and deterministic election;
 - versioned deployment plans with model hashes, epochs, and layer assignments;
-- partial-layer Llama and Qwen2 execution with stage-local weight residency;
-- full-model native Qwen2 serving from integrity-checked JFM packages;
+- partial-layer llama.cpp and native Qwen2 execution with stage-local weight
+  residency and integrity-checked GGUF or JFM artifacts;
 - dynamic load, activate, drain, unload, and runtime-restart repair;
 - F32 and F16 activation codecs over direct or relayed Stagewire transport;
 - optional continuous decode batching, prompt-lookup speculation, and
@@ -67,7 +68,7 @@ and sample counts.
 
 | Objective | Configuration | Best measured result |
 | --- | --- | --- |
-| Maximum aggregate throughput | 1.5B, two replicas | **80.06 output tok/s** |
+| Maximum aggregate throughput | 1.5B, native 18/10 pipeline | **86.79 output tok/s** |
 | Performance/quality knee | 7B, two replicas | **24.63 aggregate tok/s**, 84.1% HumanEval+ |
 | Largest Pareto model | 14B, 26/22 pipeline | **12.19 aggregate tok/s**, 86.6% HumanEval+ |
 | Maximum demonstrated capacity | 32B Q2_K, 33/31 pipeline | **11.46 GiB resident weights**, 5.149 aggregate tok/s |
@@ -80,23 +81,22 @@ decode reached 6.50 tok/s while experimental tensor sharding reached 1.68 tok/s;
 
 ![Quality versus fixed-output throughput](docs/benchmarks/figures/quality-throughput.svg)
 
-The experimental native Qwen2 CUDA engine now uses Flash Attention for prefill
-and decode. Aligning its physical KV cache to GGML's 256-token fast-path stride
-increased 3B long-context decode throughput by **23.8%** in a direct A/B test.
-Shape-aware SwiGLU fusion then reduced native TTFT by 1.0% to 3.9% without
-sacrificing the smaller model's decode path. Against pinned llama.cpp, native
-decode is **14.8% to 18.7% faster** at 1.5B and within 1.2% at 3B and 7B;
-TTFT leads or remains within 3.2% across the matrix. All rows preserve exact
-greedy-token output. These are direct-engine results, not distributed-serving
-claims.
+The native Qwen2 CUDA engine uses Flash Attention, an aligned F16 KV cache, and
+shape-aware SwiGLU fusion. In a matched two-node 1.5B A/B, its 18/10 pipeline
+served **86.79 output tok/s** at concurrency 2 versus **75.10 tok/s** for the
+pinned llama.cpp engine. Native median TTFT was 76 ms versus 93 ms, median ITL
+was 22 ms versus 25 ms, and median end-to-end latency was 2.947 s versus
+3.399 s. Both engines produced the same greedy tokens. The native engine also
+maps only its assigned JFM layers on each node.
 
 Benchmark reports and claim boundaries:
 [model scaling and HumanEval](docs/benchmarks/2026-07-27-two-orin-nano.md),
 [serving matrix](docs/benchmarks/2026-07-29-serving-matrix.md),
 [32B capacity](docs/benchmarks/2026-07-30-32b-capacity.md),
 [tensor comparison](docs/benchmarks/2026-08-01-tensor-parallel-runtime.md),
-[native engine matrix](docs/benchmarks/2026-08-01-native-engine-matrix.md), and
-[native CUDA optimization](docs/benchmarks/2026-08-02-native-fused-ffn.md).
+[native engine matrix](docs/benchmarks/2026-08-01-native-engine-matrix.md),
+[native CUDA optimization](docs/benchmarks/2026-08-02-native-fused-ffn.md), and
+[native distributed stages](docs/benchmarks/2026-08-03-native-distributed-stages.md).
 
 ## Quick Start
 
@@ -183,14 +183,14 @@ or mutable node state.
 
 ## Current Focus
 
-1. Extend the native engine from full-model serving to partial-layer residency
-   and physical two-node stage execution.
+1. Validate and tune native stage execution for 3B, 7B, and 14B models, then
+   measure where compute amortizes the inter-stage hop.
 2. Harden admission around weights, KV cache, activations, compute buffers,
    fragmentation, and deployment replacement overlap.
 3. Improve packaging, model distribution, recovery tests, and trusted-cluster
    security without putting the coordinator in the token data path.
 
-Current limits: chat sampling is greedy; peer traffic is plaintext on a trusted
-LAN; partial-layer support is tied to a pinned llama.cpp revision; tensor RPC is
-experimental and unauthenticated; and reported resident weights exclude runtime
-allocator overhead, KV cache, activations, and compute buffers.
+Current limits: chat sampling is greedy; the native engine supports Qwen2 and
+Qwen2.5 only; peer traffic is plaintext on a trusted LAN; tensor RPC is
+experimental and unauthenticated; and reported resident weights exclude
+runtime allocator overhead, KV cache, activations, and compute buffers.

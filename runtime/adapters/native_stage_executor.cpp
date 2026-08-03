@@ -3,6 +3,7 @@
 #include "inference/token_payload.hpp"
 
 #include <limits>
+#include <cstring>
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
@@ -11,6 +12,54 @@
 #include <vector>
 
 namespace jetsonfabric::runtime::adapters {
+namespace {
+
+std::vector<float> activation_values(
+    const inference::Payload& payload,
+    std::uint32_t embedding_length
+) {
+    if (payload.kind != inference::PayloadKind::Activation ||
+        payload.tensor.dtype != "f32" || payload.tensor.shape.size() != 2 ||
+        payload.tensor.shape[0] <= 0 ||
+        payload.tensor.shape[1] != static_cast<std::int64_t>(embedding_length)) {
+        throw std::invalid_argument(
+            "native activation must be f32[sequence_length, hidden_size]"
+        );
+    }
+    const std::size_t value_count =
+        static_cast<std::size_t>(payload.tensor.shape[0]) * embedding_length;
+    if (payload.bytes.size() != value_count * sizeof(float)) {
+        throw std::invalid_argument("native activation byte count does not match its shape");
+    }
+    std::vector<float> values(value_count);
+    std::memcpy(values.data(), payload.bytes.data(), payload.bytes.size());
+    return values;
+}
+
+inference::Payload activation_payload(
+    std::vector<float> values,
+    std::uint32_t embedding_length
+) {
+    if (values.empty() || values.size() % embedding_length != 0) {
+        throw std::logic_error("native engine returned an invalid activation shape");
+    }
+    inference::Payload payload;
+    payload.kind = inference::PayloadKind::Activation;
+    payload.tensor = inference::TensorDescriptor{
+        .dtype = "f32",
+        .shape = {
+            static_cast<std::int64_t>(values.size() / embedding_length),
+            static_cast<std::int64_t>(embedding_length),
+        },
+        .byte_order = "little",
+        .layout = "row_major",
+    };
+    payload.bytes.resize(values.size() * sizeof(float));
+    std::memcpy(payload.bytes.data(), values.data(), payload.bytes.size());
+    return payload;
+}
+
+} // namespace
 
 class NativeStageExecutor::Impl {
     struct SessionState {
@@ -26,12 +75,19 @@ public:
         if (config.ctx_size <= 0) {
             throw std::invalid_argument("native executor context size must be positive");
         }
-        if (config.position.index != 0 || config.position.count != 1) {
-            throw std::invalid_argument("native serving currently requires one logical stage");
-        }
         const int layer_count = static_cast<int>(config.engine->model_info().layer_count);
-        if (config.layers.start != 0 || config.layers.end != layer_count) {
-            throw std::invalid_argument("native serving currently requires the full model layer range");
+        if (config.position.count <= 0 || config.position.index < 0 ||
+            config.position.index >= config.position.count ||
+            config.layers.start < 0 || config.layers.end <= config.layers.start ||
+            config.layers.end > layer_count ||
+            (config.position.is_first() && config.layers.start != 0) ||
+            (config.position.is_last() && config.layers.end != layer_count)) {
+            throw std::invalid_argument("native serving stage assignment is invalid");
+        }
+        const native::ModelInfo& info = config.engine->model_info();
+        if (config.layers.start != static_cast<int>(info.resident_layer_start) ||
+            config.layers.end != static_cast<int>(info.resident_layer_end)) {
+            throw std::invalid_argument("native stage exceeds its resident layer range");
         }
         if (static_cast<std::uint32_t>(config.ctx_size) >
             config.engine->model_info().context_length) {
@@ -143,6 +199,17 @@ private:
         return output;
     }
 
+    inference::StageOutput stage_output(native::StageResult result) const {
+        if (result.has_sampled_token()) return token_output(result.sampled_token);
+        inference::StageOutput output;
+        output.payload = activation_payload(
+            std::move(result.activations),
+            config.engine->model_info().embedding_length
+        );
+        output.execution_batch_size = 1;
+        return output;
+    }
+
     inference::ExecutionResult prefill(const inference::StageInput& input) {
         if (sessions.contains(input.session_id)) {
             return inference::ExecutionResult::invalid_input(
@@ -150,17 +217,36 @@ private:
                 "prefill session already exists on this native stage"
             );
         }
-        std::vector<std::int32_t> tokens = input_tokens(input);
-        const std::size_t capacity = session_capacity(tokens.size(), input.max_tokens);
+        std::vector<std::int32_t> tokens;
+        std::vector<float> activations;
+        std::size_t token_count = 0;
+        if (config.position.is_first()) {
+            tokens = input_tokens(input);
+            token_count = tokens.size();
+        } else {
+            activations = activation_values(
+                input.payload,
+                config.engine->model_info().embedding_length
+            );
+            token_count = activations.size() /
+                config.engine->model_info().embedding_length;
+        }
+        const std::size_t capacity = session_capacity(token_count, input.max_tokens);
         std::unique_ptr<native::NativeSession> session =
             config.engine->create_session(capacity);
-        const std::int32_t sampled = session->prefill_greedy(tokens);
-        inference::StageOutput output = token_output(sampled);
-        output.prompt_tokens = static_cast<int>(tokens.size());
-        output.prompt_token_ids.reserve(tokens.size());
-        for (const std::int32_t token : tokens) {
-            if (token < 0) throw std::invalid_argument("native tokenizer returned a negative token");
-            output.prompt_token_ids.push_back(static_cast<std::uint32_t>(token));
+        native::StageResult stage_result = config.position.is_first()
+            ? session->prefill_stage_tokens(tokens)
+            : session->prefill_stage_activations(activations, token_count);
+        inference::StageOutput output = stage_output(std::move(stage_result));
+        if (config.position.is_first()) {
+            output.prompt_tokens = static_cast<int>(tokens.size());
+            output.prompt_token_ids.reserve(tokens.size());
+            for (const std::int32_t token : tokens) {
+                if (token < 0) {
+                    throw std::invalid_argument("native tokenizer returned a negative token");
+                }
+                output.prompt_token_ids.push_back(static_cast<std::uint32_t>(token));
+            }
         }
         sessions.emplace(
             input.session_id,
@@ -184,16 +270,31 @@ private:
                 "native decode step does not match session state"
             );
         }
-        const std::vector<std::int32_t> tokens = input_tokens(input);
-        if (tokens.size() != 1U) {
-            return inference::ExecutionResult::invalid_input(
-                "native_multi_token_verification_unsupported",
-                "native serving currently accepts one decode token per pass"
+        native::StageResult stage_result;
+        if (config.position.is_first()) {
+            const std::vector<std::int32_t> tokens = input_tokens(input);
+            if (tokens.size() != 1U) {
+                return inference::ExecutionResult::invalid_input(
+                    "native_multi_token_verification_unsupported",
+                    "native serving currently accepts one decode token per pass"
+                );
+            }
+            stage_result = state.session->decode_stage_token(tokens.front());
+        } else {
+            std::vector<float> activation = activation_values(
+                input.payload,
+                config.engine->model_info().embedding_length
             );
+            if (activation.size() != config.engine->model_info().embedding_length) {
+                return inference::ExecutionResult::invalid_input(
+                    "native_multi_token_verification_unsupported",
+                    "native decode activation must contain one token row"
+                );
+            }
+            stage_result = state.session->decode_stage_activation(activation);
         }
-        const std::int32_t sampled = state.session->decode_greedy(tokens.front());
         ++state.expected_decode_step;
-        return inference::ExecutionResult::success(token_output(sampled));
+        return inference::ExecutionResult::success(stage_output(std::move(stage_result)));
     }
 
     NativeStageConfig config;

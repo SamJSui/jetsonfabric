@@ -166,6 +166,23 @@ if(BUILD_TESTING)
     jetsonfabric-native-inference
   )
 
+  add_executable(jetsonfabric-worker-config-test
+    worker/config.cpp
+    worker/config_test.cpp
+    protocol/execution_mode.cpp
+    pipeline_parallel/stage_assignment.cpp
+    tensor_parallel/device_mesh.cpp
+  )
+  target_include_directories(jetsonfabric-worker-config-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-worker-config-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(NAME worker-config COMMAND jetsonfabric-worker-config-test)
+
   add_test(
     NAME native-model-compiler
     COMMAND ${CMAKE_COMMAND}

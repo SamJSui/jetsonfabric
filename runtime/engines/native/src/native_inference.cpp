@@ -35,6 +35,29 @@ std::int32_t NativeSession::decode_greedy(std::int32_t token) {
     return impl_->session->decode_greedy(token);
 }
 
+StageResult NativeSession::prefill_stage_tokens(
+    std::span<const std::int32_t> tokens
+) {
+    return impl_->session->prefill_stage_tokens(tokens);
+}
+
+StageResult NativeSession::prefill_stage_activations(
+    std::span<const float> activations,
+    std::size_t token_count
+) {
+    return impl_->session->prefill_stage_activations(activations, token_count);
+}
+
+StageResult NativeSession::decode_stage_token(std::int32_t token) {
+    return impl_->session->decode_stage_token(token);
+}
+
+StageResult NativeSession::decode_stage_activation(
+    std::span<const float> activation
+) {
+    return impl_->session->decode_stage_activation(activation);
+}
+
 void NativeSession::rollback(std::size_t token_count) {
     impl_->session->rollback(token_count);
 }
@@ -42,7 +65,13 @@ void NativeSession::rollback(std::size_t token_count) {
 class NativeEngine::Impl {
 public:
     Impl(const std::string& package_path, EngineOptions options)
-        : tensors(package_path, options.backend, options.threads),
+        : tensors(
+              package_path,
+              options.backend,
+              options.threads,
+              options.layer_start,
+              options.layer_end
+          ),
           architecture(create_architecture(tensors)) {
         prefill_attention_kernel = architecture->resolve_attention_kernel(
             options.backend, options.prefill_attention_kernel
@@ -58,6 +87,8 @@ public:
         info.weight_bytes = tensors.weight_bytes();
         info.total_weight_bytes = tensors.total_weight_bytes();
         info.tensor_count = tensors.tensor_count();
+        info.resident_layer_start = tensors.layer_start();
+        info.resident_layer_end = tensors.layer_end();
     }
 
     TensorStore tensors;
@@ -71,7 +102,8 @@ public:
         if (!session || session->capacity() != required_capacity) {
             session = architecture->create_session(
                 tensors, required_capacity,
-                prefill_attention_kernel, decode_attention_kernel
+                prefill_attention_kernel, decode_attention_kernel,
+                LayerRange{tensors.layer_start(), tensors.layer_end()}
             );
         }
         session->reset();
@@ -85,6 +117,8 @@ NativeEngine::NativeEngine(const std::string& package_path, Backend backend, int
           .prefill_attention_kernel = AttentionKernel::Automatic,
           .decode_attention_kernel = AttentionKernel::Automatic,
           .threads = threads,
+          .layer_start = 0,
+          .layer_end = std::numeric_limits<std::uint32_t>::max(),
       }) {}
 
 NativeEngine::NativeEngine(const std::string& package_path, EngineOptions options) {
@@ -116,7 +150,8 @@ std::unique_ptr<NativeSession> NativeEngine::create_session(std::size_t capacity
         impl_->tensors,
         capacity,
         impl_->prefill_attention_kernel,
-        impl_->decode_attention_kernel
+        impl_->decode_attention_kernel,
+        LayerRange{impl_->tensors.layer_start(), impl_->tensors.layer_end()}
     );
     return std::unique_ptr<NativeSession>(new NativeSession(
         std::make_unique<NativeSession::Impl>(std::move(session))
@@ -136,7 +171,8 @@ std::vector<float> NativeEngine::logits(std::span<const std::int32_t> tokens) {
     }
     auto session = impl_->architecture->create_session(
         impl_->tensors, tokens.size(),
-        impl_->prefill_attention_kernel, impl_->decode_attention_kernel
+        impl_->prefill_attention_kernel, impl_->decode_attention_kernel,
+        LayerRange{impl_->tensors.layer_start(), impl_->tensors.layer_end()}
     );
     return session->prefill_logits(tokens);
 }
@@ -159,7 +195,8 @@ std::vector<std::vector<float>> NativeEngine::forced_decode_logits(
 
     auto session = impl_->architecture->create_session(
         impl_->tensors, prompt_tokens.size() + forced_tokens.size(),
-        impl_->prefill_attention_kernel, impl_->decode_attention_kernel
+        impl_->prefill_attention_kernel, impl_->decode_attention_kernel,
+        LayerRange{impl_->tensors.layer_start(), impl_->tensors.layer_end()}
     );
     std::vector<std::vector<float>> trace;
     trace.reserve(forced_tokens.size() + 1U);
