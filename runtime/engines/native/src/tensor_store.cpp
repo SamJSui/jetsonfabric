@@ -144,7 +144,7 @@ void TensorStore::create_tensors(jf_model * model) {
     if (!context_) {
         throw std::runtime_error("could not allocate native tensor metadata");
     }
-    if (cpu_fallback_) {
+    if (cpu_fallback_ && layer_start_ == 0) {
         host_context_.reset(ggml_init(ggml_init_params{
             .mem_size = metadata_bytes,
             .mem_buffer = nullptr,
