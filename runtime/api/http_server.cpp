@@ -7,9 +7,11 @@
 #include <netinet/in.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cctype>
 #include <condition_variable>
@@ -19,7 +21,6 @@
 #include <mutex>
 #include <optional>
 #include <set>
-#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -230,14 +231,47 @@ bool send_all(int fd, const std::string& data) {
     return send_all(fd, data.data(), data.size());
 }
 
-bool send_all(int fd, std::span<const std::uint8_t> data) {
-    return send_all(fd, data.data(), data.size());
+bool send_segments(int fd, std::array<iovec, 3> segments) {
+    std::size_t first = 0;
+    while (first < segments.size()) {
+        while (first < segments.size() && segments[first].iov_len == 0) ++first;
+        if (first == segments.size()) return true;
+
+        msghdr message{};
+        message.msg_iov = segments.data() + first;
+        message.msg_iovlen = segments.size() - first;
+        const ssize_t sent = sendmsg(fd, &message, MSG_NOSIGNAL);
+        if (sent < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
+        if (sent == 0) return false;
+
+        std::size_t consumed = static_cast<std::size_t>(sent);
+        while (first < segments.size() && consumed >= segments[first].iov_len) {
+            consumed -= segments[first].iov_len;
+            ++first;
+        }
+        if (first < segments.size() && consumed != 0) {
+            segments[first].iov_base =
+                static_cast<std::uint8_t*>(segments[first].iov_base) + consumed;
+            segments[first].iov_len -= consumed;
+        }
+    }
+    return true;
 }
 
 bool send_response(int fd, const HttpResponse& response) {
-    return send_all(fd, response.serialize_headers()) &&
-        send_all(fd, response.body) &&
-        send_all(fd, response.body_payload);
+    std::string headers = response.serialize_headers();
+    std::array<iovec, 3> segments{
+        iovec{headers.data(), headers.size()},
+        iovec{const_cast<char*>(response.body.data()), response.body.size()},
+        iovec{
+            const_cast<std::uint8_t*>(response.body_payload.data()),
+            response.body_payload.size(),
+        },
+    };
+    return send_segments(fd, segments);
 }
 
 HttpResponse runtime_http_response(RuntimeResponse response) {
