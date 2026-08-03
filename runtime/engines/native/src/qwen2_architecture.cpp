@@ -8,6 +8,7 @@
 #include "ggml-cpp.h"
 #include "ggml.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -22,6 +23,26 @@ namespace jetsonfabric::native {
 namespace {
 
 constexpr std::size_t kGraphSize = 8192;
+constexpr std::size_t kFlashAttentionKvAlignment = 256;
+constexpr std::int64_t kMinFusedSwiGLUElements = 10'000;
+
+constexpr std::size_t physical_cache_capacity(
+    std::size_t logical_capacity,
+    std::size_t model_context_length,
+    AttentionKernel decode_attention_kernel
+) {
+    if (decode_attention_kernel != AttentionKernel::Flash) {
+        return logical_capacity;
+    }
+    const std::size_t aligned =
+        (logical_capacity + kFlashAttentionKvAlignment - 1U) /
+        kFlashAttentionKvAlignment * kFlashAttentionKvAlignment;
+    return std::min(aligned, model_context_length);
+}
+
+static_assert(physical_cache_capacity(2079, 32768, AttentionKernel::Flash) == 2304);
+static_assert(physical_cache_capacity(2079, 32768, AttentionKernel::Unfused) == 2079);
+static_assert(physical_cache_capacity(32760, 32768, AttentionKernel::Flash) == 32768);
 
 struct LayerCache {
     ggml_tensor * key = nullptr;
@@ -404,8 +425,14 @@ private:
         const std::string prefix = "blk." + std::to_string(layer) + ".";
         ggml_tensor * up = linear(prefix + "ffn_up.weight", input);
         ggml_tensor * gate = linear(prefix + "ffn_gate.weight", input);
-        gate = ggml_silu(context_.get(), gate);
-        return linear(prefix + "ffn_down.weight", ggml_mul(context_.get(), gate, up));
+        // Small decode vectors are faster as separate kernels on Orin.
+        ggml_tensor * activated;
+        if (ggml_nelements(gate) >= kMinFusedSwiGLUElements) {
+            activated = ggml_swiglu_split(context_.get(), gate, up);
+        } else {
+            activated = ggml_mul(context_.get(), ggml_silu(context_.get(), gate), up);
+        }
+        return linear(prefix + "ffn_down.weight", activated);
     }
 
     void build() {
@@ -639,6 +666,9 @@ public:
         AttentionKernel prefill_attention_kernel,
         AttentionKernel decode_attention_kernel
     ) : tensors_(tensors), hparams_(std::move(hparams)), capacity_(capacity),
+        cache_capacity_(physical_cache_capacity(
+            capacity, hparams_.public_info.context_length, decode_attention_kernel
+        )),
         prefill_attention_kernel_(prefill_attention_kernel),
         decode_attention_kernel_(decode_attention_kernel) {
         if (capacity == 0 || capacity > hparams_.public_info.context_length) {
@@ -712,7 +742,7 @@ public:
         ggml_backend_sched_ptr logits_scheduler = create_scheduler();
         const std::span<const std::int32_t> tokens(&token, 1);
         std::vector<float> output = ForwardGraph(
-            tensors_, hparams_, cache_, logits_scheduler.get(), capacity_, 1,
+            tensors_, hparams_, cache_, logits_scheduler.get(), cache_capacity_, 1,
             OutputKind::Logits, InputKind::Decode, decode_attention_kernel_
         ).compute_logits(tokens, position_);
         ++position_;
@@ -723,7 +753,7 @@ public:
         validate_decode();
         if (!decode_greedy_graph_) {
             decode_greedy_graph_ = std::make_unique<ForwardGraph>(
-                tensors_, hparams_, cache_, decode_scheduler_.get(), capacity_, 1,
+                tensors_, hparams_, cache_, decode_scheduler_.get(), cache_capacity_, 1,
                 OutputKind::GreedyToken, InputKind::Decode, decode_attention_kernel_
             );
         }
@@ -776,11 +806,11 @@ private:
         for (std::uint32_t layer = 0; layer < hparams_.public_info.layer_count; ++layer) {
             ggml_tensor * key = ggml_new_tensor_2d(
                 cache_context_.get(), GGML_TYPE_F16,
-                kv_length, static_cast<std::int64_t>(capacity_)
+                kv_length, static_cast<std::int64_t>(cache_capacity_)
             );
             ggml_tensor * value = ggml_new_tensor_3d(
                 cache_context_.get(), GGML_TYPE_F16,
-                static_cast<std::int64_t>(capacity_), head_length,
+                static_cast<std::int64_t>(cache_capacity_), head_length,
                 hparams_.kv_head_count
             );
             ggml_set_name(key, ("native.k." + std::to_string(layer)).c_str());
@@ -820,6 +850,7 @@ private:
     TensorStore& tensors_;
     Qwen2HParams hparams_;
     std::size_t capacity_;
+    std::size_t cache_capacity_;
     AttentionKernel prefill_attention_kernel_;
     AttentionKernel decode_attention_kernel_;
     std::size_t position_ = 0;
@@ -848,7 +879,7 @@ public:
     ) const override {
         const bool supported = backend == Backend::Cuda && flash_attention_supported();
         if (requested == AttentionKernel::Automatic) {
-            return AttentionKernel::Unfused;
+            return supported ? AttentionKernel::Flash : AttentionKernel::Unfused;
         }
         if (requested == AttentionKernel::Flash && !supported) {
             throw std::invalid_argument(

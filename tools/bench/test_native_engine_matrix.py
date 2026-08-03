@@ -62,15 +62,31 @@ class NativeEngineMatrixTest(unittest.TestCase):
             "requested_backend": "cuda",
             "requested_prefill_attention_kernel": "flash",
             "prefill_attention_kernel": "flash",
-            "decode_attention_kernel": "unfused",
+            "decode_attention_kernel": "flash",
             "prefill_attention_backend_verified_count": 2,
             "iterations": 2,
         }
         llama = {"prompt_tokens": [1], "sampled_tokens": [3]}
         with self.assertRaisesRegex(RuntimeError, "greedy token IDs differ"):
-            native_engine_matrix.validate_pair(native, llama, "abc", "flash")
+            native_engine_matrix.validate_pair(
+                native, llama, "abc", "flash", "flash"
+            )
 
     def test_validate_pair_accepts_verified_flash_run(self):
+        native = {
+            "source_sha256": "abc",
+            "prompt_tokens": [1],
+            "sampled_tokens": [2],
+            "session_policy": "exact_shape_reuse_enabled",
+            "prefill_attention_kernel": "flash",
+            "decode_attention_kernel": "flash",
+            "prefill_attention_backend_verified_count": 2,
+            "iterations": 2,
+        }
+        llama = {"prompt_tokens": [1], "sampled_tokens": [2]}
+        native_engine_matrix.validate_pair(native, llama, "abc", "flash", "flash")
+
+    def test_validate_pair_rejects_unexpected_decode_kernel(self):
         native = {
             "source_sha256": "abc",
             "prompt_tokens": [1],
@@ -82,7 +98,10 @@ class NativeEngineMatrixTest(unittest.TestCase):
             "iterations": 2,
         }
         llama = {"prompt_tokens": [1], "sampled_tokens": [2]}
-        native_engine_matrix.validate_pair(native, llama, "abc", "flash")
+        with self.assertRaisesRegex(RuntimeError, "decode kernel"):
+            native_engine_matrix.validate_pair(
+                native, llama, "abc", "flash", "flash"
+            )
 
     def test_native_command_enables_exact_shape_reuse(self):
         class Args:
@@ -99,7 +118,7 @@ class NativeEngineMatrixTest(unittest.TestCase):
             command[command.index("--prefill-attention-kernel") + 1], "flash"
         )
         self.assertEqual(
-            command[command.index("--decode-attention-kernel") + 1], "unfused"
+            command[command.index("--decode-attention-kernel") + 1], "flash"
         )
 
     def test_run_attention_parity_rejects_excess_logit_error(self):

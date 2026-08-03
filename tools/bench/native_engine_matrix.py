@@ -160,7 +160,7 @@ def compare_native_attention(flash, unfused):
     }
 
 
-def validate_pair(native, llama, model_sha256, expected_prefill):
+def validate_pair(native, llama, model_sha256, expected_prefill, expected_decode):
     if native["source_sha256"] != model_sha256:
         raise RuntimeError("JFM source hash does not match the benchmark GGUF")
     if native["prompt_tokens"] != llama["prompt_tokens"]:
@@ -171,8 +171,8 @@ def validate_pair(native, llama, model_sha256, expected_prefill):
         raise RuntimeError("native benchmark did not enable exact-shape session reuse")
     if native.get("prefill_attention_kernel") != expected_prefill:
         raise RuntimeError("native benchmark did not resolve the requested prefill kernel")
-    if native.get("decode_attention_kernel") != "unfused":
-        raise RuntimeError("native benchmark did not keep decode attention unfused")
+    if native.get("decode_attention_kernel") != expected_decode:
+        raise RuntimeError("native benchmark did not resolve the requested decode kernel")
     verified = native.get("prefill_attention_backend_verified_count")
     expected_verified = native["iterations"] if expected_prefill == "flash" else 0
     if verified != expected_verified:
@@ -230,7 +230,7 @@ def native_command(args, prompt, output_length, attention_kernel):
         "--prefill-attention-kernel",
         attention_kernel,
         "--decode-attention-kernel",
-        "unfused",
+        "flash",
     ]
 
 
@@ -278,10 +278,12 @@ def run_case(args, prompt_length, output_length, model_sha256):
         for engine in order:
             current[engine] = run_json(commands[engine])
             runs[engine].append(current[engine])
-        validate_pair(current["native"], current["llama.cpp"], model_sha256, "flash")
+        validate_pair(
+            current["native"], current["llama.cpp"], model_sha256, "flash", "flash"
+        )
         validate_pair(
             current["native_unfused"], current["llama.cpp"],
-            model_sha256, "unfused"
+            model_sha256, "unfused", "flash"
         )
     results = {engine: pool_runs(engine_runs) for engine, engine_runs in runs.items()}
     return {
@@ -396,7 +398,7 @@ def main(argv=None):
             "native_session_policy": "exact_shape_reuse_enabled",
             "native_prefill_attention_kernel": "flash",
             "native_control_prefill_attention_kernel": "unfused",
-            "native_decode_attention_kernel": "unfused",
+            "native_decode_attention_kernel": "flash",
             "llama_context_policy": "reused_context_kv_cleared",
             "max_logit_nrmse": args.max_logit_nrmse,
             "min_logit_cosine": args.min_logit_cosine,

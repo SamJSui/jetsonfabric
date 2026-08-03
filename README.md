@@ -79,19 +79,23 @@ decode reached 6.50 tok/s while experimental tensor sharding reached 1.68 tok/s;
 
 ![Quality versus fixed-output throughput](docs/benchmarks/figures/quality-throughput.svg)
 
-The experimental native engine's fused CUDA prefill reduced 2,048-token TTFT
-by **37.4%** versus its same-build Unfused control and reduced prefill scratch
-memory by **20.8%**, leaving a 4.2% TTFT gap to pinned llama.cpp. Native decode
-was 3.7% to 16.9% faster than llama.cpp through 512-token prompts but 13.0%
-slower at 2,048. This is a direct-engine Qwen2 result, not a serving claim.
+The experimental native Qwen2 CUDA engine now uses Flash Attention for prefill
+and decode. Aligning its physical KV cache to GGML's 256-token fast-path stride
+increased 3B long-context decode throughput by **23.8%** in a direct A/B test.
+Shape-aware SwiGLU fusion then reduced native TTFT by 1.0% to 3.9% without
+sacrificing the smaller model's decode path. Against pinned llama.cpp, native
+decode is **14.8% to 18.7% faster** at 1.5B and within 1.2% at 3B and 7B;
+TTFT leads or remains within 3.2% across the matrix. All rows preserve exact
+greedy-token output. These are direct-engine results, not distributed-serving
+claims.
 
 Benchmark reports and claim boundaries:
 [model scaling and HumanEval](docs/benchmarks/2026-07-27-two-orin-nano.md),
 [serving matrix](docs/benchmarks/2026-07-29-serving-matrix.md),
 [32B capacity](docs/benchmarks/2026-07-30-32b-capacity.md),
-[tensor comparison](docs/benchmarks/2026-08-01-tensor-parallel-runtime.md), and
+[tensor comparison](docs/benchmarks/2026-08-01-tensor-parallel-runtime.md),
 [native engine matrix](docs/benchmarks/2026-08-01-native-engine-matrix.md), and
-[native Flash prefill](docs/benchmarks/2026-08-02-native-flash-prefill.md).
+[native CUDA optimization](docs/benchmarks/2026-08-02-native-fused-ffn.md).
 
 ## Quick Start
 

@@ -22,7 +22,7 @@ enum class AttentionKernel {
 struct EngineOptions {
     Backend backend = Backend::Cpu;
     AttentionKernel prefill_attention_kernel = AttentionKernel::Automatic;
-    AttentionKernel decode_attention_kernel = AttentionKernel::Unfused;
+    AttentionKernel decode_attention_kernel = AttentionKernel::Automatic;
     int threads = 1;
 };
 

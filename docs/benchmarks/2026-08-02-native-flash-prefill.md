@@ -1,5 +1,9 @@
 # Native Flash-Prefill Benchmark
 
+This report preserves the pre-decode baseline. The
+[Flash-decode benchmark](2026-08-02-native-flash-decode.md) supersedes its
+decode conclusions.
+
 ## Result
 
 JetsonFabric's native Qwen2 engine now uses a phase-specific attention strategy:

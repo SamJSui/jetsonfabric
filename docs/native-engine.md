@@ -148,6 +148,11 @@ the default: prefill populates an F16 KV cache, then each decode step processes
 only the sampled token. The output declares `kv_cache: true` and
 `decode_policy: incremental_kv_cache`.
 
+On supported CUDA builds, automatic attention selects Flash for prefill and
+decode. The Qwen2 session preserves its logical request capacity while aligning
+the physical Flash KV cache to GGML's 256-token fast-path stride. Explicit
+`unfused` and `flash` options remain available for correctness and A/B tests.
+
 Use `JFM_DECODE_POLICY=full-prefix` to rerun the historical full-prefix policy
 as an ablation. That mode declares `kv_cache: false` and
 `decode_policy: full_prefix_recompute`; it is not representative of llama.cpp,
@@ -159,6 +164,7 @@ token IDs:
 ```bash
 python3 tools/bench/native_engine_matrix.py \
   --native-bin dist/jf-native-inference-bench \
+  --native-parity-bin dist/jf-native-attention-parity \
   --llama-bin dist/jf-llama-greedy-oracle \
   --package /var/lib/jetsonfabric/models/model.jfm \
   --model /var/lib/jetsonfabric/models/model.gguf \
@@ -171,7 +177,8 @@ python3 tools/bench/native_engine_matrix.py \
 ```
 
 The runner alternates engine order, retains raw timing vectors and executable
-hashes, and fails on any model, prompt-token, or generated-token mismatch.
+hashes, compares full-vocabulary logits before timing, and fails on any model,
+prompt-token, or generated-token mismatch.
 
 ## Native Serving Gates
 
