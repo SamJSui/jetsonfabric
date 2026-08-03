@@ -6,8 +6,9 @@ and an architecture-selected inference path over GGML backends.
 
 The `native` serving engine implements Qwen2/Qwen2.5 attention, FFN, logits,
 optional output bias, greedy token selection, and incremental F16 KV caching.
-It currently serves a full model on one node. llama.cpp remains the default
-engine and correctness oracle while native partial-layer execution is built.
+It serves either a full model on one node or contiguous layer stages across a
+pipeline deployment. llama.cpp remains the default engine and correctness
+oracle.
 
 ## Boundaries
 
@@ -16,7 +17,7 @@ jetsonfabric-node (Go)
   -> jetsonfabric-runtime-worker (C++)
       -> inference::Executor
           -> llama.cpp executor (current serving path)
-          -> native executor (full-model serving)
+          -> native executor (full-model or partial-stage serving)
               -> NativeEngine
                   -> TensorStore (JFM integrity, tensors, GGML backend)
                   -> ArchitectureRegistry
@@ -94,8 +95,8 @@ An interrupted import cannot expose a partial destination.
 ## Native Serving
 
 Select the native engine with `NODE_ENGINE=native` and pass the compiled JFM
-directory as `MODEL_PATH`. M2 requires one stage containing the complete layer
-range:
+directory as `MODEL_PATH`. A full-model node uses one stage containing the
+complete layer range:
 
 ```bash
 make run-node \
@@ -118,6 +119,24 @@ MODEL_PATH=/var/lib/jetsonfabric/models/model.gguf \
 JF_ENGINE=native \
 bash scripts/local/validate-single-node.sh
 ```
+
+For distributed serving, start each node with the same JFM source hash and
+`--runtime-idle`, then submit a deployment with explicit stage sizes:
+
+```json
+{
+  "deployment_id": "native-qwen-18-10",
+  "model": "qwen2.5-coder-1.5b-q4-native",
+  "stage_count": 2,
+  "stage_layer_counts": [18, 10],
+  "ctx_size": 1536
+}
+```
+
+The first stage accepts token IDs and returns F32 activations. Intermediate
+stages accept and return activations. The final stage owns output normalization
+and sampling, and returns the selected token. Each stage maintains KV cache
+only for its resident layer range.
 
 ## Loader Benchmark
 
@@ -209,8 +228,7 @@ prompt-token, or generated-token mismatch.
 
 ## Native Serving Gates
 
-The first three gates enabled the current full-model serving path. Remaining
-gates control the move to distributed native execution:
+The initial serving gates are complete:
 
 1. Greedy token IDs match llama.cpp for fixed real-model prompts on CPU and CUDA.
 2. Logits stay within a documented tolerance.

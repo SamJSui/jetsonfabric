@@ -69,6 +69,9 @@ validation procedures.
 - [Native CUDA engine optimization](benchmarks/2026-08-02-native-fused-ffn.md) -
   aligned Flash-decode KV cache, shape-aware SwiGLU fusion, Nsight evidence,
   and matched 1.5B/3B/7B results.
+- [Native distributed stages](benchmarks/2026-08-03-native-distributed-stages.md) -
+  two-node JFM partial residency, exact-token validation, and a matched
+  native-versus-llama.cpp serving A/B.
 
 Real-model local integration commands are documented in
 [Local development](local-development.md). The source repository does not keep
