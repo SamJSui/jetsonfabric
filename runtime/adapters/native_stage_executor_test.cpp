@@ -14,6 +14,7 @@
 namespace {
 
 using jetsonfabric::native::Backend;
+using jetsonfabric::native::EngineOptions;
 using jetsonfabric::native::NativeEngine;
 using jetsonfabric::runtime::adapters::NativeStageConfig;
 using jetsonfabric::runtime::adapters::NativeStageExecutor;
@@ -134,12 +135,99 @@ void run_serving_test(const std::string& package_path) {
     require(after_close.error.code == "stage_session_not_found", "unexpected close error");
 }
 
+void run_distributed_serving_test(const std::string& package_path) {
+    auto first_engine = std::make_shared<NativeEngine>(
+        package_path,
+        EngineOptions{
+            .backend = Backend::Cpu,
+            .threads = 1,
+            .layer_start = 0,
+            .layer_end = 1,
+        }
+    );
+    auto final_engine = std::make_shared<NativeEngine>(
+        package_path,
+        EngineOptions{
+            .backend = Backend::Cpu,
+            .threads = 1,
+            .layer_start = 1,
+            .layer_end = 2,
+        }
+    );
+    require(
+        first_engine->model_info().resident_layer_start == 0 &&
+            first_engine->model_info().resident_layer_end == 1,
+        "first native stage loaded the wrong layer range"
+    );
+    require(
+        final_engine->model_info().resident_layer_start == 1 &&
+            final_engine->model_info().resident_layer_end == 2,
+        "final native stage loaded the wrong layer range"
+    );
+    require(
+        first_engine->model_info().weight_bytes <
+            first_engine->model_info().total_weight_bytes &&
+            final_engine->model_info().weight_bytes <
+                final_engine->model_info().total_weight_bytes,
+        "native stages did not reduce resident model weights"
+    );
+
+    auto tokenizer = std::make_shared<FixtureTokenizer>();
+    NativeStageExecutor first(NativeStageConfig{
+        .engine = first_engine,
+        .tokenizer = tokenizer,
+        .ctx_size = 16,
+        .position = StagePosition{.index = 0, .count = 2},
+        .layers = LayerRange{.start = 0, .end = 1},
+    });
+    NativeStageExecutor final(NativeStageConfig{
+        .engine = final_engine,
+        .tokenizer = tokenizer,
+        .ctx_size = 16,
+        .position = StagePosition{.index = 1, .count = 2},
+        .layers = LayerRange{.start = 1, .end = 2},
+    });
+
+    StageInput first_prefill = prefill_input(1);
+    first_prefill.position = StagePosition{.index = 0, .count = 2};
+    const ExecutionResult first_prefill_result = first.execute(first_prefill);
+    require(first_prefill_result.ok, "first native prefill stage failed");
+    require(
+        first_prefill_result.output.payload.kind == PayloadKind::Activation,
+        "first native stage did not return an activation"
+    );
+
+    StageInput final_prefill = first_prefill;
+    final_prefill.position = StagePosition{.index = 1, .count = 2};
+    final_prefill.layers = LayerRange{.start = 1, .end = 2};
+    final_prefill.payload = first_prefill_result.output.payload;
+    require_sampled_token(final.execute(final_prefill));
+
+    StageInput first_decode = first_prefill;
+    first_decode.phase = Phase::Decode;
+    first_decode.decode_step = 1;
+    first_decode.payload = jetsonfabric::runtime::inference::sampled_token_payload(7);
+    const ExecutionResult first_decode_result = first.execute(first_decode);
+    require(first_decode_result.ok, "first native decode stage failed");
+    require(
+        first_decode_result.output.payload.kind == PayloadKind::Activation,
+        "first native decode stage did not return an activation"
+    );
+
+    StageInput final_decode = final_prefill;
+    final_decode.phase = Phase::Decode;
+    final_decode.decode_step = 1;
+    final_decode.payload = first_decode_result.output.payload;
+    require_sampled_token(final.execute(final_decode));
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
     try {
         if (argc != 2) throw std::invalid_argument("JFM package path is required");
         run_serving_test(argv[1]);
+        run_distributed_serving_test(argv[1]);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "native serving test: " << error.what() << '\n';

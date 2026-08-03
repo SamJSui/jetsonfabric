@@ -49,7 +49,7 @@ struct LayerCache {
     ggml_tensor * value = nullptr;
 };
 
-enum class OutputKind { Logits, GreedyToken };
+enum class OutputKind { Activations, Logits, GreedyToken };
 enum class InputKind { Prefill, Decode };
 
 struct GraphTimings {
@@ -77,19 +77,30 @@ void require_shape(
     }
 }
 
-void validate_qwen2_tensors(const TensorStore& tensors, const Qwen2HParams& params) {
+void validate_qwen2_tensors(
+    const TensorStore& tensors,
+    const Qwen2HParams& params,
+    LayerRange layers
+) {
     const std::int64_t embedding = params.public_info.embedding_length;
     const std::int64_t head_length = embedding / params.head_count;
     const std::int64_t kv_length = head_length * params.kv_head_count;
     const std::int64_t feed_forward = params.feed_forward_length;
-    const std::int64_t vocabulary = tensors.vocabulary_size();
-    require_shape(tensors, "token_embd.weight", {embedding, vocabulary});
-    require_shape(tensors, "output_norm.weight", {embedding});
-    require_shape(tensors, "output.weight", {embedding, vocabulary});
-    if (tensors.find("output.bias") != nullptr) {
-        require_shape(tensors, "output.bias", {vocabulary});
+    if (layers.start >= layers.end || layers.end > params.public_info.layer_count) {
+        throw std::runtime_error("native Qwen2 layer range is invalid");
     }
-    for (std::uint32_t layer = 0; layer < params.public_info.layer_count; ++layer) {
+    const std::int64_t vocabulary = tensors.vocabulary_size();
+    if (layers.is_first()) {
+        require_shape(tensors, "token_embd.weight", {embedding, vocabulary});
+    }
+    if (layers.is_last(params.public_info.layer_count)) {
+        require_shape(tensors, "output_norm.weight", {embedding});
+        require_shape(tensors, "output.weight", {embedding, vocabulary});
+        if (tensors.find("output.bias") != nullptr) {
+            require_shape(tensors, "output.bias", {vocabulary});
+        }
+    }
+    for (std::uint32_t layer = layers.start; layer < layers.end; ++layer) {
         const std::string prefix = "blk." + std::to_string(layer) + ".";
         require_shape(tensors, prefix + "attn_norm.weight", {embedding});
         require_shape(tensors, prefix + "attn_q.weight", {embedding, embedding});
@@ -117,14 +128,16 @@ public:
         std::size_t token_count,
         OutputKind output_kind,
         InputKind input_kind,
-        AttentionKernel attention_kernel
+        AttentionKernel attention_kernel,
+        LayerRange layers
     ) : weights_(weights), params_(params), cache_(cache), scheduler_(scheduler),
         attention_length_(attention_length), token_count_(token_count),
         output_kind_(output_kind), input_kind_(input_kind),
-        attention_kernel_(attention_kernel) {
+        attention_kernel_(attention_kernel), layers_(layers) {
         if (token_count == 0 || attention_length < token_count ||
             attention_length > params.public_info.context_length ||
-            cache.size() != params.public_info.layer_count || scheduler == nullptr) {
+            layers.start >= layers.end || layers.end > params.public_info.layer_count ||
+            cache.size() != layers.end - layers.start || scheduler == nullptr) {
             throw std::invalid_argument("native Qwen2 token count is outside model context");
         }
         const std::size_t metadata_bytes =
@@ -175,6 +188,34 @@ public:
         return token;
     }
 
+    std::vector<float> compute_activations(
+        std::span<const std::int32_t> tokens,
+        std::size_t position
+    ) {
+        return compute_activations(tokens, {}, position);
+    }
+
+    std::vector<float> compute_activations(
+        std::span<const float> activations,
+        std::size_t position
+    ) {
+        return compute_activations({}, activations, position);
+    }
+
+    std::int32_t compute_greedy_token(
+        std::span<const float> activations,
+        std::size_t position,
+        GraphTimings * timings = nullptr
+    ) {
+        if (output_kind_ != OutputKind::GreedyToken) {
+            throw std::logic_error("native Qwen2 graph does not produce a greedy token");
+        }
+        compute({}, activations, position, timings);
+        std::int32_t token = -1;
+        ggml_backend_tensor_get(greedy_token_, &token, 0, sizeof(token));
+        return token;
+    }
+
     std::uint64_t host_input_bytes() const {
         return fixed_positions_.size() * sizeof(std::int32_t) +
             fixed_unfused_attention_mask_.size() * sizeof(float) +
@@ -195,6 +236,15 @@ private:
         std::size_t position,
         GraphTimings * timings = nullptr
     ) {
+        compute(tokens, {}, position, timings);
+    }
+
+    void compute(
+        std::span<const std::int32_t> tokens,
+        std::span<const float> activations,
+        std::size_t position,
+        GraphTimings * timings = nullptr
+    ) {
         if (!allocated_) {
             const auto allocation_start = std::chrono::steady_clock::now();
             ggml_backend_sched_reset(scheduler_);
@@ -211,7 +261,7 @@ private:
         if (timings != nullptr) {
             timings->attention_backend_verified = attention_backend_verified_;
         }
-        set_inputs(tokens, position);
+        set_inputs(tokens, activations, position);
         if (timings != nullptr) {
             timings->host_input_preparation_ms = elapsed_ms(input_start);
         }
@@ -225,19 +275,48 @@ private:
         }
     }
 
+    std::vector<float> compute_activations(
+        std::span<const std::int32_t> tokens,
+        std::span<const float> activations,
+        std::size_t position
+    ) {
+        if (output_kind_ != OutputKind::Activations) {
+            throw std::logic_error("native Qwen2 graph does not produce activations");
+        }
+        compute(tokens, activations, position);
+        const std::size_t count = token_count_ * params_.public_info.embedding_length;
+        std::vector<float> output(count);
+        ggml_backend_tensor_get(hidden_output_, output.data(), 0, output.size() * sizeof(float));
+        return output;
+    }
+
     void assign_backends() {
         const ggml_backend_t input_backend = weights_.input_backend();
-        ggml_backend_sched_set_tensor_backend(scheduler_, input_tokens_, input_backend);
+        if (input_tokens_ != nullptr) {
+            ggml_backend_sched_set_tensor_backend(scheduler_, input_tokens_, input_backend);
+        }
+        if (input_activations_ != nullptr) {
+            ggml_backend_sched_set_tensor_backend(
+                scheduler_, input_activations_, input_backend
+            );
+        }
         ggml_backend_sched_set_tensor_backend(scheduler_, positions_, input_backend);
         ggml_backend_sched_set_tensor_backend(scheduler_, mask_, input_backend);
-        ggml_backend_sched_set_tensor_backend(scheduler_, output_index_, input_backend);
+        if (output_kind_ != OutputKind::Activations) {
+            ggml_backend_sched_set_tensor_backend(scheduler_, output_index_, input_backend);
+        }
         ggml_backend_sched_set_tensor_backend(scheduler_, cache_indices_, input_backend);
         ggml_backend_sched_set_tensor_backend(
             scheduler_, value_cache_indices_, input_backend
         );
 
         const ggml_backend_t compute_backend = weights_.backend();
-        ggml_backend_sched_set_tensor_backend(scheduler_, logits_, compute_backend);
+        if (hidden_output_ != nullptr) {
+            ggml_backend_sched_set_tensor_backend(scheduler_, hidden_output_, compute_backend);
+        }
+        if (logits_ != nullptr) {
+            ggml_backend_sched_set_tensor_backend(scheduler_, logits_, compute_backend);
+        }
         if (greedy_token_ != nullptr) {
             ggml_backend_sched_set_tensor_backend(
                 scheduler_, greedy_token_, compute_backend
@@ -247,7 +326,7 @@ private:
 
     void verify_attention_backend() {
         if (attention_kernel_ != AttentionKernel::Flash) return;
-        if (flash_attention_nodes_.size() != params_.public_info.layer_count) {
+        if (flash_attention_nodes_.size() != layers_.end - layers_.start) {
             throw std::runtime_error("native Qwen2 flash-attention graph is incomplete");
         }
         for (ggml_tensor * node : flash_attention_nodes_) {
@@ -318,7 +397,7 @@ private:
         key = apply_rope(key);
         query = ggml_permute(context_.get(), query, 0, 2, 1, 3);
 
-        const LayerCache& layer_cache = cache_[layer];
+        const LayerCache& layer_cache = cache_[layer - layers_.start];
         key = ggml_view_2d(
             context_.get(), key, kv_length, tokens, key->nb[2], 0
         );
@@ -438,9 +517,19 @@ private:
     void build() {
         const ModelInfo& info = params_.public_info;
         const std::int64_t key_count = static_cast<std::int64_t>(attention_length_);
-        input_tokens_ = ggml_new_tensor_1d(
-            context_.get(), GGML_TYPE_I32, static_cast<std::int64_t>(token_count_)
-        );
+        if (layers_.is_first()) {
+            input_tokens_ = ggml_new_tensor_1d(
+                context_.get(), GGML_TYPE_I32,
+                static_cast<std::int64_t>(token_count_)
+            );
+            ggml_set_input(input_tokens_);
+        } else {
+            input_activations_ = ggml_new_tensor_2d(
+                context_.get(), GGML_TYPE_F32, info.embedding_length,
+                static_cast<std::int64_t>(token_count_)
+            );
+            ggml_set_input(input_activations_);
+        }
         positions_ = ggml_new_tensor_1d(
             context_.get(), GGML_TYPE_I32, static_cast<std::int64_t>(token_count_)
         );
@@ -460,7 +549,6 @@ private:
             static_cast<std::int64_t>(token_count_) * info.embedding_length /
                 params_.head_count * params_.kv_head_count
         );
-        ggml_set_input(input_tokens_);
         ggml_set_input(positions_);
         ggml_set_input(mask_);
         ggml_set_input(output_index_);
@@ -468,10 +556,12 @@ private:
         ggml_set_input(value_cache_indices_);
         graph_ = ggml_new_graph_custom(context_.get(), kGraphSize, false);
 
-        ggml_tensor * hidden = ggml_get_rows(
-            context_.get(), weights_.require("token_embd.weight"), input_tokens_
-        );
-        for (std::uint32_t layer = 0; layer < info.layer_count; ++layer) {
+        ggml_tensor * hidden = layers_.is_first()
+            ? ggml_get_rows(
+                  context_.get(), weights_.require("token_embd.weight"), input_tokens_
+              )
+            : input_activations_;
+        for (std::uint32_t layer = layers_.start; layer < layers_.end; ++layer) {
             const std::string prefix = "blk." + std::to_string(layer) + ".";
             ggml_tensor * attention_input = hidden;
             ggml_tensor * normalized = rms_norm(hidden, prefix + "attn_norm.weight");
@@ -479,6 +569,12 @@ private:
             ggml_tensor * ffn_input = hidden;
             normalized = rms_norm(hidden, prefix + "ffn_norm.weight");
             hidden = ggml_add(context_.get(), feed_forward(normalized, layer), ffn_input);
+        }
+        if (output_kind_ == OutputKind::Activations) {
+            hidden_output_ = hidden;
+            ggml_set_output(hidden_output_);
+            ggml_build_forward_expand(graph_, hidden_output_);
+            return;
         }
         hidden = ggml_get_rows(context_.get(), hidden, output_index_);
         hidden = rms_norm(hidden, "output_norm.weight");
@@ -496,14 +592,29 @@ private:
         }
     }
 
-    void set_inputs(std::span<const std::int32_t> tokens, std::size_t position) {
-        if (tokens.size() != token_count_ || position + token_count_ > attention_length_) {
+    void set_inputs(
+        std::span<const std::int32_t> tokens,
+        std::span<const float> activations,
+        std::size_t position
+    ) {
+        const std::size_t activation_count =
+            token_count_ * params_.public_info.embedding_length;
+        const bool input_matches = layers_.is_first()
+            ? tokens.size() == token_count_ && activations.empty()
+            : tokens.empty() && activations.size() == activation_count;
+        if (!input_matches || position + token_count_ > attention_length_) {
             throw std::invalid_argument("native Qwen2 graph token count changed");
         }
         if (input_kind_ == InputKind::Prefill && position != 0) {
             throw std::invalid_argument("native Qwen2 prefill graph must start at position zero");
         }
-        ggml_backend_tensor_set(input_tokens_, tokens.data(), 0, tokens.size_bytes());
+        if (layers_.is_first()) {
+            ggml_backend_tensor_set(input_tokens_, tokens.data(), 0, tokens.size_bytes());
+        } else {
+            ggml_backend_tensor_set(
+                input_activations_, activations.data(), 0, activations.size_bytes()
+            );
+        }
         if (input_kind_ == InputKind::Prefill) {
             upload_fixed_inputs();
             return;
@@ -518,7 +629,9 @@ private:
         const std::int32_t output_index = static_cast<std::int32_t>(token_count_ - 1);
         ggml_backend_tensor_set(positions_, positions.data(), 0, positions.size() * sizeof(std::int32_t));
         upload_attention_mask(mask);
-        ggml_backend_tensor_set(output_index_, &output_index, 0, sizeof(output_index));
+        if (output_kind_ != OutputKind::Activations) {
+            ggml_backend_tensor_set(output_index_, &output_index, 0, sizeof(output_index));
+        }
         ggml_backend_tensor_set(
             cache_indices_, positions.data(), 0, positions.size() * sizeof(std::int32_t)
         );
@@ -559,9 +672,11 @@ private:
                 fixed_unfused_attention_mask_.size() * sizeof(float)
             );
         }
-        ggml_backend_tensor_set(
-            output_index_, &fixed_output_index_, 0, sizeof(fixed_output_index_)
-        );
+        if (output_kind_ != OutputKind::Activations) {
+            ggml_backend_tensor_set(
+                output_index_, &fixed_output_index_, 0, sizeof(fixed_output_index_)
+            );
+        }
         ggml_backend_tensor_set(
             cache_indices_, fixed_positions_.data(), 0,
             fixed_positions_.size() * sizeof(std::int32_t)
@@ -635,11 +750,13 @@ private:
     OutputKind output_kind_;
     InputKind input_kind_;
     AttentionKernel attention_kernel_;
+    LayerRange layers_;
     bool allocated_ = false;
     bool attention_backend_verified_ = false;
     ggml_context_ptr context_;
     ggml_cgraph * graph_ = nullptr;
     ggml_tensor * input_tokens_ = nullptr;
+    ggml_tensor * input_activations_ = nullptr;
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * mask_ = nullptr;
     ggml_tensor * output_index_ = nullptr;
@@ -647,6 +764,7 @@ private:
     ggml_tensor * value_cache_indices_ = nullptr;
     ggml_tensor * logits_ = nullptr;
     ggml_tensor * greedy_token_ = nullptr;
+    ggml_tensor * hidden_output_ = nullptr;
     std::vector<ggml_tensor *> flash_attention_nodes_;
     std::vector<std::int32_t> fixed_positions_;
     std::vector<float> fixed_unfused_attention_mask_;
@@ -664,13 +782,14 @@ public:
         Qwen2HParams hparams,
         std::size_t capacity,
         AttentionKernel prefill_attention_kernel,
-        AttentionKernel decode_attention_kernel
+        AttentionKernel decode_attention_kernel,
+        LayerRange layers
     ) : tensors_(tensors), hparams_(std::move(hparams)), capacity_(capacity),
         cache_capacity_(physical_cache_capacity(
             capacity, hparams_.public_info.context_length, decode_attention_kernel
         )),
         prefill_attention_kernel_(prefill_attention_kernel),
-        decode_attention_kernel_(decode_attention_kernel) {
+        decode_attention_kernel_(decode_attention_kernel), layers_(layers) {
         if (capacity == 0 || capacity > hparams_.public_info.context_length) {
             throw std::invalid_argument("native Qwen2 cache capacity is outside model context");
         }
@@ -685,6 +804,8 @@ public:
         position_ = 0;
         prefill_position_ = 0;
         decode_greedy_graph_.reset();
+        stage_prefill_graph_.reset();
+        stage_decode_graph_.reset();
     }
 
     void rollback(std::size_t token_count) override {
@@ -697,12 +818,13 @@ public:
     std::vector<float> prefill_logits(
         std::span<const std::int32_t> tokens
     ) override {
+        require_full_model();
         validate_prefill(tokens);
         ggml_backend_sched_ptr logits_scheduler = create_scheduler();
         std::vector<float> output = ForwardGraph(
             tensors_, hparams_, cache_, logits_scheduler.get(),
             tokens.size(), tokens.size(), OutputKind::Logits,
-            InputKind::Prefill, prefill_attention_kernel_
+            InputKind::Prefill, prefill_attention_kernel_, layers_
         ).compute_logits(tokens, 0);
         position_ += tokens.size();
         prefill_position_ = position_;
@@ -712,6 +834,7 @@ public:
     PrefillResult prefill_greedy(
         std::span<const std::int32_t> tokens
     ) override {
+        require_full_model();
         validate_prefill(tokens);
         const bool graph_reused = prefill_greedy_graph_ != nullptr &&
             prefill_token_count_ == tokens.size();
@@ -721,7 +844,7 @@ public:
             prefill_greedy_graph_ = std::make_unique<ForwardGraph>(
                 tensors_, hparams_, cache_, prefill_scheduler_.get(),
                 tokens.size(), tokens.size(), OutputKind::GreedyToken,
-                InputKind::Prefill, prefill_attention_kernel_
+                InputKind::Prefill, prefill_attention_kernel_, layers_
             );
             graph_build_ms = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - build_start
@@ -749,29 +872,73 @@ public:
     }
 
     std::vector<float> decode_logits(std::int32_t token) override {
+        require_full_model();
         validate_decode();
         ggml_backend_sched_ptr logits_scheduler = create_scheduler();
         const std::span<const std::int32_t> tokens(&token, 1);
         std::vector<float> output = ForwardGraph(
             tensors_, hparams_, cache_, logits_scheduler.get(), cache_capacity_, 1,
-            OutputKind::Logits, InputKind::Decode, decode_attention_kernel_
+            OutputKind::Logits, InputKind::Decode, decode_attention_kernel_, layers_
         ).compute_logits(tokens, position_);
         ++position_;
         return output;
     }
 
     std::int32_t decode_greedy(std::int32_t token) override {
+        require_full_model();
         validate_decode();
         if (!decode_greedy_graph_) {
             decode_greedy_graph_ = std::make_unique<ForwardGraph>(
                 tensors_, hparams_, cache_, decode_scheduler_.get(), cache_capacity_, 1,
-                OutputKind::GreedyToken, InputKind::Decode, decode_attention_kernel_
+                OutputKind::GreedyToken, InputKind::Decode, decode_attention_kernel_, layers_
             );
         }
         const std::span<const std::int32_t> tokens(&token, 1);
         const std::int32_t output = decode_greedy_graph_->compute_greedy_token(tokens, position_);
         ++position_;
         return output;
+    }
+
+    StageResult prefill_stage_tokens(
+        std::span<const std::int32_t> tokens
+    ) override {
+        if (!layers_.is_first()) {
+            throw std::invalid_argument("only the first native stage accepts tokens");
+        }
+        validate_prefill(tokens);
+        return run_stage_prefill(tokens, {});
+    }
+
+    StageResult prefill_stage_activations(
+        std::span<const float> activations,
+        std::size_t token_count
+    ) override {
+        if (layers_.is_first()) {
+            throw std::invalid_argument("the first native stage does not accept activations");
+        }
+        validate_stage_activations(activations, token_count);
+        validate_prefill_count(token_count);
+        return run_stage_prefill({}, activations);
+    }
+
+    StageResult decode_stage_token(std::int32_t token) override {
+        if (!layers_.is_first()) {
+            throw std::invalid_argument("only the first native stage accepts decode tokens");
+        }
+        validate_decode();
+        const std::span<const std::int32_t> tokens(&token, 1);
+        return run_stage_decode(tokens, {});
+    }
+
+    StageResult decode_stage_activation(
+        std::span<const float> activation
+    ) override {
+        if (layers_.is_first()) {
+            throw std::invalid_argument("the first native stage does not accept decode activations");
+        }
+        validate_stage_activations(activation, 1);
+        validate_decode();
+        return run_stage_decode({}, activation);
     }
 
     ExecutionBufferMetrics execution_buffers() const override {
@@ -788,10 +955,91 @@ public:
     }
 
 private:
-    void validate_prefill(std::span<const std::int32_t> tokens) const {
-        if (position_ != 0 || tokens.empty() || tokens.size() > capacity_) {
+    bool final_stage() const noexcept {
+        return layers_.is_last(hparams_.public_info.layer_count);
+    }
+
+    void require_full_model() const {
+        if (!layers_.is_first() || !final_stage()) {
+            throw std::logic_error("full-model native inference requires every model layer");
+        }
+    }
+
+    OutputKind stage_output_kind() const noexcept {
+        return final_stage() ? OutputKind::GreedyToken : OutputKind::Activations;
+    }
+
+    StageResult run_stage_prefill(
+        std::span<const std::int32_t> tokens,
+        std::span<const float> activations
+    ) {
+        const std::size_t token_count = tokens.empty()
+            ? activations.size() / hparams_.public_info.embedding_length
+            : tokens.size();
+        stage_prefill_graph_ = std::make_unique<ForwardGraph>(
+            tensors_, hparams_, cache_, prefill_scheduler_.get(),
+            token_count, token_count, stage_output_kind(),
+            InputKind::Prefill, prefill_attention_kernel_, layers_
+        );
+        StageResult result;
+        if (final_stage()) {
+            result.sampled_token = tokens.empty()
+                ? stage_prefill_graph_->compute_greedy_token(activations, 0)
+                : stage_prefill_graph_->compute_greedy_token(tokens, 0);
+        } else {
+            result.activations = tokens.empty()
+                ? stage_prefill_graph_->compute_activations(activations, 0)
+                : stage_prefill_graph_->compute_activations(tokens, 0);
+        }
+        position_ = token_count;
+        prefill_position_ = position_;
+        return result;
+    }
+
+    StageResult run_stage_decode(
+        std::span<const std::int32_t> tokens,
+        std::span<const float> activations
+    ) {
+        if (!stage_decode_graph_) {
+            stage_decode_graph_ = std::make_unique<ForwardGraph>(
+                tensors_, hparams_, cache_, decode_scheduler_.get(), cache_capacity_, 1,
+                stage_output_kind(), InputKind::Decode,
+                decode_attention_kernel_, layers_
+            );
+        }
+        StageResult result;
+        if (final_stage()) {
+            result.sampled_token = tokens.empty()
+                ? stage_decode_graph_->compute_greedy_token(activations, position_)
+                : stage_decode_graph_->compute_greedy_token(tokens, position_);
+        } else {
+            result.activations = tokens.empty()
+                ? stage_decode_graph_->compute_activations(activations, position_)
+                : stage_decode_graph_->compute_activations(tokens, position_);
+        }
+        ++position_;
+        return result;
+    }
+
+    void validate_stage_activations(
+        std::span<const float> activations,
+        std::size_t token_count
+    ) const {
+        const std::size_t embedding = hparams_.public_info.embedding_length;
+        if (token_count == 0 || token_count > std::numeric_limits<std::size_t>::max() / embedding ||
+            activations.size() != token_count * embedding) {
+            throw std::invalid_argument("native stage activation shape is invalid");
+        }
+    }
+
+    void validate_prefill_count(std::size_t token_count) const {
+        if (position_ != 0 || token_count == 0 || token_count > capacity_) {
             throw std::invalid_argument("native Qwen2 prefill is outside session capacity");
         }
+    }
+
+    void validate_prefill(std::span<const std::int32_t> tokens) const {
+        validate_prefill_count(tokens.size());
     }
 
     void validate_decode() const {
@@ -801,7 +1049,8 @@ private:
     }
 
     void allocate_cache() {
-        const std::size_t tensor_count = 2U * hparams_.public_info.layer_count;
+        const std::size_t resident_layer_count = layers_.end - layers_.start;
+        const std::size_t tensor_count = 2U * resident_layer_count;
         cache_context_.reset(ggml_init(ggml_init_params{
             .mem_size = tensor_count * ggml_tensor_overhead() + 1024U * 1024U,
             .mem_buffer = nullptr,
@@ -813,8 +1062,8 @@ private:
         const std::int64_t head_length =
             hparams_.public_info.embedding_length / hparams_.head_count;
         const std::int64_t kv_length = head_length * hparams_.kv_head_count;
-        cache_.reserve(hparams_.public_info.layer_count);
-        for (std::uint32_t layer = 0; layer < hparams_.public_info.layer_count; ++layer) {
+        cache_.reserve(resident_layer_count);
+        for (std::uint32_t layer = layers_.start; layer < layers_.end; ++layer) {
             ggml_tensor * key = ggml_new_tensor_2d(
                 cache_context_.get(), GGML_TYPE_F16,
                 kv_length, static_cast<std::int64_t>(cache_capacity_)
@@ -864,6 +1113,7 @@ private:
     std::size_t cache_capacity_;
     AttentionKernel prefill_attention_kernel_;
     AttentionKernel decode_attention_kernel_;
+    LayerRange layers_;
     std::size_t position_ = 0;
     std::size_t prefill_position_ = 0;
     ggml_context_ptr cache_context_;
@@ -874,13 +1124,19 @@ private:
     std::unique_ptr<ForwardGraph> prefill_greedy_graph_;
     std::size_t prefill_token_count_ = 0;
     std::unique_ptr<ForwardGraph> decode_greedy_graph_;
+    std::unique_ptr<ForwardGraph> stage_prefill_graph_;
+    std::unique_ptr<ForwardGraph> stage_decode_graph_;
 };
 
 class Qwen2Architecture final : public ModelArchitecture {
 public:
     Qwen2Architecture(const gguf_context * metadata, const TensorStore& tensors)
         : hparams_(load_qwen2_hparams(metadata)) {
-        validate_qwen2_tensors(tensors, hparams_);
+        validate_qwen2_tensors(
+            tensors,
+            hparams_,
+            LayerRange{tensors.layer_start(), tensors.layer_end()}
+        );
     }
 
     const ModelInfo& model_info() const override { return hparams_.public_info; }
@@ -907,11 +1163,12 @@ public:
         TensorStore& tensors,
         std::size_t capacity,
         AttentionKernel prefill_attention_kernel,
-        AttentionKernel decode_attention_kernel
+        AttentionKernel decode_attention_kernel,
+        LayerRange layers
     ) const override {
         return std::make_unique<Qwen2Session>(
             tensors, hparams_, capacity,
-            prefill_attention_kernel, decode_attention_kernel
+            prefill_attention_kernel, decode_attention_kernel, layers
         );
     }
 

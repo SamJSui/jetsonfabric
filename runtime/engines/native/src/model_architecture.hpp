@@ -12,6 +12,14 @@ namespace jetsonfabric::native {
 
 class TensorStore;
 
+struct LayerRange {
+    std::uint32_t start = 0;
+    std::uint32_t end = 0;
+
+    bool is_first() const noexcept { return start == 0; }
+    bool is_last(std::uint32_t layer_count) const noexcept { return end == layer_count; }
+};
+
 struct PrefillResult {
     std::int32_t token = -1;
     PrefillMetrics metrics;
@@ -33,6 +41,17 @@ public:
         std::span<const std::int32_t> tokens
     ) = 0;
     virtual std::int32_t decode_greedy(std::int32_t token) = 0;
+    virtual StageResult prefill_stage_tokens(
+        std::span<const std::int32_t> tokens
+    ) = 0;
+    virtual StageResult prefill_stage_activations(
+        std::span<const float> activations,
+        std::size_t token_count
+    ) = 0;
+    virtual StageResult decode_stage_token(std::int32_t token) = 0;
+    virtual StageResult decode_stage_activation(
+        std::span<const float> activation
+    ) = 0;
     virtual ExecutionBufferMetrics execution_buffers() const = 0;
 };
 
@@ -49,7 +68,8 @@ public:
         TensorStore& tensors,
         std::size_t capacity,
         AttentionKernel prefill_attention_kernel,
-        AttentionKernel decode_attention_kernel
+        AttentionKernel decode_attention_kernel,
+        LayerRange layers
     ) const = 0;
 };
 
