@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace runtime = jetsonfabric::runtime;
@@ -56,8 +57,13 @@ public:
                     .bytes = f32_bytes(1.0F, -2.0F),
                 },
                 .prompt_tokens = 0,
+                .prompt_token_ids = {},
                 .completion_tokens = 0,
+                .execution_batch_size = 1,
+                .verification_width = 1,
                 .token_text = "",
+                .token_text_offsets = {},
+                .token_eog = {},
                 .end_of_generation = false,
             }
         );
@@ -85,12 +91,66 @@ public:
                     .bytes = {42, 0, 0, 0},
                 },
                 .prompt_tokens = 0,
+                .prompt_token_ids = {},
                 .completion_tokens = 1,
+                .execution_batch_size = 1,
+                .verification_width = 1,
                 .token_text = "",
+                .token_text_offsets = {},
+                .token_eog = {},
                 .end_of_generation = false,
             }
         );
     }
+};
+
+class OwnershipFirstStageExecutor final : public runtime::inference::Executor {
+public:
+    runtime::inference::ExecutionResult execute(
+        const runtime::inference::StageInput&
+    ) const override {
+        runtime::inference::Payload payload{
+            .kind = runtime::inference::PayloadKind::Activation,
+            .encoding = "",
+            .tensor = runtime::inference::TensorDescriptor{
+                .dtype = "f32",
+                .shape = {1, 2},
+                .byte_order = "little",
+                .layout = "row_major",
+            },
+            .bytes = f32_bytes(1.0F, -2.0F),
+        };
+        output_data = payload.bytes.data();
+        runtime::inference::StageOutput output;
+        output.payload = std::move(payload);
+        return runtime::inference::ExecutionResult::success(std::move(output));
+    }
+
+    mutable const std::uint8_t* output_data = nullptr;
+};
+
+class OwnershipLastStageExecutor final : public runtime::inference::Executor {
+public:
+    runtime::inference::ExecutionResult execute(
+        const runtime::inference::StageInput& input
+    ) const override {
+        input_data = input.payload.bytes.data();
+        runtime::inference::StageOutput output;
+        output.payload = runtime::inference::Payload{
+            .kind = runtime::inference::PayloadKind::SampledToken,
+            .encoding = "",
+            .tensor = runtime::inference::TensorDescriptor{
+                .dtype = "u32",
+                .shape = {1},
+                .byte_order = "little",
+                .layout = "row_major",
+            },
+            .bytes = {42, 0, 0, 0},
+        };
+        return runtime::inference::ExecutionResult::success(std::move(output));
+    }
+
+    mutable const std::uint8_t* input_data = nullptr;
 };
 
 runtime::protocol::StageRequest request_for(
@@ -171,10 +231,56 @@ void test_stage_boundary_uses_f16_on_wire_and_f32_in_engine() {
     expect(last_result.response.payload_kind == "sampled_token", "last stage output changed");
 }
 
+void test_f32_stage_boundary_moves_activation_ownership() {
+    const auto codec =
+        runtime::activation::make_default_activation_codec_factory()->create_codec("f32");
+    const OwnershipFirstStageExecutor first_executor;
+    const OwnershipLastStageExecutor last_executor;
+    const runtime::pipeline_parallel::StageWorker first(
+        "node-a",
+        "model-a",
+        runtime::pipeline_parallel::StageAssignment{0, 2, 0, 2},
+        first_executor,
+        codec
+    );
+    const runtime::pipeline_parallel::StageWorker last(
+        "node-b",
+        "model-a",
+        runtime::pipeline_parallel::StageAssignment{1, 2, 2, 4},
+        last_executor,
+        codec
+    );
+
+    auto first_result = first.run(request_for(0, "node-a"));
+    expect(first_result.ok, "ownership first stage failed");
+    expect(
+        first_result.response.payload.data() == first_executor.output_data,
+        "stage response copied the executor activation"
+    );
+
+    runtime::protocol::StageRequest last_request = request_for(1, "node-b");
+    last_request.payload_kind = std::move(first_result.response.payload_kind);
+    last_request.encoding = std::move(first_result.response.encoding);
+    last_request.dtype = std::move(first_result.response.dtype);
+    last_request.shape = std::move(first_result.response.shape);
+    last_request.byte_order = std::move(first_result.response.byte_order);
+    last_request.layout = std::move(first_result.response.layout);
+    last_request.payload = std::move(first_result.response.payload);
+    const std::uint8_t* transferred_data = last_request.payload.data();
+
+    const auto last_result = last.run(std::move(last_request));
+    expect(last_result.ok, "ownership last stage failed");
+    expect(
+        last_executor.input_data == transferred_data,
+        "stage input copied the received activation"
+    );
+}
+
 } // namespace
 
 int main() {
     test_stage_boundary_uses_f16_on_wire_and_f32_in_engine();
+    test_f32_stage_boundary_moves_activation_ownership();
     std::cout << "stage worker codec tests passed\n";
     return 0;
 }

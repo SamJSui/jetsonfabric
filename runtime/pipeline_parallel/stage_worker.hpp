@@ -21,7 +21,7 @@ public:
         std::shared_ptr<const activation::ActivationCodec> activation_codec
     );
 
-    StageRunResult run(const protocol::StageRequest& request) const;
+    StageRunResult run(protocol::StageRequest request) const;
     StageRunResult close_session(const protocol::StageRequest& request) const;
     StageRunResult rollback_session(const protocol::StageRequest& request) const;
 

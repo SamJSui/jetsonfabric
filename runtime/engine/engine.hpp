@@ -2,15 +2,35 @@
 
 #include "protocol/execution_mode.hpp"
 
+#include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace jetsonfabric::runtime {
 
 struct RuntimeResponse {
+    RuntimeResponse() = default;
+    RuntimeResponse(
+        std::string status_in,
+        std::string content_type_in,
+        std::string body_in,
+        std::vector<std::uint8_t> body_payload_in = {}
+    )
+        : status(std::move(status_in)),
+          content_type(std::move(content_type_in)),
+          body(std::move(body_in)),
+          body_payload(std::move(body_payload_in)) {}
+
     std::string status;
     std::string content_type;
     std::string body;
+    std::vector<std::uint8_t> body_payload;
+
+    std::size_t body_size() const noexcept {
+        return body.size() + body_payload.size();
+    }
 };
 
 using GenerationEventSink = std::function<bool(const std::string&)>;

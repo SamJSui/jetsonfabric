@@ -44,7 +44,7 @@ struct StageTimings {
     std::int64_t stage_total_us = 0;
 };
 
-inference::Payload to_inference_payload(const protocol::StageRequest& request) {
+inference::Payload to_inference_payload(protocol::StageRequest& request) {
     return inference::Payload{
         .kind = inference::parse_payload_kind(request.payload_kind),
         .encoding = request.encoding,
@@ -54,11 +54,11 @@ inference::Payload to_inference_payload(const protocol::StageRequest& request) {
             .byte_order = request.byte_order,
             .layout = request.layout,
         },
-        .bytes = request.payload,
+        .bytes = std::move(request.payload),
     };
 }
 
-inference::StageInput to_stage_input(const protocol::StageRequest& request) {
+inference::StageInput to_stage_input(protocol::StageRequest& request) {
     return inference::StageInput{
         .session_id = request.session_id,
         .request_id = request.request_id,
@@ -98,21 +98,22 @@ protocol::StageResponse base_response(const protocol::StageRequest& request) {
 
 protocol::StageResponse to_stage_response(
     const protocol::StageRequest& request,
-    const inference::StageOutput& output,
+    inference::StageOutput output,
+    std::int64_t bytes_in,
     const StageTimings& timings
 ) {
     protocol::StageResponse response = base_response(request);
     response.payload_kind = inference::to_string(output.payload.kind);
-    response.encoding = output.payload.encoding;
-    response.dtype = output.payload.tensor.dtype;
-    response.shape = output.payload.tensor.shape;
-    response.byte_order = output.payload.tensor.byte_order;
-    response.layout = output.payload.tensor.layout;
-    response.payload = output.payload.bytes;
-    response.bytes_in = static_cast<std::int64_t>(request.payload.size());
+    response.encoding = std::move(output.payload.encoding);
+    response.dtype = std::move(output.payload.tensor.dtype);
+    response.shape = std::move(output.payload.tensor.shape);
+    response.byte_order = std::move(output.payload.tensor.byte_order);
+    response.layout = std::move(output.payload.tensor.layout);
+    response.payload = std::move(output.payload.bytes);
+    response.bytes_in = bytes_in;
     response.bytes_out = static_cast<std::int64_t>(response.payload.size());
     response.prompt_tokens = output.prompt_tokens;
-    response.prompt_token_ids = output.prompt_token_ids;
+    response.prompt_token_ids = std::move(output.prompt_token_ids);
     response.completion_tokens = output.completion_tokens;
     response.execution_batch_size = output.execution_batch_size;
     response.verification_width = output.verification_width;
@@ -121,9 +122,9 @@ protocol::StageResponse to_stage_response(
     response.activation_decode_us = timings.activation_decode_us;
     response.activation_encode_us = timings.activation_encode_us;
     response.stage_total_us = timings.stage_total_us;
-    response.message = output.token_text;
-    response.token_text_offsets = output.token_text_offsets;
-    response.token_eog = output.token_eog;
+    response.message = std::move(output.token_text);
+    response.token_text_offsets = std::move(output.token_text_offsets);
+    response.token_eog = std::move(output.token_eog);
     return response;
 }
 
@@ -156,7 +157,7 @@ StageWorker::StageWorker(
     }
 }
 
-StageRunResult StageWorker::run(const protocol::StageRequest& request) const {
+StageRunResult StageWorker::run(protocol::StageRequest request) const {
     const std::string assignment_error = validate_stage_assignment(assignment_);
     if (!assignment_error.empty()) {
         return bad_request("invalid_stage_assignment", assignment_error);
@@ -168,6 +169,7 @@ StageRunResult StageWorker::run(const protocol::StageRequest& request) const {
     }
 
     const auto stage_start = std::chrono::steady_clock::now();
+    const std::int64_t bytes_in = static_cast<std::int64_t>(request.payload.size());
     StageTimings timings;
     inference::StageInput input;
     try {
@@ -238,7 +240,12 @@ StageRunResult StageWorker::run(const protocol::StageRequest& request) const {
     result.ok = true;
     result.status = "200 OK";
     timings.stage_total_us = elapsed_us(stage_start);
-    result.response = to_stage_response(request, execution.output, timings);
+    result.response = to_stage_response(
+        request,
+        std::move(execution.output),
+        bytes_in,
+        timings
+    );
     return result;
 }
 

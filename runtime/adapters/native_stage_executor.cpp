@@ -3,7 +3,6 @@
 #include "inference/token_payload.hpp"
 
 #include <limits>
-#include <cstring>
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
@@ -14,7 +13,7 @@
 namespace jetsonfabric::runtime::adapters {
 namespace {
 
-std::vector<float> activation_values(
+native::ActivationView activation_view(
     const inference::Payload& payload,
     std::uint32_t embedding_length
 ) {
@@ -39,16 +38,22 @@ std::vector<float> activation_values(
     if (payload.bytes.size() != value_count * sizeof(float)) {
         throw std::invalid_argument("native activation byte count does not match its shape");
     }
-    std::vector<float> values(value_count);
-    std::memcpy(values.data(), payload.bytes.data(), payload.bytes.size());
-    return values;
+    return native::ActivationView{
+        .bytes = payload.bytes,
+        .token_count = sequence_length,
+    };
 }
 
 inference::Payload activation_payload(
-    std::vector<float> values,
+    native::ActivationBuffer activation,
     std::uint32_t embedding_length
 ) {
-    if (values.empty() || values.size() % embedding_length != 0) {
+    const std::size_t max_size = std::numeric_limits<std::size_t>::max();
+    if (activation.empty() || activation.token_count == 0 || embedding_length == 0 ||
+        activation.token_count > max_size / embedding_length ||
+        activation.token_count * embedding_length > max_size / sizeof(float) ||
+        activation.bytes.size() !=
+            activation.token_count * embedding_length * sizeof(float)) {
         throw std::logic_error("native engine returned an invalid activation shape");
     }
     inference::Payload payload;
@@ -56,14 +61,13 @@ inference::Payload activation_payload(
     payload.tensor = inference::TensorDescriptor{
         .dtype = "f32",
         .shape = {
-            static_cast<std::int64_t>(values.size() / embedding_length),
+            static_cast<std::int64_t>(activation.token_count),
             static_cast<std::int64_t>(embedding_length),
         },
         .byte_order = "little",
         .layout = "row_major",
     };
-    payload.bytes.resize(values.size() * sizeof(float));
-    std::memcpy(payload.bytes.data(), values.data(), payload.bytes.size());
+    payload.bytes = std::move(activation.bytes);
     return payload;
 }
 
@@ -211,7 +215,7 @@ private:
         if (result.has_sampled_token()) return token_output(result.sampled_token);
         inference::StageOutput output;
         output.payload = activation_payload(
-            std::move(result.activations),
+            std::move(result.activation),
             config.engine->model_info().embedding_length
         );
         output.execution_batch_size = 1;
@@ -226,25 +230,24 @@ private:
             );
         }
         std::vector<std::int32_t> tokens;
-        std::vector<float> activations;
+        native::ActivationView activation;
         std::size_t token_count = 0;
         if (config.position.is_first()) {
             tokens = input_tokens(input);
             token_count = tokens.size();
         } else {
-            activations = activation_values(
+            activation = activation_view(
                 input.payload,
                 config.engine->model_info().embedding_length
             );
-            token_count = activations.size() /
-                config.engine->model_info().embedding_length;
+            token_count = activation.token_count;
         }
         const std::size_t capacity = session_capacity(token_count, input.max_tokens);
         std::unique_ptr<native::NativeSession> session =
             config.engine->create_session(capacity);
         native::StageResult stage_result = config.position.is_first()
             ? session->prefill_stage_tokens(tokens)
-            : session->prefill_stage_activations(activations, token_count);
+            : session->prefill_stage_activations(activation);
         inference::StageOutput output = stage_output(std::move(stage_result));
         if (config.position.is_first()) {
             output.prompt_tokens = static_cast<int>(tokens.size());
@@ -289,11 +292,11 @@ private:
             }
             stage_result = state.session->decode_stage_token(tokens.front());
         } else {
-            std::vector<float> activation = activation_values(
+            const native::ActivationView activation = activation_view(
                 input.payload,
                 config.engine->model_info().embedding_length
             );
-            if (activation.size() != config.engine->model_info().embedding_length) {
+            if (activation.token_count != 1U) {
                 return inference::ExecutionResult::invalid_input(
                     "native_multi_token_verification_unsupported",
                     "native decode activation must contain one token row"

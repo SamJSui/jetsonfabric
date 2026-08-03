@@ -75,9 +75,7 @@ public:
     std::string active_deployment_id() const;
     std::string active_model_id() const;
 
-    pipeline_parallel::StageRunResult run_stage(
-        const protocol::StageRequest& request
-    ) const;
+    pipeline_parallel::StageRunResult run_stage(protocol::StageRequest request) const;
     pipeline_parallel::StageRunResult close_session(
         const protocol::StageRequest& request
     ) const;

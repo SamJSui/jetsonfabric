@@ -128,14 +128,14 @@ void apply_stage(const protocol::GenerationStage& stage, protocol::StageRequest&
     request.layer_end = stage.layer_end;
 }
 
-void apply_response(protocol::StageRequest& request, const protocol::StageResponse& response) {
-    request.payload_kind = response.payload_kind;
-    request.encoding = response.encoding;
-    request.dtype = response.dtype;
-    request.shape = response.shape;
-    request.byte_order = response.byte_order;
-    request.layout = response.layout;
-    request.payload = response.payload;
+void apply_response(protocol::StageRequest& request, protocol::StageResponse response) {
+    request.payload_kind = std::move(response.payload_kind);
+    request.encoding = std::move(response.encoding);
+    request.dtype = std::move(response.dtype);
+    request.shape = std::move(response.shape);
+    request.byte_order = std::move(response.byte_order);
+    request.layout = std::move(response.layout);
+    request.payload = std::move(response.payload);
 }
 
 std::string validate_response_identity(
@@ -278,12 +278,15 @@ PassResult run_pass(
         record_stage_timing(result, stage, stage_result);
         result.prompt_tokens += stage_result.response.prompt_tokens;
         if (!stage_result.response.prompt_token_ids.empty()) {
-            prompt_token_ids = stage_result.response.prompt_token_ids;
+            prompt_token_ids = std::move(stage_result.response.prompt_token_ids);
         }
         result.bytes_in += stage_result.response.bytes_in;
         result.bytes_out += stage_result.response.bytes_out;
-        final_response = stage_result.response;
-        apply_response(request, stage_result.response);
+        if (stage.stage_index == stage.stage_count - 1) {
+            final_response = std::move(stage_result.response);
+        } else {
+            apply_response(request, std::move(stage_result.response));
+        }
     }
     return PassResult{true, {}, std::move(final_response), std::move(prompt_token_ids)};
 }

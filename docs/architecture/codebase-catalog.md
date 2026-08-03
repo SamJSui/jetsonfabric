@@ -134,7 +134,7 @@ loopback runtime. The two typed clients let the coordinator call node facades:
 
 ### `stageexec.Executor`
 
-`Executor` is intentionally diagnostic. It builds one Stagewire operation per
+`Executor` is intentionally diagnostic. It builds one StageWire operation per
 planned stage, validates response identity and payload transitions, and records
 byte counts, CRCs, placement, and latency. `Generate` repeats `Execute` for
 prefill and decode and closes every stage session afterward.
@@ -164,6 +164,7 @@ prefill and decode and closes every stage session afterward.
 | `adapters` | `LlamaCppStageAdapter` | Owns session-keyed partial-layer llama contexts and their KV state; executes prefill/decode and reaps idle sessions. |
 | `adapters` | `LlamaCppAdapter` | Owns the ordinary full-model llama context used by single-stage execution. |
 | `adapters` | `LlamaCppTensorParallel` | Maps an engine-neutral device mesh to llama.cpp CUDA and RPC devices without exposing GGML types to runtime orchestration. |
+| `adapters` | `NativeStageExecutor` | Moves byte-backed native activations between the native engine and the stage contract without converting through an intermediate float vector. |
 | `engines/native` | `jf_model` | Dependency-light C owner of one validated JFM v2 stage view, preserved GGUF metadata, and memory-mapped tensor data used by the native serving executor. |
 | `compiler` | `jf-model-compile` | Offline GGUF-to-JFM v2 importer with stable tensor types, per-segment hashes, source mutation detection, and atomic publication. |
 | `tensor_parallel` | `DeviceMesh` | Validated transport endpoints and optional per-device tensor proportions. |
@@ -173,9 +174,9 @@ prefill and decode and closes every stage session afterward.
 | `activation` | `F16ActivationCodec` | Converts F32 activations to F16 for transport and restores F32 before execution. |
 | `activation` | `ActivationCodecFactory` | Registry from activation encoding name to codec builder. |
 | `transport` | `StageTransport` | Strategy interface for one remote stage invocation. |
-| `transport` | `HTTPStageTransport` | Persistent ordered HTTP/1.1 connection implementation of `StageTransport`. |
+| `transport` | `HTTPStageTransport` | Persistent ordered HTTP/1.1 implementation that sends StageWire metadata and activation payload as separate socket segments. |
 | `transport` | `StageTransportFactory` | Registry from transport name to transport builder. |
-| `protocol` | protocol records | `GenerationRequest`, `GenerationStage`, `StageRequest`, and `StageResponse` define runtime wire semantics. |
+| `protocol` | protocol records | `GenerationRequest`, `GenerationStage`, `StageRequest`, and `StageResponse` define runtime wire semantics; segmented frame builders preserve the StageWire v2 byte layout. |
 | `inference` | inference records | `StageInput`, `StageOutput`, `Payload`, tensor descriptors, positions, ranges, and execution results are engine-neutral values. |
 
 Private `Impl` classes hide sockets, threads, llama.cpp pointers, and mutable

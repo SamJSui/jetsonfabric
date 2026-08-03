@@ -9,9 +9,11 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cerrno>
@@ -157,21 +159,46 @@ int connect_socket(const HTTPURL& target) {
     return connected;
 }
 
-void send_all(int socket_fd, const std::string& data) {
-    std::size_t offset = 0;
-    while (offset < data.size()) {
-        const ssize_t sent = send(
-            socket_fd,
-            data.data() + offset,
-            data.size() - offset,
-            MSG_NOSIGNAL
-        );
+void send_stage_frame(
+    int socket_fd,
+    const std::string& headers,
+    const protocol::EncodedStageFrameView& frame
+) {
+    std::array<iovec, 3> segments{
+        iovec{const_cast<char*>(headers.data()), headers.size()},
+        iovec{const_cast<char*>(frame.prefix.data()), frame.prefix.size()},
+        iovec{
+            const_cast<std::uint8_t*>(frame.payload.data()),
+            frame.payload.size(),
+        },
+    };
+    std::size_t first = 0;
+    while (first < segments.size()) {
+        while (first < segments.size() && segments[first].iov_len == 0) ++first;
+        if (first == segments.size()) return;
+        msghdr message{};
+        message.msg_iov = segments.data() + first;
+        message.msg_iovlen = segments.size() - first;
+        const ssize_t sent = sendmsg(socket_fd, &message, MSG_NOSIGNAL);
         if (sent < 0) {
             if (errno == EINTR) continue;
-            throw std::runtime_error(std::string("send stage request: ") + std::strerror(errno));
+            throw std::runtime_error(
+                std::string("send stage request: ") + std::strerror(errno)
+            );
         }
-        if (sent == 0) throw std::runtime_error("stage request connection closed while sending");
-        offset += static_cast<std::size_t>(sent);
+        if (sent == 0) {
+            throw std::runtime_error("stage request connection closed while sending");
+        }
+        std::size_t consumed = static_cast<std::size_t>(sent);
+        while (first < segments.size() && consumed >= segments[first].iov_len) {
+            consumed -= segments[first].iov_len;
+            ++first;
+        }
+        if (first < segments.size() && consumed != 0) {
+            segments[first].iov_base =
+                static_cast<std::uint8_t*>(segments[first].iov_base) + consumed;
+            segments[first].iov_len -= consumed;
+        }
     }
 }
 
@@ -481,7 +508,8 @@ pipeline_parallel::StageRunResult HTTPStageTransport::invoke(
             : operation == pipeline_parallel::StageOperation::RollbackSession
                 ? protocol::kStageOperationRollbackSession
                 : protocol::kStageOperationExecute;
-        const std::string body = protocol::encode_stage_request(request, operation_name);
+        const protocol::EncodedStageFrameView body =
+            protocol::encode_stage_request_frame(request, operation_name);
         std::ostringstream headers;
         headers << "POST " << stage_path(target.path) << " HTTP/1.1\r\n"
                 << "Host: " << target.host << ':' << target.port << "\r\n"
@@ -490,6 +518,7 @@ pipeline_parallel::StageRunResult HTTPStageTransport::invoke(
                 << "X-JetsonFabric-Cluster-Token: " << impl_->cluster_token() << "\r\n"
                 << "Content-Length: " << body.size() << "\r\n"
                 << "Connection: keep-alive\r\n\r\n";
+        const std::string header_text = headers.str();
 
         const std::shared_ptr<Impl::PeerConnection> connection =
             impl_->connection_for(target);
@@ -504,8 +533,7 @@ pipeline_parallel::StageRunResult HTTPStageTransport::invoke(
                 connection->socket_fd.store(connect_socket(target));
             }
             const int fd = connection->socket_fd.load();
-            send_all(fd, headers.str());
-            send_all(fd, body);
+            send_stage_frame(fd, header_text, body);
         } catch (...) {
             impl_->reset(connection);
             throw;

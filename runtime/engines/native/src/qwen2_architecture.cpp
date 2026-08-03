@@ -188,29 +188,29 @@ public:
         return token;
     }
 
-    std::vector<float> compute_activations(
+    ActivationBuffer compute_activations(
         std::span<const std::int32_t> tokens,
         std::size_t position
     ) {
-        return compute_activations(tokens, {}, position);
+        return compute_activations(tokens, ActivationView{}, position);
     }
 
-    std::vector<float> compute_activations(
-        std::span<const float> activations,
+    ActivationBuffer compute_activations(
+        ActivationView activation,
         std::size_t position
     ) {
-        return compute_activations({}, activations, position);
+        return compute_activations({}, activation, position);
     }
 
     std::int32_t compute_greedy_token(
-        std::span<const float> activations,
+        ActivationView activation,
         std::size_t position,
         GraphTimings * timings = nullptr
     ) {
         if (output_kind_ != OutputKind::GreedyToken) {
             throw std::logic_error("native Qwen2 graph does not produce a greedy token");
         }
-        compute({}, activations, position, timings);
+        compute({}, activation, position, timings);
         std::int32_t token = -1;
         ggml_backend_tensor_get(greedy_token_, &token, 0, sizeof(token));
         return token;
@@ -236,12 +236,12 @@ private:
         std::size_t position,
         GraphTimings * timings = nullptr
     ) {
-        compute(tokens, {}, position, timings);
+        compute(tokens, ActivationView{}, position, timings);
     }
 
     void compute(
         std::span<const std::int32_t> tokens,
-        std::span<const float> activations,
+        ActivationView activation,
         std::size_t position,
         GraphTimings * timings = nullptr
     ) {
@@ -261,7 +261,7 @@ private:
         if (timings != nullptr) {
             timings->attention_backend_verified = attention_backend_verified_;
         }
-        set_inputs(tokens, activations, position);
+        set_inputs(tokens, activation, position);
         if (timings != nullptr) {
             timings->host_input_preparation_ms = elapsed_ms(input_start);
         }
@@ -275,18 +275,23 @@ private:
         }
     }
 
-    std::vector<float> compute_activations(
+    ActivationBuffer compute_activations(
         std::span<const std::int32_t> tokens,
-        std::span<const float> activations,
+        ActivationView activation,
         std::size_t position
     ) {
         if (output_kind_ != OutputKind::Activations) {
             throw std::logic_error("native Qwen2 graph does not produce activations");
         }
-        compute(tokens, activations, position);
+        compute(tokens, activation, position);
         const std::size_t count = token_count_ * params_.public_info.embedding_length;
-        std::vector<float> output(count);
-        ggml_backend_tensor_get(hidden_output_, output.data(), 0, output.size() * sizeof(float));
+        ActivationBuffer output{
+            .bytes = std::vector<std::uint8_t>(count * sizeof(float)),
+            .token_count = token_count_,
+        };
+        ggml_backend_tensor_get(
+            hidden_output_, output.bytes.data(), 0, output.bytes.size()
+        );
         return output;
     }
 
@@ -594,14 +599,16 @@ private:
 
     void set_inputs(
         std::span<const std::int32_t> tokens,
-        std::span<const float> activations,
+        ActivationView activation,
         std::size_t position
     ) {
         const std::size_t activation_count =
             token_count_ * params_.public_info.embedding_length;
+        const std::size_t activation_bytes = activation_count * sizeof(float);
         const bool input_matches = layers_.is_first()
-            ? tokens.size() == token_count_ && activations.empty()
-            : tokens.empty() && activations.size() == activation_count;
+            ? tokens.size() == token_count_ && activation.empty()
+            : tokens.empty() && activation.token_count == token_count_ &&
+                activation.bytes.size() == activation_bytes;
         if (!input_matches || position + token_count_ > attention_length_) {
             throw std::invalid_argument("native Qwen2 graph token count changed");
         }
@@ -612,7 +619,7 @@ private:
             ggml_backend_tensor_set(input_tokens_, tokens.data(), 0, tokens.size_bytes());
         } else {
             ggml_backend_tensor_set(
-                input_activations_, activations.data(), 0, activations.size_bytes()
+                input_activations_, activation.bytes.data(), 0, activation.bytes.size()
             );
         }
         if (input_kind_ == InputKind::Prefill) {
@@ -906,19 +913,16 @@ public:
             throw std::invalid_argument("only the first native stage accepts tokens");
         }
         validate_prefill(tokens);
-        return run_stage_prefill(tokens, {});
+        return run_stage_prefill(tokens, ActivationView{});
     }
 
-    StageResult prefill_stage_activations(
-        std::span<const float> activations,
-        std::size_t token_count
-    ) override {
+    StageResult prefill_stage_activations(ActivationView activation) override {
         if (layers_.is_first()) {
             throw std::invalid_argument("the first native stage does not accept activations");
         }
-        validate_stage_activations(activations, token_count);
-        validate_prefill_count(token_count);
-        return run_stage_prefill({}, activations);
+        validate_stage_activation(activation);
+        validate_prefill_count(activation.token_count);
+        return run_stage_prefill({}, activation);
     }
 
     StageResult decode_stage_token(std::int32_t token) override {
@@ -927,16 +931,17 @@ public:
         }
         validate_decode();
         const std::span<const std::int32_t> tokens(&token, 1);
-        return run_stage_decode(tokens, {});
+        return run_stage_decode(tokens, ActivationView{});
     }
 
-    StageResult decode_stage_activation(
-        std::span<const float> activation
-    ) override {
+    StageResult decode_stage_activation(ActivationView activation) override {
         if (layers_.is_first()) {
             throw std::invalid_argument("the first native stage does not accept decode activations");
         }
-        validate_stage_activations(activation, 1);
+        validate_stage_activation(activation);
+        if (activation.token_count != 1U) {
+            throw std::invalid_argument("native decode activation must contain one token row");
+        }
         validate_decode();
         return run_stage_decode({}, activation);
     }
@@ -971,10 +976,10 @@ private:
 
     StageResult run_stage_prefill(
         std::span<const std::int32_t> tokens,
-        std::span<const float> activations
+        ActivationView activation
     ) {
         const std::size_t token_count = tokens.empty()
-            ? activations.size() / hparams_.public_info.embedding_length
+            ? activation.token_count
             : tokens.size();
         stage_prefill_graph_ = std::make_unique<ForwardGraph>(
             tensors_, hparams_, cache_, prefill_scheduler_.get(),
@@ -984,11 +989,11 @@ private:
         StageResult result;
         if (final_stage()) {
             result.sampled_token = tokens.empty()
-                ? stage_prefill_graph_->compute_greedy_token(activations, 0)
+                ? stage_prefill_graph_->compute_greedy_token(activation, 0)
                 : stage_prefill_graph_->compute_greedy_token(tokens, 0);
         } else {
-            result.activations = tokens.empty()
-                ? stage_prefill_graph_->compute_activations(activations, 0)
+            result.activation = tokens.empty()
+                ? stage_prefill_graph_->compute_activations(activation, 0)
                 : stage_prefill_graph_->compute_activations(tokens, 0);
         }
         position_ = token_count;
@@ -998,7 +1003,7 @@ private:
 
     StageResult run_stage_decode(
         std::span<const std::int32_t> tokens,
-        std::span<const float> activations
+        ActivationView activation
     ) {
         if (!stage_decode_graph_) {
             stage_decode_graph_ = std::make_unique<ForwardGraph>(
@@ -1010,24 +1015,24 @@ private:
         StageResult result;
         if (final_stage()) {
             result.sampled_token = tokens.empty()
-                ? stage_decode_graph_->compute_greedy_token(activations, position_)
+                ? stage_decode_graph_->compute_greedy_token(activation, position_)
                 : stage_decode_graph_->compute_greedy_token(tokens, position_);
         } else {
-            result.activations = tokens.empty()
-                ? stage_decode_graph_->compute_activations(activations, position_)
+            result.activation = tokens.empty()
+                ? stage_decode_graph_->compute_activations(activation, position_)
                 : stage_decode_graph_->compute_activations(tokens, position_);
         }
         ++position_;
         return result;
     }
 
-    void validate_stage_activations(
-        std::span<const float> activations,
-        std::size_t token_count
-    ) const {
+    void validate_stage_activation(ActivationView activation) const {
         const std::size_t embedding = hparams_.public_info.embedding_length;
-        if (token_count == 0 || token_count > std::numeric_limits<std::size_t>::max() / embedding ||
-            activations.size() != token_count * embedding) {
+        const std::size_t max_size = std::numeric_limits<std::size_t>::max();
+        if (activation.token_count == 0 || embedding == 0 ||
+            activation.token_count > max_size / embedding ||
+            activation.token_count * embedding > max_size / sizeof(float) ||
+            activation.bytes.size() != activation.token_count * embedding * sizeof(float)) {
             throw std::invalid_argument("native stage activation shape is invalid");
         }
     }

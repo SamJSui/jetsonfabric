@@ -41,10 +41,17 @@ The coordinator then uses the runtime lifecycle endpoints to load, activate,
 inspect, drain, and unload exact deployment epochs. A runtime can keep an old
 draining epoch resident beside a replacement epoch during safe handoff. Generation enters through
 `POST /v1/generate` on the stage-0 runtime as newline-delimited JSON events;
-peer activations use binary Stagewire requests either through node API gateways
+peer activations use binary StageWire requests either through node API gateways
 or through the direct runtime transport. Multi-stage runtime workers require
 the same `JETSONFABRIC_CLUSTER_TOKEN` as their supervising nodes so peer
-Stagewire calls can authenticate.
+StageWire calls can authenticate.
+
+Native F32 stages keep activations in one byte-backed owned buffer. Ownership
+moves from native execution through stage orchestration, and direct HTTP
+transport sends the StageWire prefix and activation payload as separate socket
+segments without flattening them into another frame. Incoming HTTP parsing and
+StageWire decoding still materialize receive storage, so this is not an
+end-to-end zero-copy or pinned-buffer path.
 
 ## Experimental Tensor-Parallel Runtime
 
@@ -122,7 +129,7 @@ engine until it passes end-to-end Qwen correctness gates. See
 - `compiler/`: offline GGUF-to-JFM import tools;
 - `tensor_parallel/`: device-mesh validation and trusted-LAN RPC provider;
 - `protocol/`: generation, stage, and lifecycle serialization;
-- `transport/`: runtime-initiated peer Stagewire HTTP transport;
+- `transport/`: runtime-initiated peer StageWire HTTP transport;
 - `benchmarks/`: isolated transport and CUDA feasibility tools;
 - `speculative/`: pluggable draft strategies for verified speculative decode;
 - `patches/`: the pinned llama.cpp stage-range extension.
