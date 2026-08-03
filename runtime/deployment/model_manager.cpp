@@ -372,7 +372,7 @@ public:
     }
 
     pipeline_parallel::StageRunResult run_stage(
-        const protocol::StageRequest& request
+        protocol::StageRequest request
     ) const {
         std::shared_ptr<const ResidentDeployment> deployment;
         bool any_active = false;
@@ -389,7 +389,7 @@ public:
             !mismatch.ok) {
             return mismatch;
         }
-        return deployment->execution->stage_worker.run(request);
+        return deployment->execution->stage_worker.run(std::move(request));
     }
 
     pipeline_parallel::StageRunResult close_session(
@@ -945,9 +945,9 @@ std::string ModelManager::active_model_id() const {
 }
 
 pipeline_parallel::StageRunResult ModelManager::run_stage(
-    const protocol::StageRequest& request
+    protocol::StageRequest request
 ) const {
-    return impl_->run_stage(request);
+    return impl_->run_stage(std::move(request));
 }
 
 pipeline_parallel::StageRunResult ModelManager::close_session(

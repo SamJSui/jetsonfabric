@@ -19,6 +19,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -210,10 +211,11 @@ void set_http_io_timeout(int client_fd) {
     (void) setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 }
 
-bool send_all(int fd, const std::string& data) {
+bool send_all(int fd, const void* data, std::size_t size) {
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
     std::size_t offset = 0;
-    while (offset < data.size()) {
-        const ssize_t sent = send(fd, data.data() + offset, data.size() - offset, MSG_NOSIGNAL);
+    while (offset < size) {
+        const ssize_t sent = send(fd, bytes + offset, size - offset, MSG_NOSIGNAL);
         if (sent < 0) {
             if (errno == EINTR) continue;
             return false;
@@ -222,6 +224,29 @@ bool send_all(int fd, const std::string& data) {
         offset += static_cast<std::size_t>(sent);
     }
     return true;
+}
+
+bool send_all(int fd, const std::string& data) {
+    return send_all(fd, data.data(), data.size());
+}
+
+bool send_all(int fd, std::span<const std::uint8_t> data) {
+    return send_all(fd, data.data(), data.size());
+}
+
+bool send_response(int fd, const HttpResponse& response) {
+    return send_all(fd, response.serialize_headers()) &&
+        send_all(fd, response.body) &&
+        send_all(fd, response.body_payload);
+}
+
+HttpResponse runtime_http_response(RuntimeResponse response) {
+    return binary_response(
+        std::move(response.status),
+        std::move(response.content_type),
+        std::move(response.body),
+        std::move(response.body_payload)
+    );
 }
 
 bool send_chunk(int fd, const std::string& data) {
@@ -427,26 +452,19 @@ void HttpServer::handle_client(int client_fd) const {
                 if (starts_with(request, "GET /healthz ")) {
                     response = json_response("200 OK", health_body(runtime_));
                 } else if (starts_with(request, "GET /v1/deployment ")) {
-                    const RuntimeResponse runtime_response = runtime_.deployment_status();
-                    response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+                    response = runtime_http_response(runtime_.deployment_status());
                 } else if (starts_with(request, "POST /v1/deployment/load ")) {
-                    const RuntimeResponse runtime_response = runtime_.load_deployment(body);
-                    response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+                    response = runtime_http_response(runtime_.load_deployment(body));
                 } else if (starts_with(request, "POST /v1/deployment/activate ")) {
-                    const RuntimeResponse runtime_response = runtime_.activate_deployment(body);
-                    response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+                    response = runtime_http_response(runtime_.activate_deployment(body));
                 } else if (starts_with(request, "POST /v1/deployment/drain ")) {
-                    const RuntimeResponse runtime_response = runtime_.drain_deployment(body);
-                    response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+                    response = runtime_http_response(runtime_.drain_deployment(body));
                 } else if (starts_with(request, "POST /v1/deployment/unload ")) {
-                    const RuntimeResponse runtime_response = runtime_.unload_deployment(body);
-                    response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+                    response = runtime_http_response(runtime_.unload_deployment(body));
                 } else if (starts_with(request, "POST /v1/chat/completions ")) {
-                    const RuntimeResponse runtime_response = runtime_.chat_completion(body);
-                    response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+                    response = runtime_http_response(runtime_.chat_completion(body));
                 } else if (starts_with(request, "POST /v1/layer-split/stage ")) {
-                    const RuntimeResponse runtime_response = runtime_.run_stage(body);
-                    response = binary_response(runtime_response.status, runtime_response.content_type, runtime_response.body);
+                    response = runtime_http_response(runtime_.run_stage(body));
                     keep_alive = requests_stage_keep_alive(request);
                     response.close_connection = !keep_alive;
                 }
@@ -457,7 +475,7 @@ void HttpServer::handle_client(int client_fd) const {
                 std::string("{\"error\":\"invalid_http_request\",\"message\":\"") + err.what() + "\"}"
             );
         }
-        if (!send_all(client_fd, response.serialize()) || !keep_alive) break;
+        if (!send_response(client_fd, response) || !keep_alive) break;
         set_stage_keep_alive_timeout(client_fd);
     }
 }

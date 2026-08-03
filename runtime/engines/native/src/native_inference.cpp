@@ -41,20 +41,15 @@ StageResult NativeSession::prefill_stage_tokens(
     return impl_->session->prefill_stage_tokens(tokens);
 }
 
-StageResult NativeSession::prefill_stage_activations(
-    std::span<const float> activations,
-    std::size_t token_count
-) {
-    return impl_->session->prefill_stage_activations(activations, token_count);
+StageResult NativeSession::prefill_stage_activations(ActivationView activation) {
+    return impl_->session->prefill_stage_activations(activation);
 }
 
 StageResult NativeSession::decode_stage_token(std::int32_t token) {
     return impl_->session->decode_stage_token(token);
 }
 
-StageResult NativeSession::decode_stage_activation(
-    std::span<const float> activation
-) {
+StageResult NativeSession::decode_stage_activation(ActivationView activation) {
     return impl_->session->decode_stage_activation(activation);
 }
 

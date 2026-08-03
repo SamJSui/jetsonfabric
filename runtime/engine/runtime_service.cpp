@@ -632,27 +632,35 @@ RuntimeResponse RuntimeService::run_stage(const std::string& request_body) const
         return json_error("400 Bad Request", "invalid_stage_request", err.what());
     }
 
-    const pipeline_parallel::StageRunResult result = operation == protocol::kStageOperationCloseSession
+    protocol::StageResponse error_response = stage_error_response(request, "", "");
+    pipeline_parallel::StageRunResult result = operation == protocol::kStageOperationCloseSession
         ? model_manager_.close_session(request)
         : operation == protocol::kStageOperationRollbackSession
             ? model_manager_.rollback_session(request)
-            : model_manager_.run_stage(request);
+            : model_manager_.run_stage(std::move(request));
     if (!result.ok) {
-        protocol::StageResponse response = stage_error_response(request, result.error_code, result.error_message);
-        response.operation = operation;
+        error_response.operation = operation;
+        error_response.error = result.error_code;
+        error_response.message = result.error_message;
+        protocol::EncodedStageFrame frame =
+            protocol::encode_stage_response_frame(std::move(error_response));
         return RuntimeResponse{
             result.status,
             protocol::kStageWireContentType,
-            protocol::encode_stage_response(std::move(response))
+            std::move(frame.prefix),
+            std::move(frame.payload),
         };
     }
 
-    protocol::StageResponse response = result.response;
+    protocol::StageResponse response = std::move(result.response);
     response.operation = operation;
+    protocol::EncodedStageFrame frame =
+        protocol::encode_stage_response_frame(std::move(response));
     return RuntimeResponse{
         "200 OK",
         protocol::kStageWireContentType,
-        protocol::encode_stage_response(std::move(response)),
+        std::move(frame.prefix),
+        std::move(frame.payload),
     };
 }
 
