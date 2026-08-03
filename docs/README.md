@@ -72,6 +72,9 @@ validation procedures.
 - [Native distributed stages](benchmarks/2026-08-03-native-distributed-stages.md) -
   two-node JFM partial residency, exact-token validation, and a matched
   native-versus-llama.cpp serving A/B.
+- [Native activation ownership](benchmarks/2026-08-03-native-activation-buffer.md) -
+  byte-backed activation handoff, segmented StageWire writes, exact-token
+  physical validation, and matched transport-overhead results.
 
 Real-model local integration commands are documented in
 [Local development](local-development.md). The source repository does not keep
