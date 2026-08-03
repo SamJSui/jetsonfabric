@@ -1,5 +1,9 @@
 # Native Flash-Decode Benchmark
 
+Follow-up: the
+[shape-aware FFN benchmark](2026-08-02-native-fused-ffn.md) removes most of
+the TTFT gap reported here while preserving the Flash-decode result.
+
 ## Result
 
 JetsonFabric's native Qwen2 CUDA engine now selects Flash Attention for both

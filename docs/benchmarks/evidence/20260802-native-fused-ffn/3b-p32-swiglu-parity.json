@@ -1,0 +1,22 @@
+{
+  "engine": "jetsonfabric-native",
+  "backend": "cuda",
+  "reference_prefill_attention_kernel": "unfused",
+  "candidate_prefill_attention_kernel": "flash",
+  "reference_decode_attention_kernel": "unfused",
+  "candidate_decode_attention_kernel": "flash",
+  "prompt_token_count": 32,
+  "decode_steps": 4,
+  "vocabulary_size": 151936,
+  "argmax_match": true,
+  "normalized_rmse": 0.020757410,
+  "cosine_similarity": 0.999852701,
+  "max_absolute_error": 0.322890759,
+  "steps": [
+    {"phase": "prefill", "decode_step": 0, "reference_argmax": 12522, "candidate_argmax": 12522, "normalized_rmse": 0.020757410, "cosine_similarity": 0.999852701, "max_absolute_error": 0.322890759},
+    {"phase": "decode", "decode_step": 1, "reference_argmax": 5193, "candidate_argmax": 5193, "normalized_rmse": 0.010058962, "cosine_similarity": 0.999950191, "max_absolute_error": 0.267274559},
+    {"phase": "decode", "decode_step": 2, "reference_argmax": 264, "candidate_argmax": 264, "normalized_rmse": 0.013886719, "cosine_similarity": 0.999908703, "max_absolute_error": 0.228954315},
+    {"phase": "decode", "decode_step": 3, "reference_argmax": 882, "candidate_argmax": 882, "normalized_rmse": 0.011284348, "cosine_similarity": 0.999936513, "max_absolute_error": 0.303972721},
+    {"phase": "decode", "decode_step": 4, "reference_argmax": 12522, "candidate_argmax": 12522, "normalized_rmse": 0.011664885, "cosine_similarity": 0.999932199, "max_absolute_error": 0.211588264}
+  ]
+}

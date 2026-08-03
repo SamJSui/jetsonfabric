@@ -24,6 +24,7 @@ namespace {
 
 constexpr std::size_t kGraphSize = 8192;
 constexpr std::size_t kFlashAttentionKvAlignment = 256;
+constexpr std::int64_t kMinFusedSwiGLUElements = 10'000;
 
 constexpr std::size_t physical_cache_capacity(
     std::size_t logical_capacity,
@@ -424,8 +425,14 @@ private:
         const std::string prefix = "blk." + std::to_string(layer) + ".";
         ggml_tensor * up = linear(prefix + "ffn_up.weight", input);
         ggml_tensor * gate = linear(prefix + "ffn_gate.weight", input);
-        gate = ggml_silu(context_.get(), gate);
-        return linear(prefix + "ffn_down.weight", ggml_mul(context_.get(), gate, up));
+        // Small decode vectors are faster as separate kernels on Orin.
+        ggml_tensor * activated;
+        if (ggml_nelements(gate) >= kMinFusedSwiGLUElements) {
+            activated = ggml_swiglu_split(context_.get(), gate, up);
+        } else {
+            activated = ggml_mul(context_.get(), ggml_silu(context_.get(), gate), up);
+        }
+        return linear(prefix + "ffn_down.weight", activated);
     }
 
     void build() {
