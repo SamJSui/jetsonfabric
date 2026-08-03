@@ -90,7 +90,10 @@ TensorStore::TensorStore(
         "read JFM source identity"
     );
     source_sha256_ = sha256_hex(source_sha);
-    weight_bytes_ = jf_model_get_stats(model.get()).selected_weight_bytes;
+    const jf_model_stats stats = jf_model_get_stats(model.get());
+    weight_bytes_ = stats.selected_weight_bytes;
+    total_weight_bytes_ = stats.total_weight_bytes;
+    tensor_count_ = stats.selected_tensor_count;
     create_tensors(model.get());
     buffer_.reset(ggml_backend_alloc_ctx_tensors(context_.get(), backend_.get()));
     if (!buffer_) {

@@ -35,6 +35,8 @@ public:
     ggml_tensor * require(const std::string& name) const;
     std::uint32_t vocabulary_size() const;
     std::uint64_t weight_bytes() const { return weight_bytes_; }
+    std::uint64_t total_weight_bytes() const { return total_weight_bytes_; }
+    std::uint64_t tensor_count() const { return tensor_count_; }
     std::span<const std::byte> gguf_metadata() const { return metadata_; }
     const std::string& source_sha256() const { return source_sha256_; }
     const std::string& backend_name() const { return backend_name_; }
@@ -59,6 +61,8 @@ private:
     std::string backend_name_;
     std::string device_name_;
     std::uint64_t weight_bytes_ = 0;
+    std::uint64_t total_weight_bytes_ = 0;
+    std::uint64_t tensor_count_ = 0;
 };
 
 } // namespace jetsonfabric::native

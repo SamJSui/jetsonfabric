@@ -2,13 +2,18 @@
 
 #include "adapters/llama_cpp_adapter.hpp"
 #include "adapters/llama_cpp_model.hpp"
+#include "adapters/llama_cpp_tokenizer.hpp"
+#include "adapters/native_stage_executor.hpp"
 #include "pipeline_parallel/continuous_batching_executor.hpp"
 #include "pipeline_parallel/llama_cpp_full_model_executor.hpp"
 #include "pipeline_parallel/llama_cpp_stage_executor.hpp"
 #include "pipeline_parallel/synthetic_activation_executor.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <memory>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 namespace jetsonfabric::runtime {
@@ -143,11 +148,83 @@ InferenceEngineParts create_synthetic_engine(const Config&) {
     };
 }
 
+std::string lowercase(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    return value;
+}
+
+InferenceEngineParts create_native_engine(const Config& config) {
+    if (config.model_path.empty()) {
+        throw std::invalid_argument("native engine requires a JFM package path");
+    }
+    const native::Backend backend = config.compute_backend == "cuda"
+        ? native::Backend::Cuda
+        : native::Backend::Cpu;
+    const int threads = config.threads > 0
+        ? config.threads
+        : static_cast<int>(std::max(1U, std::thread::hardware_concurrency()));
+    auto engine = std::make_shared<native::NativeEngine>(
+        config.model_path,
+        backend,
+        threads
+    );
+    const native::ModelInfo info = engine->model_info();
+    if (!config.model_sha256.empty() &&
+        lowercase(config.model_sha256) != lowercase(info.source_sha256)) {
+        throw std::invalid_argument(
+            "native JFM source SHA-256 does not match the deployment model"
+        );
+    }
+    if (config.stage_assignment.layer_start != 0 ||
+        config.stage_assignment.layer_end != static_cast<int>(info.layer_count)) {
+        throw std::invalid_argument(
+            "native serving currently requires the complete model layer range"
+        );
+    }
+    auto tokenizer = std::make_shared<adapters::LlamaCppTokenizer>(config.model_path);
+    inference::StagePosition position{
+        .index = config.stage_assignment.stage_index,
+        .count = config.stage_assignment.stage_count,
+    };
+    inference::LayerRange layers{
+        .start = config.stage_assignment.layer_start,
+        .end = config.stage_assignment.layer_end,
+    };
+    return InferenceEngineParts{
+        .executor = std::make_unique<adapters::NativeStageExecutor>(
+            adapters::NativeStageConfig{
+                .engine = std::move(engine),
+                .tokenizer = std::move(tokenizer),
+                .ctx_size = config.ctx_size,
+                .position = position,
+                .layers = layers,
+            }
+        ),
+        .model_residency = deployment::ModelResidency{
+            .layer_start = layers.start,
+            .layer_end = layers.end,
+            .layer_count = static_cast<int>(info.layer_count),
+            .resident_weight_bytes = info.weight_bytes,
+            .total_weight_bytes = info.total_weight_bytes,
+            .resident_tensor_count = info.tensor_count,
+        },
+        .execution_assignment = pipeline_parallel::StageAssignment{
+            .stage_index = position.index,
+            .stage_count = position.count,
+            .layer_start = layers.start,
+            .layer_end = layers.end,
+        },
+    };
+}
+
 } // namespace
 
 std::shared_ptr<const InferenceEngineFactory> make_default_inference_engine_factory() {
     auto factory = std::make_shared<InferenceEngineFactory>();
     factory->register_engine("llama.cpp", create_llama_cpp_engine);
+    factory->register_engine("native", create_native_engine);
     factory->register_engine("synthetic", create_synthetic_engine);
     return factory;
 }

@@ -36,6 +36,8 @@ struct ModelInfo {
     std::uint32_t context_length = 0;
     std::uint32_t vocabulary_size = 0;
     std::uint64_t weight_bytes = 0;
+    std::uint64_t total_weight_bytes = 0;
+    std::uint64_t tensor_count = 0;
 };
 
 struct PrefillMetrics {
@@ -65,6 +67,30 @@ struct GenerationResult {
     double end_to_end_tokens_per_second = 0.0;
 };
 
+class NativeSession {
+public:
+    ~NativeSession();
+
+    NativeSession(NativeSession&&) noexcept;
+    NativeSession& operator=(NativeSession&&) noexcept;
+
+    NativeSession(const NativeSession&) = delete;
+    NativeSession& operator=(const NativeSession&) = delete;
+
+    std::size_t capacity() const;
+    std::size_t position() const;
+    std::int32_t prefill_greedy(std::span<const std::int32_t> tokens);
+    std::int32_t decode_greedy(std::int32_t token);
+    void rollback(std::size_t token_count);
+
+private:
+    class Impl;
+    explicit NativeSession(std::unique_ptr<Impl> impl);
+
+    std::unique_ptr<Impl> impl_;
+    friend class NativeEngine;
+};
+
 class NativeEngine {
 public:
     NativeEngine(const std::string& package_path, Backend backend, int threads);
@@ -81,6 +107,8 @@ public:
     AttentionKernel prefill_attention_kernel() const;
     AttentionKernel decode_attention_kernel() const;
     double load_time_ms() const;
+
+    std::unique_ptr<NativeSession> create_session(std::size_t capacity);
 
     std::vector<float> logits(std::span<const std::int32_t> tokens);
     std::vector<std::vector<float>> forced_decode_logits(

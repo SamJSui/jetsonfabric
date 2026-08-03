@@ -51,6 +51,7 @@ JFM_INFERENCE_WARMUPS ?= 1
 JFM_INFERENCE_ITERATIONS ?= 3
 JFM_EXPECTED_TOKENS ?=
 JFM_DECODE_POLICY ?= incremental
+JF_ENGINE ?= llama.cpp
 
 # Node defaults: multi-instance safe.
 NODE_NAME ?=
@@ -156,7 +157,8 @@ help:
 	@printf '  make bench BENCH_MANIFEST=...    Run a reproducible benchmark suite\n'
 	@printf '  make clean                       Remove generated build artifacts\n\n'
 	@printf 'Common knobs:\n'
-	@printf '  MODEL_PATH=models/model.gguf\n'
+	@printf '  MODEL_PATH=models/model.gguf      GGUF file, or JFM directory for native\n'
+	@printf '  NODE_ENGINE=native                Serve a compiled JFM package\n'
 	@printf '  RUNTIME_STAGE_TRANSPORT=http_binary_v1\n'
 	@printf '  RUNTIME_ACTIVATION_ENCODING=f32  Use f16 to halve inter-stage payload bytes\n'
 	@printf '  RUNTIME_KV_CACHE_TYPE=f16        Use q8_0 to halve llama.cpp KV cache bytes\n'
@@ -193,6 +195,7 @@ test-integration-single:
 	NODE_BIN="$(NODE_BIN)" \
 	RUNTIME_BUILD_JOBS="$(RUNTIME_BUILD_JOBS)" \
 	JF_NODE0_PORT="$(JF_NODE0_PORT)" \
+	JF_ENGINE="$(JF_ENGINE)" \
 	JF_EXPECTED_TOKENS="$(JF_EXPECTED_TOKENS)" \
 	bash scripts/local/validate-single-node.sh
 
@@ -418,9 +421,9 @@ run-runtime:
 		printf '  make run-runtime MODEL_PATH=models/model.gguf\n' >&2; \
 		exit 2; \
 	fi
-	@if [ ! -f "$(MODEL_PATH)" ]; then \
+	@if [ ! -e "$(MODEL_PATH)" ]; then \
 		printf 'MODEL_PATH does not exist: %s\n' "$(MODEL_PATH)" >&2; \
-		printf 'Find one with: find . -type f -name "*.gguf"\n' >&2; \
+		printf 'Set MODEL_PATH to a GGUF file or JFM package directory.\n' >&2; \
 		exit 2; \
 	fi
 	JETSONFABRIC_CLUSTER_TOKEN="$(JETSONFABRIC_CLUSTER_TOKEN)" $(RUNTIME_BIN) \

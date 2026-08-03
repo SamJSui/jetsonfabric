@@ -9,6 +9,36 @@
 
 namespace jetsonfabric::native {
 
+class NativeSession::Impl {
+public:
+    explicit Impl(std::unique_ptr<InferenceSession> session_in)
+        : session(std::move(session_in)) {
+        if (!session) throw std::invalid_argument("native session is required");
+    }
+
+    std::unique_ptr<InferenceSession> session;
+};
+
+NativeSession::NativeSession(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+NativeSession::~NativeSession() = default;
+NativeSession::NativeSession(NativeSession&&) noexcept = default;
+NativeSession& NativeSession::operator=(NativeSession&&) noexcept = default;
+
+std::size_t NativeSession::capacity() const { return impl_->session->capacity(); }
+std::size_t NativeSession::position() const { return impl_->session->position(); }
+
+std::int32_t NativeSession::prefill_greedy(std::span<const std::int32_t> tokens) {
+    return impl_->session->prefill_greedy(tokens).token;
+}
+
+std::int32_t NativeSession::decode_greedy(std::int32_t token) {
+    return impl_->session->decode_greedy(token);
+}
+
+void NativeSession::rollback(std::size_t token_count) {
+    impl_->session->rollback(token_count);
+}
+
 class NativeEngine::Impl {
 public:
     Impl(const std::string& package_path, EngineOptions options)
@@ -26,6 +56,8 @@ public:
         info.compute_device = tensors.device_name();
         info.vocabulary_size = tensors.vocabulary_size();
         info.weight_bytes = tensors.weight_bytes();
+        info.total_weight_bytes = tensors.total_weight_bytes();
+        info.tensor_count = tensors.tensor_count();
     }
 
     TensorStore tensors;
@@ -75,6 +107,21 @@ AttentionKernel NativeEngine::decode_attention_kernel() const {
     return impl_->decode_attention_kernel;
 }
 double NativeEngine::load_time_ms() const { return load_time_ms_; }
+
+std::unique_ptr<NativeSession> NativeEngine::create_session(std::size_t capacity) {
+    if (capacity == 0 || capacity > impl_->info.context_length) {
+        throw std::invalid_argument("native session capacity is outside model context");
+    }
+    auto session = impl_->architecture->create_session(
+        impl_->tensors,
+        capacity,
+        impl_->prefill_attention_kernel,
+        impl_->decode_attention_kernel
+    );
+    return std::unique_ptr<NativeSession>(new NativeSession(
+        std::make_unique<NativeSession::Impl>(std::move(session))
+    ));
+}
 
 void NativeEngine::release_session() { impl_->session.reset(); }
 

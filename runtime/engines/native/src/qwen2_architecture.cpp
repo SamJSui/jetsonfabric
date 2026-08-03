@@ -680,9 +680,18 @@ public:
     }
 
     std::size_t capacity() const override { return capacity_; }
+    std::size_t position() const override { return position_; }
     void reset() override {
         position_ = 0;
+        prefill_position_ = 0;
         decode_greedy_graph_.reset();
+    }
+
+    void rollback(std::size_t token_count) override {
+        if (token_count == 0 || token_count > position_ - prefill_position_) {
+            throw std::invalid_argument("native Qwen2 rollback exceeds the decoded suffix");
+        }
+        position_ -= token_count;
     }
 
     std::vector<float> prefill_logits(
@@ -696,6 +705,7 @@ public:
             InputKind::Prefill, prefill_attention_kernel_
         ).compute_logits(tokens, 0);
         position_ += tokens.size();
+        prefill_position_ = position_;
         return output;
     }
 
@@ -723,6 +733,7 @@ public:
             tokens, 0, &graph_timings
         );
         position_ += tokens.size();
+        prefill_position_ = position_;
         return PrefillResult{
             .token = token,
             .metrics = PrefillMetrics{
@@ -854,6 +865,7 @@ private:
     AttentionKernel prefill_attention_kernel_;
     AttentionKernel decode_attention_kernel_;
     std::size_t position_ = 0;
+    std::size_t prefill_position_ = 0;
     ggml_context_ptr cache_context_;
     ggml_backend_buffer_ptr cache_buffer_;
     ggml_backend_sched_ptr prefill_scheduler_;

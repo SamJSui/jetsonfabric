@@ -147,6 +147,25 @@ if(BUILD_TESTING)
     -Wpedantic
   )
   target_link_libraries(jf-model-fixture PRIVATE ggml)
+
+  add_executable(jetsonfabric-native-serving-test
+    inference/stage.cpp
+    inference/token_payload.cpp
+    adapters/native_stage_executor.cpp
+    adapters/native_stage_executor_test.cpp
+  )
+  target_include_directories(jetsonfabric-native-serving-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-native-serving-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  target_link_libraries(jetsonfabric-native-serving-test PRIVATE
+    jetsonfabric-native-inference
+  )
+
   add_test(
     NAME native-model-compiler
     COMMAND ${CMAKE_COMMAND}
@@ -154,6 +173,7 @@ if(BUILD_TESTING)
       -DCOMPILER_BIN=$<TARGET_FILE:jf-model-compile>
       -DBENCH_BIN=$<TARGET_FILE:jf-native-model-bench>
       -DINFERENCE_BENCH_BIN=$<TARGET_FILE:jf-native-inference-bench>
+      -DSERVING_TEST_BIN=$<TARGET_FILE:jetsonfabric-native-serving-test>
       -DWORK_DIR=/tmp/jetsonfabric-native-model-compiler-test
       -P ${CMAKE_CURRENT_SOURCE_DIR}/compiler/compiler_integration_test.cmake
   )
@@ -170,6 +190,7 @@ set(JF_RUNTIME_SOURCES
   api/http_server.cpp
 
   inference/stage.cpp
+  inference/token_payload.cpp
 
   deployment/model_manager.cpp
 
@@ -182,7 +203,9 @@ set(JF_RUNTIME_SOURCES
   adapters/llama_cpp_model.cpp
   adapters/llama_cpp_adapter.cpp
   adapters/llama_cpp_stage_adapter.cpp
+  adapters/llama_cpp_tokenizer.cpp
   adapters/llama_cpp_tensor_parallel.cpp
+  adapters/native_stage_executor.cpp
 
   tensor_parallel/device_mesh.cpp
 
@@ -230,6 +253,7 @@ target_compile_definitions(jetsonfabric-runtime-worker PRIVATE
 target_link_libraries(jetsonfabric-runtime-worker PRIVATE
   nlohmann_json::nlohmann_json
   ${JF_LLAMA_TARGET}
+  jetsonfabric-native-inference
 )
 
 if(GGML_CUDA)
@@ -760,6 +784,7 @@ if(BUILD_TESTING)
 
   add_executable(jetsonfabric-llama-stage-test
     inference/stage.cpp
+    inference/token_payload.cpp
     tensor_parallel/device_mesh.cpp
     adapters/llama_cpp_model.cpp
     adapters/llama_cpp_adapter.cpp

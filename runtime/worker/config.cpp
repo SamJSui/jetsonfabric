@@ -147,6 +147,35 @@ void validate_deployment_config(const Config& cfg) {
         throw std::invalid_argument("--model must not be empty");
     }
     validate_engine_config(cfg);
+    if (cfg.engine == "native") {
+        if (cfg.mode != ExecutionMode::PipelineParallel) {
+            throw std::invalid_argument(
+                "native serving currently requires --mode pipeline_parallel"
+            );
+        }
+        if (cfg.stage_assignment.stage_index != 0 ||
+            cfg.stage_assignment.stage_count != 1) {
+            throw std::invalid_argument(
+                "native serving currently requires one logical stage at index zero"
+            );
+        }
+        if (cfg.compute_backend != "cpu" && cfg.compute_backend != "cuda") {
+            throw std::invalid_argument("native compute backend must be cpu or cuda");
+        }
+        if (cfg.decode_batch_size != 1) {
+            throw std::invalid_argument(
+                "native serving currently requires --decode-batch-size 1"
+            );
+        }
+        if (cfg.kv_cache_type != KVCacheType::F16) {
+            throw std::invalid_argument("native serving currently requires --kv-cache-type f16");
+        }
+        if (cfg.speculative_draft != "none") {
+            throw std::invalid_argument(
+                "native serving does not yet support speculative decoding"
+            );
+        }
+    }
     if (cfg.mode == ExecutionMode::PipelineParallel &&
         cfg.stage_assignment.layer_end <= cfg.stage_assignment.layer_start) {
         throw std::invalid_argument("pipeline_parallel mode requires --layer-end greater than --layer-start");

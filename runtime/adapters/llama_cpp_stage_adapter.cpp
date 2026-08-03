@@ -1,5 +1,7 @@
 #include "adapters/llama_cpp_stage_adapter.hpp"
 
+#include "inference/token_payload.hpp"
+
 #include "llama-ext.h"
 #include "llama.h"
 
@@ -58,43 +60,6 @@ struct BatchOwner {
     BatchOwner& operator=(const BatchOwner&) = delete;
 };
 
-void append_i32_le(std::vector<std::uint8_t>& output, std::int32_t value) {
-    const std::uint32_t bits = static_cast<std::uint32_t>(value);
-    output.push_back(static_cast<std::uint8_t>(bits & 0xffU));
-    output.push_back(static_cast<std::uint8_t>((bits >> 8U) & 0xffU));
-    output.push_back(static_cast<std::uint8_t>((bits >> 16U) & 0xffU));
-    output.push_back(static_cast<std::uint8_t>((bits >> 24U) & 0xffU));
-}
-
-std::int32_t read_i32_le(const std::uint8_t* data) {
-    const std::uint32_t bits =
-        static_cast<std::uint32_t>(data[0]) |
-        (static_cast<std::uint32_t>(data[1]) << 8U) |
-        (static_cast<std::uint32_t>(data[2]) << 16U) |
-        (static_cast<std::uint32_t>(data[3]) << 24U);
-    return static_cast<std::int32_t>(bits);
-}
-
-std::vector<std::int32_t> decode_tokens(const inference::Payload& payload) {
-    if ((payload.tensor.dtype != "i32" && payload.tensor.dtype != "u32") ||
-        payload.tensor.shape.size() != 1 || payload.bytes.size() % 4U != 0U) {
-        throw std::invalid_argument("token payload must be a little-endian i32 or u32 vector");
-    }
-    std::vector<std::int32_t> tokens(payload.bytes.size() / 4U);
-    for (std::size_t index = 0; index < tokens.size(); ++index) {
-        tokens[index] = read_i32_le(payload.bytes.data() + index * 4U);
-    }
-    return tokens;
-}
-
-std::int32_t decode_sampled_token(const inference::Payload& payload) {
-    if ((payload.tensor.dtype != "i32" && payload.tensor.dtype != "u32") ||
-        payload.tensor.shape != std::vector<std::int64_t>({1}) || payload.bytes.size() != 4U) {
-        throw std::invalid_argument("sampled_token payload must contain one little-endian i32 or u32 token");
-    }
-    return read_i32_le(payload.bytes.data());
-}
-
 std::size_t activation_token_count(const inference::Payload& payload, int n_embd) {
     if (payload.tensor.dtype != "f32" || payload.tensor.shape.size() != 2 ||
         payload.tensor.shape[1] != n_embd || payload.tensor.shape[0] <= 0) {
@@ -133,33 +98,6 @@ inference::Payload activation_payload(std::vector<std::uint8_t> bytes, std::size
         .layout = "row_major",
     };
     payload.bytes = std::move(bytes);
-    return payload;
-}
-
-inference::Payload sampled_token_payload(std::int32_t token) {
-    inference::Payload payload;
-    payload.kind = inference::PayloadKind::SampledToken;
-    payload.tensor = inference::TensorDescriptor{
-        .dtype = "i32",
-        .shape = {1},
-        .byte_order = "little",
-        .layout = "row_major",
-    };
-    append_i32_le(payload.bytes, token);
-    return payload;
-}
-
-inference::Payload sampled_tokens_payload(const std::vector<std::int32_t>& tokens) {
-    inference::Payload payload;
-    payload.kind = inference::PayloadKind::SampledTokens;
-    payload.tensor = inference::TensorDescriptor{
-        .dtype = "i32",
-        .shape = {static_cast<std::int64_t>(tokens.size())},
-        .byte_order = "little",
-        .layout = "row_major",
-    };
-    payload.bytes.reserve(tokens.size() * sizeof(std::int32_t));
-    for (const std::int32_t token : tokens) append_i32_le(payload.bytes, token);
     return payload;
 }
 
@@ -342,10 +280,10 @@ struct LlamaCppStageAdapter::Impl {
             ));
         }
         if (input.payload.kind == inference::PayloadKind::Tokens) {
-            return decode_tokens(input.payload);
+            return inference::decode_token_ids(input.payload);
         }
         if (input.payload.kind == inference::PayloadKind::SampledToken) {
-            return {decode_sampled_token(input.payload)};
+            return {inference::decode_single_token(input.payload)};
         }
         throw std::invalid_argument("first llama.cpp stage requires text, tokens, or sampled_token input");
     }
@@ -400,7 +338,7 @@ struct LlamaCppStageAdapter::Impl {
         const int n_vocab = config.model->n_vocab();
         const auto best = std::max_element(logits, logits + n_vocab);
         const std::int32_t token = static_cast<std::int32_t>(std::distance(logits, best));
-        output.payload = sampled_token_payload(token);
+        output.payload = inference::sampled_token_payload(token);
         output.end_of_generation = config.model->is_end_token(token);
         if (!output.end_of_generation) {
             output.token_text = config.model->token_piece(token);
@@ -443,7 +381,7 @@ struct LlamaCppStageAdapter::Impl {
                 static_cast<std::uint32_t>(output.token_text.size())
             );
         }
-        output.payload = sampled_tokens_payload(tokens);
+        output.payload = inference::sampled_tokens_payload(tokens);
         return inference::ExecutionResult::success(std::move(output));
     }
 
@@ -843,7 +781,7 @@ struct LlamaCppStageAdapter::Impl {
             const inference::StageInput& input = inputs[valid[row]];
             SharedSession& session = shared_sessions.at(input.session_id);
             if (config.position.is_first()) {
-                batch.batch.token[row] = decode_sampled_token(input.payload);
+                batch.batch.token[row] = inference::decode_single_token(input.payload);
             } else {
                 if (activation_token_count(input.payload, config.model->n_embd()) != 1U) {
                     throw std::invalid_argument(
