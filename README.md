@@ -37,16 +37,17 @@ and lifecycle coordination. C++ owns model execution, partial-layer residency,
 stage-local KV caches, sampling, and direct runtime transport. The coordinator
 selects the route once; it is not in the token-by-token data path.
 
-The production serving path currently uses a pinned `llama.cpp` integration.
-An experimental JetsonFabric-native Qwen2 engine uses GGML/GGML-CUDA directly
-and is being validated before it is registered for serving. This boundary keeps
-engine and transport implementations replaceable without changing the node API.
+The default serving path uses a pinned `llama.cpp` integration. A selectable
+JetsonFabric-native Qwen2 engine now serves full-model, single-node requests
+through the same API using GGML/GGML-CUDA directly. This boundary keeps engine
+and transport implementations replaceable without changing the node API.
 
 Implemented behavior includes:
 
 - identical nodes with static and mDNS discovery and deterministic election;
 - versioned deployment plans with model hashes, epochs, and layer assignments;
 - partial-layer Llama and Qwen2 execution with stage-local weight residency;
+- full-model native Qwen2 serving from integrity-checked JFM packages;
 - dynamic load, activate, drain, unload, and runtime-restart repair;
 - F32 and F16 activation codecs over direct or relayed Stagewire transport;
 - optional continuous decode batching, prompt-lookup speculation, and
@@ -182,8 +183,8 @@ or mutable node state.
 
 ## Current Focus
 
-1. Register the native engine for serving after tokenizer, lifecycle, and
-   distributed-stage parity are measured.
+1. Extend the native engine from full-model serving to partial-layer residency
+   and physical two-node stage execution.
 2. Harden admission around weights, KV cache, activations, compute buffers,
    fragmentation, and deployment replacement overlap.
 3. Improve packaging, model distribution, recovery tests, and trusted-cluster

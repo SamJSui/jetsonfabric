@@ -1,6 +1,7 @@
 if(NOT DEFINED FIXTURE_BIN OR NOT DEFINED COMPILER_BIN OR NOT DEFINED BENCH_BIN OR
-   NOT DEFINED INFERENCE_BENCH_BIN OR NOT DEFINED WORK_DIR)
-  message(FATAL_ERROR "fixture, compiler, load benchmark, inference benchmark, and work directory are required")
+   NOT DEFINED INFERENCE_BENCH_BIN OR NOT DEFINED SERVING_TEST_BIN OR
+   NOT DEFINED WORK_DIR)
+  message(FATAL_ERROR "fixture, compiler, benchmarks, serving test, and work directory are required")
 endif()
 
 file(REMOVE_RECURSE "${WORK_DIR}")
@@ -77,6 +78,16 @@ if(NOT QWEN_OUTPUT MATCHES "\"engine\": \"jetsonfabric-native\"" OR
    NOT QWEN_OUTPUT MATCHES "\"prefill_scratch_bytes\":" OR
    NOT QWEN_OUTPUT MATCHES "\"decode_policy\": \"incremental\"")
   message(FATAL_ERROR "native Qwen benchmark returned unexpected output: ${QWEN_OUTPUT}")
+endif()
+
+execute_process(
+  COMMAND "${SERVING_TEST_BIN}" "${WORK_DIR}/fixture.jfm"
+  RESULT_VARIABLE SERVING_RESULT
+  OUTPUT_VARIABLE SERVING_OUTPUT
+  ERROR_VARIABLE SERVING_ERROR
+)
+if(NOT SERVING_RESULT EQUAL 0)
+  message(FATAL_ERROR "native serving lifecycle failed: ${SERVING_OUTPUT}${SERVING_ERROR}")
 endif()
 
 execute_process(

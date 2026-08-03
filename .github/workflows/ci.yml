@@ -269,6 +269,23 @@ jobs:
       - name: Run native runtime unit tests
         run: ctest --test-dir "$CI_RUNTIME_BUILD_DIR" --output-on-failure
 
+      - name: Run native single-node real-model E2E
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p .ci-logs/native-single-node
+          MODEL_PATH="$CI_QWEN_MODEL_PATH" \
+          MODEL_ID=ci-qwen2.5-0.5b-instruct \
+          RUNTIME_BUILD_DIR="$CI_RUNTIME_BUILD_DIR" \
+          RUNTIME_BIN=dist/jetsonfabric-runtime-worker-ci-cpu \
+          NODE_BIN=dist/jetsonfabric-node \
+          JF_SKIP_BUILD=true \
+          JF_ENGINE=native \
+          JF_NODE0_PORT=18680 \
+          JF_MAX_TOKENS=4 \
+          bash scripts/local/validate-single-node.sh \
+            2>&1 | tee .ci-logs/native-single-node/step.log
+
       - name: Run benchmark client unit tests
         run: |
           python3 -m unittest \

@@ -22,6 +22,7 @@ struct Config {
     std::string activation_encoding = "f32";
     std::string compute_backend = "cuda";
     std::string model_path;
+    std::string model_sha256;
     int ctx_size = 4096;
     int ubatch_size = 512;
     KVCacheType kv_cache_type = KVCacheType::F16;

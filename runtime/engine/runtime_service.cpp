@@ -169,6 +169,7 @@ DecodedLoadRequest decode_load_request(const Config& base, const std::string& re
     request.config = base;
     request.config.start_idle = false;
     request.config.model = request.identity.model_id;
+    request.config.model_sha256 = request.identity.model_sha256;
     request.config.engine = optional_string(body, "engine", request.config.engine);
     const std::string activation_encoding = optional_string(
         body,

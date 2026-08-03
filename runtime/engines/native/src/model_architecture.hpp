@@ -22,7 +22,9 @@ public:
     virtual ~InferenceSession() = default;
 
     virtual std::size_t capacity() const = 0;
+    virtual std::size_t position() const = 0;
     virtual void reset() = 0;
+    virtual void rollback(std::size_t token_count) = 0;
     virtual std::vector<float> prefill_logits(
         std::span<const std::int32_t> tokens
     ) = 0;

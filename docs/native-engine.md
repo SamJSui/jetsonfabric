@@ -2,14 +2,12 @@
 
 The native engine isolates the model hot path from node orchestration and from
 `libllama`. It includes an offline GGUF importer, a dependency-light C loader,
-and an experimental architecture-selected inference path over GGML backends.
+and an architecture-selected inference path over GGML backends.
 
-It is not yet registered as a serving engine. The first architecture strategy
-implements Qwen2/Qwen2.5 attention, FFN, logits, optional output bias, greedy
-token selection, and incremental F16 KV caching. It currently accepts token
-IDs and loads the full model on one node. llama.cpp remains the serving
-implementation and correctness oracle until tokenizer, lifecycle, and
-distributed-stage parity gates pass.
+The `native` serving engine implements Qwen2/Qwen2.5 attention, FFN, logits,
+optional output bias, greedy token selection, and incremental F16 KV caching.
+It currently serves a full model on one node. llama.cpp remains the default
+engine and correctness oracle while native partial-layer execution is built.
 
 ## Boundaries
 
@@ -18,7 +16,7 @@ jetsonfabric-node (Go)
   -> jetsonfabric-runtime-worker (C++)
       -> inference::Executor
           -> llama.cpp executor (current serving path)
-          -> native executor (after parity gates)
+          -> native executor (full-model serving)
               -> NativeEngine
                   -> TensorStore (JFM integrity, tensors, GGML backend)
                   -> ArchitectureRegistry
@@ -33,9 +31,10 @@ backend selection, generation control, or benchmark reporting.
 
 The C loader does not depend on Go, HTTP, JSON, discovery, coordinator state,
 GGML, or llama.cpp. The offline compiler uses the pinned GGUF parser only to
-import metadata and copy the original quantized tensor bytes. Experimental
-inference uses JetsonFabric-owned graphs over GGML/GGML-CUDA, but does not link
-or call `libllama`.
+import metadata and copy the original quantized tensor bytes. Native inference
+uses JetsonFabric-owned graphs over GGML/GGML-CUDA and does not call
+`libllama`. The serving adapter temporarily uses llama.cpp's vocabulary code to
+tokenize preserved `metadata.gguf`; it does not load a second copy of weights.
 
 ## Package Format
 
@@ -91,6 +90,34 @@ The destination must not already exist. The importer locks one source file
 descriptor, verifies its SHA-256 before and after conversion, fsyncs an
 exclusive staging directory, and atomically publishes the completed package.
 An interrupted import cannot expose a partial destination.
+
+## Native Serving
+
+Select the native engine with `NODE_ENGINE=native` and pass the compiled JFM
+directory as `MODEL_PATH`. M2 requires one stage containing the complete layer
+range:
+
+```bash
+make run-node \
+  NODE_ENGINE=native \
+  MODEL=qwen2.5-coder-1.5b-q4 \
+  MODEL_PATH=/var/lib/jetsonfabric/models/model.jfm \
+  STAGE_INDEX=0 \
+  STAGE_COUNT=1 \
+  LAYER_START=0 \
+  LAYER_END=28
+```
+
+The node reads the source GGUF SHA-256 from `manifest.jfm`, so registry and
+deployment identity remains the same before and after compilation. To compile
+a temporary package and verify real text generation against llama.cpp greedy
+tokens through the node API, run:
+
+```bash
+MODEL_PATH=/var/lib/jetsonfabric/models/model.gguf \
+JF_ENGINE=native \
+bash scripts/local/validate-single-node.sh
+```
 
 ## Loader Benchmark
 
@@ -182,8 +209,8 @@ prompt-token, or generated-token mismatch.
 
 ## Native Serving Gates
 
-The native implementation becomes selectable through `inference::Executor`
-only after all of these are true for one supported architecture:
+The first three gates enabled the current full-model serving path. Remaining
+gates control the move to distributed native execution:
 
 1. Greedy token IDs match llama.cpp for fixed real-model prompts on CPU and CUDA.
 2. Logits stay within a documented tolerance.

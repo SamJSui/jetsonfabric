@@ -4,6 +4,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MODEL_PATH="${MODEL_PATH:?MODEL_PATH must point to the GGUF to validate}"
 MODEL_ID="${MODEL_ID:-qwen2.5-coder-1.5b-q4}"
+ENGINE="${JF_ENGINE:-llama.cpp}"
 RAW_PROMPT="${JF_RAW_PROMPT:-Once upon a time}"
 CHAT_PROMPT="${JF_CHAT_PROMPT:-Hi}"
 MAX_TOKENS="${JF_MAX_TOKENS:-4}"
@@ -11,6 +12,7 @@ EXPECTED_TOKENS="${JF_EXPECTED_TOKENS:-}"
 NODE_PORT="${JF_NODE0_PORT:-19180}"
 RUNTIME_BUILD_DIR="${RUNTIME_BUILD_DIR:-$ROOT_DIR/runtime/build-single-cpu}"
 RUNTIME_BIN="${RUNTIME_BIN:-$ROOT_DIR/dist/jetsonfabric-runtime-worker-single-cpu}"
+MODEL_COMPILER_BIN="${MODEL_COMPILER_BIN:-$RUNTIME_BUILD_DIR/jf-model-compile}"
 NODE_BIN="${NODE_BIN:-$ROOT_DIR/dist/jetsonfabric-node}"
 CLUSTER_TOKEN="${JF_CLUSTER_TOKEN:-jetsonfabric-integration-token}"
 WORK_DIR="$(mktemp -d)"
@@ -58,6 +60,10 @@ if [[ "$(head -c 4 "$MODEL_PATH")" != "GGUF" ]]; then
   exit 2
 fi
 MODEL_PATH="$(cd "$(dirname "$MODEL_PATH")" && pwd)/$(basename "$MODEL_PATH")"
+if [[ "$ENGINE" != "llama.cpp" && "$ENGINE" != "native" ]]; then
+  echo "JF_ENGINE must be llama.cpp or native" >&2
+  exit 2
+fi
 
 cd "$ROOT_DIR"
 if [[ "${JF_SKIP_BUILD:-false}" != "true" ]]; then
@@ -76,6 +82,16 @@ for binary in "$RUNTIME_BIN" "$NODE_BIN" "$STAGE_TEST_BIN"; do
     exit 2
   fi
 done
+
+RUNTIME_MODEL_PATH="$MODEL_PATH"
+if [[ "$ENGINE" == "native" ]]; then
+  if [[ ! -x "$MODEL_COMPILER_BIN" ]]; then
+    echo "native model compiler is missing: $MODEL_COMPILER_BIN" >&2
+    exit 2
+  fi
+  RUNTIME_MODEL_PATH="$WORK_DIR/model.jfm"
+  "$MODEL_COMPILER_BIN" --input "$MODEL_PATH" --output "$RUNTIME_MODEL_PATH"
+fi
 
 LAYER_COUNT="$(CI_MODEL_PATH="$MODEL_PATH" "$STAGE_TEST_BIN" --print-layer-count)"
 BASELINE_TOKENS="$(
@@ -103,7 +119,7 @@ cat >"$MODEL_REGISTRY" <<JSON
   "models": [{
     "id": "$MODEL_ID",
     "family": "llm",
-    "supported_engines": ["llama.cpp"],
+    "supported_engines": ["$ENGINE"],
     "layer_count": $LAYER_COUNT,
     "min_memory_gb": 0,
     "preferred_compute": null,
@@ -127,9 +143,9 @@ JETSONFABRIC_CLUSTER_TOKEN="$CLUSTER_TOKEN" "$NODE_BIN" \
   --runtime-ctx-size "${JF_CTX_SIZE:-256}" \
   --runtime-n-gpu-layers 0 \
   --runtime-threads "${JF_RUNTIME_THREADS:-2}" \
-  --engine llama.cpp \
+  --engine "$ENGINE" \
   --model "$MODEL_ID" \
-  --model-path "$MODEL_PATH" \
+  --model-path "$RUNTIME_MODEL_PATH" \
   --stage-index 0 \
   --stage-count 1 \
   --layer-start 0 \
@@ -216,5 +232,6 @@ grep -qi '^X-JetsonFabric-Remote-Stage-Calls: 0' "$CHAT_HEADERS"
 
 echo "Single-node pipeline validation passed"
 echo "Model: $MODEL_ID"
+echo "Engine: $ENGINE"
 echo "Layers: [0,$LAYER_COUNT)"
 echo "Baseline tokens: $BASELINE_TOKENS"
