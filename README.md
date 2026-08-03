@@ -190,8 +190,8 @@ or mutable node state.
 
 ## Current Focus
 
-1. Remove avoidable F32 activation materialization and measure whether pinned
-   stage buffers improve TTFT or ITL without weakening the transport boundary.
+1. Measure whether pooled or pinned receive buffers remove the remaining
+   StageWire decode copy and improve TTFT or ITL without weakening the protocol.
 2. Harden admission around weights, KV cache, activations, compute buffers,
    fragmentation, and deployment replacement overlap.
 3. Improve packaging, model distribution, recovery tests, and trusted-cluster
