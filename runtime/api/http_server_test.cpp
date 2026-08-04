@@ -182,7 +182,12 @@ public:
         return ok();
     }
     jetsonfabric::runtime::RuntimeResponse run_stage(const std::string&) const override {
-        return ok();
+        return {
+            "200 OK",
+            "application/octet-stream",
+            "head-",
+            {'t', 'a', 'i', 'l'},
+        };
     }
 
     jetsonfabric::runtime::RuntimeResponse generate(
@@ -333,6 +338,11 @@ int main() {
         first_stage_response.find("Connection: keep-alive") != std::string::npos &&
             second_stage_response.find("Connection: keep-alive") != std::string::npos,
         "stage requests did not reuse a persistent connection"
+    );
+    expect(
+        first_stage_response.find("head-tail") != std::string::npos &&
+            second_stage_response.find("head-tail") != std::string::npos,
+        "stage response did not preserve its segmented body"
     );
     expect(
         pipelined_responses.find("HTTP/1.1 200 OK") != std::string::npos &&

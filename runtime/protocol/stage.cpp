@@ -316,27 +316,51 @@ DecodedFrame decode_frame(const std::string& frame) {
     return DecodedFrame{std::move(metadata), std::move(payload)};
 }
 
-std::string encode_frame(nlohmann::ordered_json metadata, const std::vector<std::uint8_t>& payload) {
+std::uint32_t crc32(std::span<const std::uint8_t> payload) {
+    std::uint32_t crc = 0xffffffffU;
+    for (const std::uint8_t value : payload) {
+        crc ^= value;
+        for (int bit = 0; bit < 8; ++bit) {
+            const std::uint32_t mask = 0U - (crc & 1U);
+            crc = (crc >> 1U) ^ (0xedb88320U & mask);
+        }
+    }
+    return ~crc;
+}
+
+std::string encode_frame_prefix(
+    nlohmann::ordered_json metadata,
+    std::span<const std::uint8_t> payload,
+    std::uint32_t payload_checksum
+) {
     metadata["protocol_version"] = kStageWireVersion;
     metadata["payload_bytes"] = payload.size();
-    metadata["payload_crc32"] = payload_crc32(payload);
+    metadata["payload_crc32"] = payload_checksum;
     metadata["transport"] = kStageWireTransport;
     const std::string metadata_text = metadata.dump();
     if (metadata_text.size() > kMaxMetadataBytes || payload.size() > kMaxPayloadBytes) {
         throw std::invalid_argument("stagewire frame is too large");
     }
     std::string out;
-    out.reserve(kHeaderSize + metadata_text.size() + payload.size());
+    out.reserve(kHeaderSize + metadata_text.size());
     out.append(kMagic.data(), kMagic.size());
     append_u16_be(out, kStageWireVersion);
     append_u16_be(out, 0);
     append_u32_be(out, static_cast<std::uint32_t>(metadata_text.size()));
     append_u64_be(out, payload.size());
     out.append(metadata_text);
-    if (!payload.empty()) {
-        out.append(reinterpret_cast<const char*>(payload.data()), payload.size());
-    }
     return out;
+}
+
+std::string flatten_frame(
+    std::string prefix,
+    std::span<const std::uint8_t> payload
+) {
+    prefix.reserve(prefix.size() + payload.size());
+    if (!payload.empty()) {
+        prefix.append(reinterpret_cast<const char*>(payload.data()), payload.size());
+    }
+    return prefix;
 }
 
 int validate_max_tokens(int value) {
@@ -357,15 +381,15 @@ bool StageRequest::is_last_stage() const {
 }
 
 std::uint32_t payload_crc32(const std::vector<std::uint8_t>& payload) {
-    std::uint32_t crc = 0xffffffffU;
-    for (const std::uint8_t value : payload) {
-        crc ^= value;
-        for (int bit = 0; bit < 8; ++bit) {
-            const std::uint32_t mask = 0U - (crc & 1U);
-            crc = (crc >> 1U) ^ (0xedb88320U & mask);
-        }
-    }
-    return ~crc;
+    return crc32(payload);
+}
+
+std::string EncodedStageFrameView::flatten() const {
+    return flatten_frame(prefix, payload);
+}
+
+std::string EncodedStageFrame::flatten() const {
+    return flatten_frame(prefix, payload);
 }
 
 std::string json_escape(const std::string& value) {
@@ -413,13 +437,13 @@ StageRequest decode_stage_request(const std::string& frame) {
     return request;
 }
 
-std::string encode_stage_request(StageRequest request, const std::string& operation) {
+EncodedStageFrameView encode_stage_request_frame(
+    const StageRequest& request,
+    const std::string& operation
+) {
     validate_stage_operation(operation, request.rollback_tokens);
-    request.max_tokens = validate_max_tokens(request.max_tokens);
-    request.protocol_version = kStageWireVersion;
-    request.payload_bytes = request.payload.size();
-    request.payload_crc32 = payload_crc32(request.payload);
-    request.transport = kStageWireTransport;
+    const int max_tokens = validate_max_tokens(request.max_tokens);
+    const std::uint32_t payload_checksum = crc32(request.payload);
     validate_tensor_metadata(request.payload_kind, request.encoding, request.dtype, request.shape,
                              request.byte_order, request.layout, request.payload.size());
     validate_deployment_identity(
@@ -429,7 +453,7 @@ std::string encode_stage_request(StageRequest request, const std::string& operat
     );
 
     nlohmann::ordered_json body;
-    body["protocol_version"] = request.protocol_version;
+    body["protocol_version"] = kStageWireVersion;
     body["operation"] = operation;
     body["session_id"] = request.session_id;
     body["request_id"] = request.request_id;
@@ -452,12 +476,22 @@ std::string encode_stage_request(StageRequest request, const std::string& operat
     if (!request.shape.empty()) body["shape"] = request.shape;
     if (!request.byte_order.empty()) body["byte_order"] = request.byte_order;
     if (!request.layout.empty()) body["layout"] = request.layout;
-    body["payload_bytes"] = request.payload_bytes;
-    body["payload_crc32"] = request.payload_crc32;
-    body["transport"] = request.transport;
-    body["max_tokens"] = request.max_tokens;
+    body["payload_bytes"] = request.payload.size();
+    body["payload_crc32"] = payload_checksum;
+    body["transport"] = kStageWireTransport;
+    body["max_tokens"] = max_tokens;
     if (request.rollback_tokens != 0) body["rollback_tokens"] = request.rollback_tokens;
-    return encode_frame(std::move(body), request.payload);
+    return EncodedStageFrameView{
+        .prefix = encode_frame_prefix(std::move(body), request.payload, payload_checksum),
+        .payload = request.payload,
+    };
+}
+
+std::string encode_stage_request(
+    const StageRequest& request,
+    const std::string& operation
+) {
+    return encode_stage_request_frame(request, operation).flatten();
 }
 
 StageResponse decode_stage_response(const std::string& frame) {
@@ -532,15 +566,12 @@ StageResponse decode_stage_response(const std::string& frame) {
     return response;
 }
 
-std::string encode_stage_response(StageResponse response) {
+EncodedStageFrame encode_stage_response_frame(StageResponse response) {
     validate_stage_operation_name(response.operation);
     if (response.execution_batch_size <= 0 || response.verification_width <= 0) {
         throw std::invalid_argument("stage response batch and verification widths must be positive");
     }
-    response.protocol_version = kStageWireVersion;
-    response.payload_bytes = response.payload.size();
-    response.payload_crc32 = payload_crc32(response.payload);
-    response.transport = kStageWireTransport;
+    const std::uint32_t payload_checksum = crc32(response.payload);
     if (response.error.empty()) {
         validate_tensor_metadata(response.payload_kind, response.encoding, response.dtype, response.shape,
                                  response.byte_order, response.layout, response.payload.size());
@@ -552,7 +583,7 @@ std::string encode_stage_response(StageResponse response) {
     );
 
     nlohmann::ordered_json body;
-    body["protocol_version"] = response.protocol_version;
+    body["protocol_version"] = kStageWireVersion;
     body["operation"] = response.operation;
     body["session_id"] = response.session_id;
     body["request_id"] = response.request_id;
@@ -575,9 +606,9 @@ std::string encode_stage_response(StageResponse response) {
     if (!response.shape.empty()) body["shape"] = response.shape;
     if (!response.byte_order.empty()) body["byte_order"] = response.byte_order;
     if (!response.layout.empty()) body["layout"] = response.layout;
-    body["payload_bytes"] = response.payload_bytes;
-    body["payload_crc32"] = response.payload_crc32;
-    body["transport"] = response.transport;
+    body["payload_bytes"] = response.payload.size();
+    body["payload_crc32"] = payload_checksum;
+    body["transport"] = kStageWireTransport;
     if (response.bytes_in != 0) body["bytes_in"] = response.bytes_in;
     if (response.bytes_out != 0) body["bytes_out"] = response.bytes_out;
     if (response.prompt_tokens != 0) body["prompt_tokens"] = response.prompt_tokens;
@@ -613,7 +644,19 @@ std::string encode_stage_response(StageResponse response) {
         body["token_text_offsets"] = response.token_text_offsets;
     }
     if (!response.token_eog.empty()) body["token_eog"] = response.token_eog;
-    return encode_frame(std::move(body), response.payload);
+    std::string prefix = encode_frame_prefix(
+        std::move(body),
+        response.payload,
+        payload_checksum
+    );
+    return EncodedStageFrame{
+        .prefix = std::move(prefix),
+        .payload = std::move(response.payload),
+    };
+}
+
+std::string encode_stage_response(const StageResponse& response) {
+    return encode_stage_response_frame(response).flatten();
 }
 
 } // namespace jetsonfabric::runtime::protocol

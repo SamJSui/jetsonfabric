@@ -648,27 +648,35 @@ void test_generation_protocol_and_stagewire_round_trip() {
     response.token_eog = {0};
     response.prompt_token_ids = {1, 2, 3};
     response.verification_width = 3;
-    const runtime::protocol::StageResponse response_round_trip = runtime::protocol::decode_stage_response(
-        runtime::protocol::encode_stage_response(response)
-    );
-    expect(response_round_trip.payload == response.payload, "stage response payload changed during round trip");
-    expect(response_round_trip.operation == response.operation, "stage response operation changed during round trip");
-    expect(response_round_trip.message == response.message, "stage response token bytes changed during round trip");
+    const runtime::protocol::StageResponse expected_response = response;
+    const std::uint8_t* response_payload = response.payload.data();
+    const runtime::protocol::EncodedStageFrame segmented_response =
+        runtime::protocol::encode_stage_response_frame(std::move(response));
     expect(
-        response_round_trip.token_text_offsets == response.token_text_offsets &&
-            response_round_trip.token_eog == response.token_eog &&
-            response_round_trip.prompt_token_ids == response.prompt_token_ids,
+        segmented_response.payload.data() == response_payload,
+        "segmented stage response copied its payload"
+    );
+    const runtime::protocol::StageResponse response_round_trip = runtime::protocol::decode_stage_response(
+        segmented_response.flatten()
+    );
+    expect(response_round_trip.payload == expected_response.payload, "stage response payload changed during round trip");
+    expect(response_round_trip.operation == expected_response.operation, "stage response operation changed during round trip");
+    expect(response_round_trip.message == expected_response.message, "stage response token bytes changed during round trip");
+    expect(
+        response_round_trip.token_text_offsets == expected_response.token_text_offsets &&
+            response_round_trip.token_eog == expected_response.token_eog &&
+            response_round_trip.prompt_token_ids == expected_response.prompt_token_ids,
         "stage response speculative token metadata changed during round trip"
     );
     expect(
-        response_round_trip.verification_width == response.verification_width,
+        response_round_trip.verification_width == expected_response.verification_width,
         "stage response verification width changed during round trip"
     );
     expect(
-        response_round_trip.execution_us == response.execution_us &&
-            response_round_trip.activation_decode_us == response.activation_decode_us &&
-            response_round_trip.activation_encode_us == response.activation_encode_us &&
-            response_round_trip.stage_total_us == response.stage_total_us,
+        response_round_trip.execution_us == expected_response.execution_us &&
+            response_round_trip.activation_decode_us == expected_response.activation_decode_us &&
+            response_round_trip.activation_encode_us == expected_response.activation_encode_us &&
+            response_round_trip.stage_total_us == expected_response.stage_total_us,
         "stage response timings changed during round trip"
     );
     expect(
@@ -676,6 +684,61 @@ void test_generation_protocol_and_stagewire_round_trip() {
             response_round_trip.deployment_epoch == request.deployment_epoch &&
             response_round_trip.model_sha256 == request.model_sha256,
         "stage response deployment identity changed during round trip"
+    );
+}
+
+void test_stagewire_v2_golden_request_and_segmented_frame() {
+    const std::string metadata =
+        R"({"protocol_version":2,"operation":"execute","session_id":"session-a","request_id":"request-a","model_id":"model-a","phase":"prefill","decode_step":0,"stage_index":0,"stage_count":1,"node_name":"dopey","layer_start":0,"layer_end":8,"payload_kind":"text","encoding":"utf-8","payload_bytes":2,"payload_crc32":3633523372,"transport":"http_binary_v1","max_tokens":128})";
+    const std::array<char, 20> header{
+        'J', 'F', 'S', 'T',
+        0, 2,
+        0, 0,
+        0, 0, 1, 107,
+        0, 0, 0, 0, 0, 0, 0, 2,
+    };
+    std::string golden(header.data(), header.size());
+    golden.append(metadata);
+    golden.append("hi");
+
+    runtime::protocol::StageRequest request;
+    request.session_id = "session-a";
+    request.request_id = "request-a";
+    request.model_id = "model-a";
+    request.stage_index = 0;
+    request.stage_count = 1;
+    request.node_name = "dopey";
+    request.layer_end = 8;
+    request.payload_kind = "text";
+    request.encoding = "utf-8";
+    request.payload = {'h', 'i'};
+
+    const runtime::protocol::EncodedStageFrameView segmented =
+        runtime::protocol::encode_stage_request_frame(
+            request,
+            runtime::protocol::kStageOperationExecute
+        );
+    expect(
+        segmented.payload.data() == request.payload.data(),
+        "segmented stage request copied its payload"
+    );
+    expect(segmented.flatten() == golden, "stage v2 request changed from its golden frame");
+    expect(
+        runtime::protocol::encode_stage_request(
+            request,
+            runtime::protocol::kStageOperationExecute
+        ) == golden,
+        "flattened stage v2 encoder changed from its golden frame"
+    );
+
+    const runtime::protocol::StageRequest decoded =
+        runtime::protocol::decode_stage_request(golden);
+    expect(decoded.payload == request.payload, "golden stage v2 payload did not decode");
+    expect(
+        decoded.session_id == request.session_id &&
+            decoded.request_id == request.request_id &&
+            decoded.layer_end == request.layer_end,
+        "golden stage v2 identity did not decode"
     );
 }
 
@@ -783,6 +846,7 @@ int main() {
         test_generation_propagates_managed_deployment_identity();
         test_cleanup_rejects_mismatched_success_identity();
         test_generation_protocol_and_stagewire_round_trip();
+        test_stagewire_v2_golden_request_and_segmented_frame();
         test_stagewire_rejects_operation_payload_mismatch();
         test_generation_protocol_rejects_inconsistent_plan();
         test_generation_protocol_rejects_empty_prompt();

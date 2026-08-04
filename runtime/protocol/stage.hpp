@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -103,10 +104,34 @@ struct StageResponse {
     std::vector<std::uint8_t> token_eog;
 };
 
+struct EncodedStageFrameView {
+    std::string prefix;
+    std::span<const std::uint8_t> payload;
+
+    std::size_t size() const noexcept { return prefix.size() + payload.size(); }
+    std::string flatten() const;
+};
+
+struct EncodedStageFrame {
+    std::string prefix;
+    std::vector<std::uint8_t> payload;
+
+    std::size_t size() const noexcept { return prefix.size() + payload.size(); }
+    std::string flatten() const;
+};
+
 StageRequest decode_stage_request(const std::string& frame);
-std::string encode_stage_request(StageRequest request, const std::string& operation);
+EncodedStageFrameView encode_stage_request_frame(
+    const StageRequest& request,
+    const std::string& operation
+);
+std::string encode_stage_request(
+    const StageRequest& request,
+    const std::string& operation
+);
 StageResponse decode_stage_response(const std::string& frame);
-std::string encode_stage_response(StageResponse response);
+EncodedStageFrame encode_stage_response_frame(StageResponse response);
+std::string encode_stage_response(const StageResponse& response);
 std::uint32_t payload_crc32(const std::vector<std::uint8_t>& payload);
 std::string json_escape(const std::string& value);
 
