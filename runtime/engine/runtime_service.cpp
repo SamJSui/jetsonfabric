@@ -462,6 +462,27 @@ RuntimeResponse RuntimeService::load_deployment(const std::string& request_body)
     }
 
     const Config deployment_config = request.config;
+    const std::lock_guard load_lock(deployment_load_mutex_);
+    if (!model_manager_.deployment_status(request.identity).resident) {
+        std::optional<deployment::LoadMemoryEstimate> estimate;
+        try {
+            estimate = engine_factory_->estimate_load_memory(deployment_config);
+        } catch (const std::invalid_argument& err) {
+            return json_error("400 Bad Request", "invalid_engine_config", err.what());
+        }
+        const deployment::MemoryAdmissionDecision admission =
+            deployment::assess_load_memory(
+                deployment::available_memory_bytes(),
+                estimate
+            );
+        if (!admission.admitted) {
+            return json_error(
+                "503 Service Unavailable",
+                "deployment_memory_admission_rejected",
+                admission.rejection_message()
+            );
+        }
+    }
     deployment::LoadDeploymentResult result = model_manager_.load_resident_deployment(
         deployment_config.node_name,
         request.identity,

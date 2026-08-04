@@ -36,9 +36,23 @@ int main() {
 
     InferenceEngineFactory factory;
     int builds = 0;
-    factory.register_engine("recording", [&builds](const Config& config) {
-        expect(config.model == "test-model", "factory did not receive deployment config");
-        ++builds;
+    int estimates = 0;
+    factory.register_engine(
+        "recording",
+        [&builds](const Config& config) {
+            expect(config.model == "test-model", "factory did not receive deployment config");
+            ++builds;
+            return InferenceEngineParts{};
+        },
+        [&estimates](const Config& config) {
+            expect(config.model == "test-model", "estimator did not receive deployment config");
+            ++estimates;
+            return jetsonfabric::runtime::deployment::LoadMemoryEstimate{
+                .resident_weight_bytes = 4096,
+            };
+        }
+    );
+    factory.register_engine("best-effort", [](const Config&) {
         return InferenceEngineParts{};
     });
 
@@ -50,6 +64,16 @@ int main() {
     config.model = "test-model";
     (void) factory.create_engine(config);
     expect(builds == 1, "registered engine builder was not called exactly once");
+    const auto estimate = factory.estimate_load_memory(config);
+    expect(estimate.has_value(), "registered memory estimator was not called");
+    expect(estimate->resident_weight_bytes == 4096, "memory estimator returned wrong bytes");
+    expect(estimates == 1, "memory estimator was not called exactly once");
+
+    config.engine = "best-effort";
+    expect(
+        !factory.estimate_load_memory(config).has_value(),
+        "engine without an estimator did not preserve best-effort admission"
+    );
 
     expect_invalid_argument(
         [&factory]() { factory.register_engine("", [](const Config&) {
@@ -67,7 +91,7 @@ int main() {
     config.engine = "missing";
     expect_invalid_argument(
         [&factory, &config]() { (void) factory.create_engine(config); },
-        "registered engines: recording"
+        "registered engines:"
     );
 
     std::cout << "inference engine factory tests passed\n";

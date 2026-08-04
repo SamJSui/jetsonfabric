@@ -46,6 +46,15 @@ or through the direct runtime transport. Multi-stage runtime workers require
 the same `JETSONFABRIC_CLUSTER_TOKEN` as their supervising nodes so peer
 StageWire calls can authenticate.
 
+Before a managed native JFM load, the runtime inspects the selected package
+segments without faulting their tensor pages and compares their exact weight
+bytes plus 256 MiB of required post-load headroom with Linux `MemAvailable`.
+An unsafe replacement is rejected with
+`deployment_memory_admission_rejected` before CUDA allocation starts. Engines
+without a registered estimator keep the existing best-effort allocator path;
+the admission check is a guard against obvious overlap failures, not a promise
+that it predicts every KV-cache, scratch-buffer, or fragmentation cost.
+
 Native F32 stages keep activations in one byte-backed owned buffer. Ownership
 moves from native execution through stage orchestration, and direct HTTP
 transport sends the StageWire prefix and activation payload as separate socket

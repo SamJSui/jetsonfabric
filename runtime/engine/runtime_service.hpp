@@ -1,6 +1,7 @@
 #pragma once
 
 #include "activation/activation_codec.hpp"
+#include "deployment/memory_admission.hpp"
 #include "deployment/model_manager.hpp"
 #include "engine/engine.hpp"
 #include "engine/inference_engine_factory.hpp"
@@ -8,6 +9,7 @@
 #include "worker/config.hpp"
 
 #include <memory>
+#include <mutex>
 
 namespace jetsonfabric::runtime {
 
@@ -60,6 +62,7 @@ private:
     std::shared_ptr<const transport::StageTransport> stage_transport_;
     std::shared_ptr<const activation::ActivationCodec> activation_codec_;
     deployment::ModelManager model_manager_;
+    std::mutex deployment_load_mutex_;
 };
 
 } // namespace jetsonfabric::runtime

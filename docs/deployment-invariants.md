@@ -35,7 +35,13 @@ is released. This overlap is required for non-disruptive handoff and may exceed
 device capacity. A load failure rolls back without changing active admission.
 
 `model_memory` reports tensor payload bytes, not allocator, compute-buffer, or
-context/KV overhead. The planner does not yet predict temporary overlap bytes.
+context/KV overhead. Before a native JFM load, the runtime reads the exact
+selected stage weight bytes from the package and requires those bytes plus 256
+MiB to fit within Linux `MemAvailable`. Because the active epoch is already
+reflected in `MemAvailable`, this rejects unsafe replacement overlap before the
+engine allocates CUDA memory. Missing host telemetry or an engine without a
+registered estimator preserves best-effort loading, and the allocator remains
+the final authority for overhead not represented by the fixed headroom.
 
 ## Membership and epochs
 

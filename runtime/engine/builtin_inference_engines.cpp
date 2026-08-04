@@ -4,6 +4,7 @@
 #include "adapters/llama_cpp_model.hpp"
 #include "adapters/llama_cpp_tokenizer.hpp"
 #include "adapters/native_stage_executor.hpp"
+#include "jetsonfabric/engine.h"
 #include "pipeline_parallel/continuous_batching_executor.hpp"
 #include "pipeline_parallel/llama_cpp_full_model_executor.hpp"
 #include "pipeline_parallel/llama_cpp_stage_executor.hpp"
@@ -155,6 +156,53 @@ std::string lowercase(std::string value) {
     return value;
 }
 
+class NativeModelHandle {
+public:
+    explicit NativeModelHandle(jf_model * model) : model_(model) {}
+    ~NativeModelHandle() { jf_model_close(model_); }
+
+    NativeModelHandle(const NativeModelHandle&) = delete;
+    NativeModelHandle& operator=(const NativeModelHandle&) = delete;
+
+    jf_model * get() const noexcept { return model_; }
+
+private:
+    jf_model * model_;
+};
+
+std::optional<deployment::LoadMemoryEstimate> estimate_native_load_memory(
+    const Config& config
+) {
+    if (config.model_path.empty()) {
+        throw std::invalid_argument("native engine requires a JFM package path");
+    }
+    if (config.stage_assignment.layer_start < 0 ||
+        config.stage_assignment.layer_end <= config.stage_assignment.layer_start) {
+        throw std::invalid_argument("native engine requires a valid stage layer range");
+    }
+    jf_model * raw_model = nullptr;
+    const jf_stage_plan plan{
+        .layer_start = static_cast<std::uint32_t>(config.stage_assignment.layer_start),
+        .layer_end = static_cast<std::uint32_t>(config.stage_assignment.layer_end),
+        .verify_hashes = 0,
+        .evict_before_open = 0,
+    };
+    const jf_status status = jf_model_open(config.model_path.c_str(), &plan, &raw_model);
+    if (status.code != JF_STATUS_OK) {
+        throw std::invalid_argument(
+            std::string("inspect native JFM package: ") + status.message
+        );
+    }
+    const NativeModelHandle model(raw_model);
+    const jf_model_stats stats = jf_model_get_stats(model.get());
+    if (stats.selected_weight_bytes == 0) {
+        throw std::invalid_argument("native JFM stage contains no resident weights");
+    }
+    return deployment::LoadMemoryEstimate{
+        .resident_weight_bytes = stats.selected_weight_bytes,
+    };
+}
+
 InferenceEngineParts create_native_engine(const Config& config) {
     if (config.model_path.empty()) {
         throw std::invalid_argument("native engine requires a JFM package path");
@@ -232,7 +280,11 @@ InferenceEngineParts create_native_engine(const Config& config) {
 std::shared_ptr<const InferenceEngineFactory> make_default_inference_engine_factory() {
     auto factory = std::make_shared<InferenceEngineFactory>();
     factory->register_engine("llama.cpp", create_llama_cpp_engine);
-    factory->register_engine("native", create_native_engine);
+    factory->register_engine(
+        "native",
+        create_native_engine,
+        estimate_native_load_memory
+    );
     factory->register_engine("synthetic", create_synthetic_engine);
     return factory;
 }

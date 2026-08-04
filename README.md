@@ -192,12 +192,14 @@ or mutable node state.
 
 1. Measure whether pooled or pinned receive buffers remove the remaining
    StageWire decode copy and improve TTFT or ITL without weakening the protocol.
-2. Harden admission around weights, KV cache, activations, compute buffers,
-   fragmentation, and deployment replacement overlap.
+2. Profile native CUDA stage compute and optimize only the measured kernel or
+   launch bottleneck.
 3. Improve packaging, model distribution, recovery tests, and trusted-cluster
    security without putting the coordinator in the token data path.
 
 Current limits: chat sampling is greedy; the native engine supports Qwen2 and
 Qwen2.5 only; peer traffic is plaintext on a trusted LAN; tensor RPC is
 experimental and unauthenticated; and reported resident weights exclude
-runtime allocator overhead, KV cache, activations, and compute buffers.
+runtime allocator overhead, KV cache, activations, and compute buffers. Native
+replacement admission therefore combines exact JFM stage weights with a fixed
+post-load safety floor; the allocator remains the final authority.

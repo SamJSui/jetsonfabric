@@ -1,6 +1,7 @@
 #pragma once
 
 #include "deployment/deployment.hpp"
+#include "deployment/memory_admission.hpp"
 #include "inference/executor.hpp"
 #include "pipeline_parallel/stage_assignment.hpp"
 #include "worker/config.hpp"
@@ -24,13 +25,27 @@ struct InferenceEngineParts {
 class InferenceEngineFactory {
 public:
     using Builder = std::function<InferenceEngineParts(const Config&)>;
+    using MemoryEstimator =
+        std::function<std::optional<deployment::LoadMemoryEstimate>(const Config&)>;
 
-    void register_engine(std::string engine_name, Builder builder);
+    void register_engine(
+        std::string engine_name,
+        Builder builder,
+        MemoryEstimator memory_estimator = {}
+    );
     bool supports(const std::string& engine_name) const;
     InferenceEngineParts create_engine(const Config& config) const;
+    std::optional<deployment::LoadMemoryEstimate> estimate_load_memory(
+        const Config& config
+    ) const;
 
 private:
-    std::map<std::string, Builder> builders_;
+    struct Registration {
+        Builder builder;
+        MemoryEstimator memory_estimator;
+    };
+
+    std::map<std::string, Registration> registrations_;
 };
 
 std::shared_ptr<const InferenceEngineFactory> make_default_inference_engine_factory();
