@@ -85,6 +85,48 @@ void require_sampled_token(const ExecutionResult& result) {
 void run_serving_test(const std::string& package_path) {
     auto engine = std::make_shared<NativeEngine>(package_path, Backend::Cpu, 1);
     const int layer_count = static_cast<int>(engine->model_info().layer_count);
+    const auto one_session = jetsonfabric::native::estimate_stage_memory(
+        package_path,
+        Backend::Cpu,
+        0,
+        static_cast<std::uint32_t>(layer_count),
+        16,
+        1
+    );
+    const auto two_sessions = jetsonfabric::native::estimate_stage_memory(
+        package_path,
+        Backend::Cpu,
+        0,
+        static_cast<std::uint32_t>(layer_count),
+        16,
+        2
+    );
+    require(
+        one_session.resident_weight_bytes == engine->model_info().weight_bytes,
+        "native stage estimate did not match resident weights"
+    );
+    require(one_session.reserved_kv_bytes > 0, "native stage estimate omitted KV memory");
+    require(
+        one_session.reserved_activation_bytes == 0,
+        "full-model native estimate reserved inter-stage activations"
+    );
+    require(
+        two_sessions.reserved_kv_bytes == 2 * one_session.reserved_kv_bytes,
+        "native stage estimate did not scale with parallel sessions"
+    );
+    auto reserved_session = engine->create_session(16);
+    reserved_session->reserve_execution_buffers();
+    const auto reserved_buffers = reserved_session->execution_buffers();
+    require(
+        reserved_buffers.kv_cache_bytes == one_session.reserved_kv_bytes,
+        "native stage estimate drifted from allocated KV bytes"
+    );
+    require(
+        reserved_buffers.prefill_scratch_bytes > 0 &&
+            reserved_buffers.decode_scratch_bytes > 0,
+        "native session did not reserve scheduler scratch before execution"
+    );
+    reserved_session.reset();
 
     std::unique_ptr<jetsonfabric::native::NativeSession> direct_session =
         engine->create_session(2);
@@ -102,6 +144,7 @@ void run_serving_test(const std::string& package_path) {
         .engine = engine,
         .tokenizer = std::make_shared<FixtureTokenizer>(),
         .ctx_size = 16,
+        .max_parallel_sessions = 1,
         .position = StagePosition{.index = 0, .count = 1},
         .layers = LayerRange{.start = 0, .end = layer_count},
     });
@@ -120,6 +163,15 @@ void run_serving_test(const std::string& package_path) {
     require(!duplicate.ok, "native stage accepted a duplicate prefill session");
     require(duplicate.error.code == "duplicate_stage_session", "unexpected duplicate error");
 
+    StageInput capacity_prefill = prefill;
+    capacity_prefill.session_id = "native-serving-session-2";
+    const ExecutionResult at_capacity = executor.execute(capacity_prefill);
+    require(!at_capacity.ok, "native stage exceeded its configured session capacity");
+    require(
+        at_capacity.error.code == "stage_session_capacity_exceeded",
+        "native stage capacity rejection used the wrong error"
+    );
+
     StageInput decode = prefill;
     decode.phase = Phase::Decode;
     decode.decode_step = 1;
@@ -131,6 +183,8 @@ void run_serving_test(const std::string& package_path) {
 
     executor.close_session(prefill.session_id);
     require(executor.session_count() == 0, "native close did not release the session");
+    require_sampled_token(executor.execute(capacity_prefill));
+    executor.close_session(capacity_prefill.session_id);
     const ExecutionResult after_close = executor.execute(decode);
     require(!after_close.ok, "native stage decoded after session close");
     require(after_close.error.code == "stage_session_not_found", "unexpected close error");
@@ -172,12 +226,34 @@ void run_distributed_serving_test(const std::string& package_path) {
                 final_engine->model_info().total_weight_bytes,
         "native stages did not reduce resident model weights"
     );
+    const auto first_estimate = jetsonfabric::native::estimate_stage_memory(
+        package_path,
+        Backend::Cpu,
+        0,
+        1,
+        16,
+        1
+    );
+    const auto final_estimate = jetsonfabric::native::estimate_stage_memory(
+        package_path,
+        Backend::Cpu,
+        1,
+        2,
+        16,
+        1
+    );
+    require(
+        first_estimate.reserved_activation_bytes > 0 &&
+            final_estimate.reserved_activation_bytes > 0,
+        "distributed native estimate omitted inter-stage activation memory"
+    );
 
     auto tokenizer = std::make_shared<FixtureTokenizer>();
     NativeStageExecutor first(NativeStageConfig{
         .engine = first_engine,
         .tokenizer = tokenizer,
         .ctx_size = 16,
+        .max_parallel_sessions = 1,
         .position = StagePosition{.index = 0, .count = 2},
         .layers = LayerRange{.start = 0, .end = 1},
     });
@@ -185,6 +261,7 @@ void run_distributed_serving_test(const std::string& package_path) {
         .engine = final_engine,
         .tokenizer = tokenizer,
         .ctx_size = 16,
+        .max_parallel_sessions = 1,
         .position = StagePosition{.index = 1, .count = 2},
         .layers = LayerRange{.start = 1, .end = 2},
     });

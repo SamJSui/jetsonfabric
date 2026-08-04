@@ -149,10 +149,11 @@ prefill and decode and closes every stage session afterward.
 | `engine` | `RuntimeAPI` | Abstract HTTP-facing runtime contract used by `HttpServer` and tests. |
 | `engine` | `RuntimeService` | Implements `RuntimeAPI`; translates JSON/binary contracts and delegates lifecycle to `ModelManager` and generation to `GenerationService`. |
 | `engine` | `GenerationService` | Validates a generation request, selects the executable deployment, invokes local stages through `ModelManager`, and remote stages through `StageTransport`. |
-| `engine` | `InferenceEngineFactory` | Registry from engine name to an `InferenceEngineParts` builder. |
+| `engine` | `InferenceEngineFactory` | Registry from engine name to an `InferenceEngineParts` builder and optional pre-load memory estimator. |
 | `engine` | `InferenceEngineParts` | A newly loaded engine-neutral `Executor`, measured model residency, and any engine-normalized stage assignment. |
 | `deployment` | `ModelManager` | Owns resident deployment epochs, active/draining state, model executors, stage workers, admission checks, and unload safety. Its storage is hidden behind `Impl`. |
 | `deployment` | deployment records | `DeploymentIdentity`, `ModelResidency`, `DeploymentStatus`, and operation results are lifecycle data contracts. |
+| `deployment` | memory admission | Compares engine-declared weight and execution-memory estimates with Linux `MemAvailable` and a fixed post-load safety floor before runtime allocation. Native preparation reserves its configured KV session pool and worst-case scheduler buffers before becoming ready. |
 | `pipeline_parallel` | `GenerationRunner` | Runs prefill once and decode repeatedly across ordered stages, emits tokens, validates transitions, tracks bytes/calls, and closes sessions. |
 | `pipeline_parallel` | `StageWorker` | Validates one stage request, decodes incoming activation data, invokes an `Executor`, encodes outgoing activation data, and builds the stage response. |
 | `inference` | `Executor` | Engine-neutral interface shared by local stages, full-model execution, batching decorators, and tensor-sharded execution. |

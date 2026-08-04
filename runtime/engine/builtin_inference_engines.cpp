@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cctype>
 #include <memory>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -155,6 +156,39 @@ std::string lowercase(std::string value) {
     return value;
 }
 
+deployment::LoadMemoryEstimate estimate_native_load_memory(
+    const Config& config
+) {
+    if (config.model_path.empty()) {
+        throw std::invalid_argument("native engine requires a JFM package path");
+    }
+    if (config.stage_assignment.layer_start < 0 ||
+        config.stage_assignment.layer_end <= config.stage_assignment.layer_start) {
+        throw std::invalid_argument("native engine requires a valid stage layer range");
+    }
+    const native::Backend backend = config.compute_backend == "cuda"
+        ? native::Backend::Cuda
+        : native::Backend::Cpu;
+    const native::StageMemoryEstimate estimate = native::estimate_stage_memory(
+        config.model_path,
+        backend,
+        static_cast<std::uint32_t>(config.stage_assignment.layer_start),
+        static_cast<std::uint32_t>(config.stage_assignment.layer_end),
+        static_cast<std::size_t>(config.ctx_size),
+        static_cast<std::size_t>(config.parallel_sessions)
+    );
+    if (estimate.reserved_kv_bytes >
+        std::numeric_limits<std::uint64_t>::max() -
+            estimate.reserved_activation_bytes) {
+        throw std::invalid_argument("native execution memory estimate overflows uint64");
+    }
+    return deployment::LoadMemoryEstimate{
+        .resident_weight_bytes = estimate.resident_weight_bytes,
+        .reserved_execution_bytes =
+            estimate.reserved_kv_bytes + estimate.reserved_activation_bytes,
+    };
+}
+
 InferenceEngineParts create_native_engine(const Config& config) {
     if (config.model_path.empty()) {
         throw std::invalid_argument("native engine requires a JFM package path");
@@ -206,6 +240,7 @@ InferenceEngineParts create_native_engine(const Config& config) {
                 .engine = std::move(engine),
                 .tokenizer = std::move(tokenizer),
                 .ctx_size = config.ctx_size,
+                .max_parallel_sessions = config.parallel_sessions,
                 .position = position,
                 .layers = layers,
             }
@@ -231,9 +266,22 @@ InferenceEngineParts create_native_engine(const Config& config) {
 
 std::shared_ptr<const InferenceEngineFactory> make_default_inference_engine_factory() {
     auto factory = std::make_shared<InferenceEngineFactory>();
-    factory->register_engine("llama.cpp", create_llama_cpp_engine);
-    factory->register_engine("native", create_native_engine);
-    factory->register_engine("synthetic", create_synthetic_engine);
+    factory->register_engine(
+        "llama.cpp",
+        create_llama_cpp_engine,
+        MemoryAdmissionPolicy::BestEffort
+    );
+    factory->register_engine(
+        "native",
+        create_native_engine,
+        MemoryAdmissionPolicy::EstimateRequired,
+        estimate_native_load_memory
+    );
+    factory->register_engine(
+        "synthetic",
+        create_synthetic_engine,
+        MemoryAdmissionPolicy::BestEffort
+    );
     return factory;
 }
 

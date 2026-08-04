@@ -224,6 +224,16 @@ public:
             sizeof(fixed_output_index_);
     }
 
+    void reserve_backend_buffers() {
+        if (allocated_) return;
+        ggml_backend_sched_reset(scheduler_);
+        if (!ggml_backend_sched_alloc_graph(scheduler_, graph_)) {
+            throw std::runtime_error("could not allocate native Qwen2 compute graph");
+        }
+        verify_attention_backend();
+        allocated_ = true;
+    }
+
 private:
     static double elapsed_ms(std::chrono::steady_clock::time_point start) {
         return std::chrono::duration<double, std::milli>(
@@ -247,12 +257,7 @@ private:
     ) {
         if (!allocated_) {
             const auto allocation_start = std::chrono::steady_clock::now();
-            ggml_backend_sched_reset(scheduler_);
-            if (!ggml_backend_sched_alloc_graph(scheduler_, graph_)) {
-                throw std::runtime_error("could not allocate native Qwen2 compute graph");
-            }
-            verify_attention_backend();
-            allocated_ = true;
+            reserve_backend_buffers();
             if (timings != nullptr) {
                 timings->allocation_ms = elapsed_ms(allocation_start);
             }
@@ -946,6 +951,21 @@ public:
         return run_stage_decode({}, activation);
     }
 
+    void reserve_execution_buffers() override {
+        stage_prefill_graph_ = std::make_unique<ForwardGraph>(
+            tensors_, hparams_, cache_, prefill_scheduler_.get(),
+            capacity_, capacity_, stage_output_kind(),
+            InputKind::Prefill, prefill_attention_kernel_, layers_
+        );
+        stage_prefill_graph_->reserve_backend_buffers();
+        stage_decode_graph_ = std::make_unique<ForwardGraph>(
+            tensors_, hparams_, cache_, decode_scheduler_.get(), cache_capacity_, 1,
+            stage_output_kind(), InputKind::Decode,
+            decode_attention_kernel_, layers_
+        );
+        stage_decode_graph_->reserve_backend_buffers();
+    }
+
     ExecutionBufferMetrics execution_buffers() const override {
         return ExecutionBufferMetrics{
             .kv_cache_bytes = cache_buffer_ == nullptr
@@ -1179,26 +1199,7 @@ public:
 
 private:
     bool flash_attention_supported() const {
-        if (hparams_.head_count == 0 || hparams_.kv_head_count == 0 ||
-            hparams_.public_info.embedding_length % hparams_.head_count != 0 ||
-            hparams_.head_count % hparams_.kv_head_count != 0) {
-            return false;
-        }
-        const std::uint32_t head_length =
-            hparams_.public_info.embedding_length / hparams_.head_count;
-        switch (head_length) {
-        case 40:
-        case 64:
-        case 72:
-        case 80:
-        case 96:
-        case 112:
-        case 128:
-        case 256:
-            return true;
-        default:
-            return false;
-        }
+        return qwen2_supports_flash_attention(hparams_);
     }
 
     Qwen2HParams hparams_;

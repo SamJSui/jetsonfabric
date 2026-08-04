@@ -33,14 +33,32 @@ int main() {
     using jetsonfabric::runtime::Config;
     using jetsonfabric::runtime::InferenceEngineFactory;
     using jetsonfabric::runtime::InferenceEngineParts;
+    using jetsonfabric::runtime::MemoryAdmissionPolicy;
 
     InferenceEngineFactory factory;
     int builds = 0;
-    factory.register_engine("recording", [&builds](const Config& config) {
-        expect(config.model == "test-model", "factory did not receive deployment config");
-        ++builds;
-        return InferenceEngineParts{};
-    });
+    int estimates = 0;
+    factory.register_engine(
+        "recording",
+        [&builds](const Config& config) {
+            expect(config.model == "test-model", "factory did not receive deployment config");
+            ++builds;
+            return InferenceEngineParts{};
+        },
+        MemoryAdmissionPolicy::EstimateRequired,
+        [&estimates](const Config& config) {
+            expect(config.model == "test-model", "estimator did not receive deployment config");
+            ++estimates;
+            return jetsonfabric::runtime::deployment::LoadMemoryEstimate{
+                .resident_weight_bytes = 4096,
+            };
+        }
+    );
+    factory.register_engine(
+        "best-effort",
+        [](const Config&) { return InferenceEngineParts{}; },
+        MemoryAdmissionPolicy::BestEffort
+    );
 
     expect(factory.supports("recording"), "registered engine was not discoverable");
     expect(!factory.supports("missing"), "unknown engine was reported as supported");
@@ -50,24 +68,65 @@ int main() {
     config.model = "test-model";
     (void) factory.create_engine(config);
     expect(builds == 1, "registered engine builder was not called exactly once");
+    const auto estimate = factory.estimate_load_memory(config);
+    expect(estimate.has_value(), "registered memory estimator was not called");
+    expect(estimate->resident_weight_bytes == 4096, "memory estimator returned wrong bytes");
+    expect(estimates == 1, "memory estimator was not called exactly once");
+
+    config.engine = "best-effort";
+    expect(
+        !factory.estimate_load_memory(config).has_value(),
+        "engine without an estimator did not preserve best-effort admission"
+    );
 
     expect_invalid_argument(
-        [&factory]() { factory.register_engine("", [](const Config&) {
-            return InferenceEngineParts{};
-        }); },
+        [&factory]() { factory.register_engine(
+            "",
+            [](const Config&) { return InferenceEngineParts{}; },
+            MemoryAdmissionPolicy::BestEffort
+        ); },
         "name must not be empty"
     );
     expect_invalid_argument(
-        [&factory]() { factory.register_engine("recording", [](const Config&) {
-            return InferenceEngineParts{};
-        }); },
+        [&factory]() { factory.register_engine(
+            "recording",
+            [](const Config&) { return InferenceEngineParts{}; },
+            MemoryAdmissionPolicy::BestEffort
+        ); },
         "already registered"
+    );
+    expect_invalid_argument(
+        []() {
+            InferenceEngineFactory invalid;
+            invalid.register_engine(
+                "missing-estimator",
+                [](const Config&) { return InferenceEngineParts{}; },
+                MemoryAdmissionPolicy::EstimateRequired
+            );
+        },
+        "requires a memory estimator"
+    );
+    expect_invalid_argument(
+        []() {
+            InferenceEngineFactory invalid;
+            invalid.register_engine(
+                "unexpected-estimator",
+                [](const Config&) { return InferenceEngineParts{}; },
+                MemoryAdmissionPolicy::BestEffort,
+                [](const Config&) {
+                    return jetsonfabric::runtime::deployment::LoadMemoryEstimate{
+                        .resident_weight_bytes = 1,
+                    };
+                }
+            );
+        },
+        "must not register an estimator"
     );
 
     config.engine = "missing";
     expect_invalid_argument(
         [&factory, &config]() { (void) factory.create_engine(config); },
-        "registered engines: recording"
+        "registered engines:"
     );
 
     std::cout << "inference engine factory tests passed\n";

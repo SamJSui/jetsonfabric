@@ -125,6 +125,22 @@ public:
         return status_for(find_exact(identity));
     }
 
+    std::optional<LoadDeploymentResult> resident_load_conflict(
+        const DeploymentIdentity& identity
+    ) const {
+        const std::lock_guard lock(mutex_);
+        const std::shared_ptr<const ResidentDeployment> existing =
+            find_key(key_for(identity));
+        if (existing == nullptr) return std::nullopt;
+        return operation_error(
+            "409 Conflict",
+            "resident_deployment_exists",
+            "runtime already has this resident deployment identity",
+            existing->identity,
+            existing->state
+        );
+    }
+
     LoadDeploymentResult load_resident_deployment(
         std::string node_name,
         DeploymentIdentity identity,
@@ -892,6 +908,12 @@ DeploymentStatus ModelManager::deployment_status(
     const DeploymentIdentity& identity
 ) const {
     return impl_->deployment_status(identity);
+}
+
+std::optional<LoadDeploymentResult> ModelManager::resident_load_conflict(
+    const DeploymentIdentity& identity
+) const {
+    return impl_->resident_load_conflict(identity);
 }
 
 LoadDeploymentResult ModelManager::load_resident_deployment(

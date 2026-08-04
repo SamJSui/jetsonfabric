@@ -18,5 +18,6 @@ struct Qwen2HParams {
 };
 
 Qwen2HParams load_qwen2_hparams(const gguf_context * metadata);
+bool qwen2_supports_flash_attention(const Qwen2HParams& params) noexcept;
 
 } // namespace jetsonfabric::native

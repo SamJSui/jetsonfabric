@@ -209,6 +209,7 @@ set(JF_RUNTIME_SOURCES
   inference/stage.cpp
   inference/token_payload.cpp
 
+  deployment/memory_admission.cpp
   deployment/model_manager.cpp
 
   protocol/execution_mode.cpp
@@ -338,6 +339,23 @@ if(JF_BUILD_CUDA_BENCHMARKS)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(jetsonfabric-memory-admission-test
+    deployment/memory_admission.cpp
+    deployment/memory_admission_test.cpp
+  )
+  target_include_directories(jetsonfabric-memory-admission-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_options(jetsonfabric-memory-admission-test PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+  )
+  add_test(
+    NAME memory-admission
+    COMMAND jetsonfabric-memory-admission-test
+  )
+
   add_executable(jetsonfabric-tensor-device-mesh-test
     tensor_parallel/device_mesh.cpp
     tensor_parallel/device_mesh_test.cpp

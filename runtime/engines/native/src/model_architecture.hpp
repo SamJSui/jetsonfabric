@@ -47,6 +47,7 @@ public:
     virtual StageResult prefill_stage_activations(ActivationView activation) = 0;
     virtual StageResult decode_stage_token(std::int32_t token) = 0;
     virtual StageResult decode_stage_activation(ActivationView activation) = 0;
+    virtual void reserve_execution_buffers() = 0;
     virtual ExecutionBufferMetrics execution_buffers() const = 0;
 };
 
