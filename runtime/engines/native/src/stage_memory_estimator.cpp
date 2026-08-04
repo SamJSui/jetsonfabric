@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <limits>
 #include <memory>
+#include <new>
 #include <stdexcept>
 #include <string>
 
@@ -28,9 +29,20 @@ using Model = std::unique_ptr<jf_model, ModelDeleter>;
 using Gguf = std::unique_ptr<gguf_context, GgufDeleter>;
 
 void require_ok(jf_status status, const char * operation) {
-    if (status.code != JF_STATUS_OK) {
-        throw std::invalid_argument(std::string(operation) + ": " + status.message);
+    if (status.code == JF_STATUS_OK) return;
+    const std::string message = std::string(operation) + ": " + status.message;
+    switch (status.code) {
+    case JF_STATUS_INVALID_ARGUMENT:
+    case JF_STATUS_FORMAT_ERROR:
+    case JF_STATUS_NOT_FOUND:
+        throw std::invalid_argument(message);
+    case JF_STATUS_OUT_OF_MEMORY:
+        throw std::bad_alloc();
+    case JF_STATUS_IO_ERROR:
+    case JF_STATUS_OK:
+        throw std::runtime_error(message);
     }
+    throw std::runtime_error(message);
 }
 
 std::uint64_t checked_multiply(std::uint64_t left, std::uint64_t right) {

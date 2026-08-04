@@ -51,11 +51,13 @@ segments without faulting their tensor pages and compares exact stage weights,
 the full-context KV reservation for every configured parallel session, and
 256 MiB of required post-load headroom with Linux `MemAvailable`. Native
 deployment preparation then allocates that session pool before reporting
-`ready`. An unsafe replacement is rejected with
+`ready`, including worst-case full-context prefill and decode scheduler buffers.
+An unsafe replacement is rejected with
 `deployment_memory_admission_rejected` before CUDA allocation starts. Engines
 must explicitly register estimated or best-effort admission; the check is a
-guard against obvious overlap failures, not a promise that it predicts every
-scratch-buffer, activation, or fragmentation cost.
+guard against obvious overlap failures. Backend allocation during preparation
+remains authoritative for activation, fragmentation, and allocator costs that
+cannot be predicted exactly.
 
 Native F32 stages keep activations in one byte-backed owned buffer. Ownership
 moves from native execution through stage orchestration, and direct HTTP

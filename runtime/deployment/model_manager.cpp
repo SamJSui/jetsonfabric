@@ -129,7 +129,8 @@ public:
         const DeploymentIdentity& identity
     ) const {
         const std::lock_guard lock(mutex_);
-        const std::shared_ptr<const ResidentDeployment> existing = find_exact(identity);
+        const std::shared_ptr<const ResidentDeployment> existing =
+            find_key(key_for(identity));
         if (existing == nullptr) return std::nullopt;
         return operation_error(
             "409 Conflict",

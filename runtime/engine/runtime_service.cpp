@@ -13,6 +13,7 @@
 #include <cctype>
 #include <exception>
 #include <limits>
+#include <new>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -485,6 +486,18 @@ RuntimeResponse RuntimeService::load_deployment(const std::string& request_body)
             estimate = engine_factory_->estimate_load_memory(deployment_config);
         } catch (const std::invalid_argument& err) {
             return json_error("400 Bad Request", "invalid_engine_config", err.what());
+        } catch (const std::bad_alloc&) {
+            return json_error(
+                "503 Service Unavailable",
+                "deployment_memory_estimation_unavailable",
+                "runtime does not have enough memory to inspect the deployment"
+            );
+        } catch (const std::exception& err) {
+            return json_error(
+                "500 Internal Server Error",
+                "deployment_memory_estimation_failed",
+                err.what()
+            );
         }
         const deployment::MemoryAdmissionDecision admission =
             deployment::assess_load_memory(

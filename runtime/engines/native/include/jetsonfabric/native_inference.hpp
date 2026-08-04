@@ -118,6 +118,8 @@ public:
     StageResult prefill_stage_activations(ActivationView activation);
     StageResult decode_stage_token(std::int32_t token);
     StageResult decode_stage_activation(ActivationView activation);
+    void reserve_execution_buffers();
+    ExecutionBufferMetrics execution_buffers() const;
     void reset();
     void rollback(std::size_t token_count);
 

@@ -39,11 +39,12 @@ compute-buffer overhead. Before a native JFM load, the runtime reads the exact
 selected stage weight bytes and model dimensions from the package. It requires
 the weights, full-context KV for every configured parallel session, and 256 MiB
 to fit within Linux `MemAvailable`. Native preparation allocates the session
-pool before the deployment becomes `ready`. Because the active epoch is already
-reflected in `MemAvailable`, this rejects unsafe replacement overlap before the
-new engine allocates CUDA memory. Every engine explicitly chooses estimated or
-best-effort admission. Missing host telemetry still preserves best-effort
-loading, and the allocator remains authoritative for scratch, activations,
+pool and each session's worst-case prefill/decode scheduler buffers before the
+deployment becomes `ready`. Because the active epoch is already reflected in
+`MemAvailable`, this rejects unsafe replacement overlap before the new engine
+allocates CUDA memory. Every engine explicitly chooses estimated or best-effort
+admission. Missing host telemetry still preserves best-effort loading, and the
+allocator during preparation remains authoritative for activations,
 fragmentation, and other overhead represented only by the fixed headroom.
 
 ## Membership and epochs

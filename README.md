@@ -201,6 +201,7 @@ Current limits: chat sampling is greedy; the native engine supports Qwen2 and
 Qwen2.5 only; peer traffic is plaintext on a trusted LAN; and tensor RPC is
 experimental and unauthenticated. Native replacement admission combines exact
 JFM stage weights, full-context KV reservations for configured parallel
-sessions, and a fixed post-load safety floor. Reported resident weights still
-exclude KV, activations, scratch buffers, and allocator overhead; the allocator
-remains the final authority.
+sessions, and a fixed post-load safety floor. Preparation allocates each native
+session's worst-case prefill and decode scheduler buffers before readiness.
+Reported resident weights still exclude KV, activations, scratch buffers, and
+allocator overhead; the allocator remains the final authority.

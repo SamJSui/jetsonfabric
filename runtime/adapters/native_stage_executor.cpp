@@ -112,9 +112,10 @@ public:
             static_cast<std::size_t>(config.max_parallel_sessions)
         );
         for (int index = 0; index < config.max_parallel_sessions; ++index) {
-            available_sessions.push_back(
-                config.engine->create_session(static_cast<std::size_t>(config.ctx_size))
-            );
+            auto session =
+                config.engine->create_session(static_cast<std::size_t>(config.ctx_size));
+            session->reserve_execution_buffers();
+            available_sessions.push_back(std::move(session));
         }
     }
 

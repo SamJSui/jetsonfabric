@@ -153,7 +153,7 @@ prefill and decode and closes every stage session afterward.
 | `engine` | `InferenceEngineParts` | A newly loaded engine-neutral `Executor`, measured model residency, and any engine-normalized stage assignment. |
 | `deployment` | `ModelManager` | Owns resident deployment epochs, active/draining state, model executors, stage workers, admission checks, and unload safety. Its storage is hidden behind `Impl`. |
 | `deployment` | deployment records | `DeploymentIdentity`, `ModelResidency`, `DeploymentStatus`, and operation results are lifecycle data contracts. |
-| `deployment` | memory admission | Compares engine-declared weight and execution-memory estimates with Linux `MemAvailable` and a fixed post-load safety floor before runtime allocation. Native preparation reserves its configured KV session pool before becoming ready. |
+| `deployment` | memory admission | Compares engine-declared weight and execution-memory estimates with Linux `MemAvailable` and a fixed post-load safety floor before runtime allocation. Native preparation reserves its configured KV session pool and worst-case scheduler buffers before becoming ready. |
 | `pipeline_parallel` | `GenerationRunner` | Runs prefill once and decode repeatedly across ordered stages, emits tokens, validates transitions, tracks bytes/calls, and closes sessions. |
 | `pipeline_parallel` | `StageWorker` | Validates one stage request, decodes incoming activation data, invokes an `Executor`, encodes outgoing activation data, and builds the stage response. |
 | `inference` | `Executor` | Engine-neutral interface shared by local stages, full-model execution, batching decorators, and tensor-sharded execution. |

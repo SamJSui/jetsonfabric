@@ -350,6 +350,14 @@ void test_loaded_manager() {
         !manager.resident_load_conflict(managed_identity("deployment-b")).has_value(),
         "nonresident identity was reported as a load conflict"
     );
+    const auto conflicting_model = manager.resident_load_conflict(
+        managed_identity("deployment-a", 1, "model-b", 'b')
+    );
+    expect(
+        conflicting_model.has_value() &&
+            conflicting_model->error_code == "resident_deployment_exists",
+        "same deployment key with a different model bypassed conflict detection"
+    );
 
     const std::optional<runtime::deployment::DeploymentIdentity> active_identity =
         manager.active_deployment_identity();

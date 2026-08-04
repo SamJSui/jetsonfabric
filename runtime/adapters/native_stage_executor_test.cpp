@@ -110,6 +110,19 @@ void run_serving_test(const std::string& package_path) {
         two_sessions.reserved_kv_bytes == 2 * one_session.reserved_kv_bytes,
         "native stage estimate did not scale with parallel sessions"
     );
+    auto reserved_session = engine->create_session(16);
+    reserved_session->reserve_execution_buffers();
+    const auto reserved_buffers = reserved_session->execution_buffers();
+    require(
+        reserved_buffers.kv_cache_bytes == one_session.reserved_kv_bytes,
+        "native stage estimate drifted from allocated KV bytes"
+    );
+    require(
+        reserved_buffers.prefill_scratch_bytes > 0 &&
+            reserved_buffers.decode_scratch_bytes > 0,
+        "native session did not reserve scheduler scratch before execution"
+    );
+    reserved_session.reset();
 
     std::unique_ptr<jetsonfabric::native::NativeSession> direct_session =
         engine->create_session(2);
