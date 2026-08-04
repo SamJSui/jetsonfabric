@@ -198,8 +198,9 @@ or mutable node state.
    security without putting the coordinator in the token data path.
 
 Current limits: chat sampling is greedy; the native engine supports Qwen2 and
-Qwen2.5 only; peer traffic is plaintext on a trusted LAN; tensor RPC is
-experimental and unauthenticated; and reported resident weights exclude
-runtime allocator overhead, KV cache, activations, and compute buffers. Native
-replacement admission therefore combines exact JFM stage weights with a fixed
-post-load safety floor; the allocator remains the final authority.
+Qwen2.5 only; peer traffic is plaintext on a trusted LAN; and tensor RPC is
+experimental and unauthenticated. Native replacement admission combines exact
+JFM stage weights, full-context KV reservations for configured parallel
+sessions, and a fixed post-load safety floor. Reported resident weights still
+exclude KV, activations, scratch buffers, and allocator overhead; the allocator
+remains the final authority.

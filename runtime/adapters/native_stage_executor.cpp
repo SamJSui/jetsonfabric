@@ -87,6 +87,9 @@ public:
         if (config.ctx_size <= 0) {
             throw std::invalid_argument("native executor context size must be positive");
         }
+        if (config.max_parallel_sessions <= 0) {
+            throw std::invalid_argument("native executor parallel sessions must be positive");
+        }
         const int layer_count = static_cast<int>(config.engine->model_info().layer_count);
         if (config.position.count <= 0 || config.position.index < 0 ||
             config.position.index >= config.position.count ||
@@ -104,6 +107,14 @@ public:
         if (static_cast<std::uint32_t>(config.ctx_size) >
             config.engine->model_info().context_length) {
             throw std::invalid_argument("native context size exceeds model context");
+        }
+        available_sessions.reserve(
+            static_cast<std::size_t>(config.max_parallel_sessions)
+        );
+        for (int index = 0; index < config.max_parallel_sessions; ++index) {
+            available_sessions.push_back(
+                config.engine->create_session(static_cast<std::size_t>(config.ctx_size))
+            );
         }
     }
 
@@ -141,7 +152,11 @@ public:
 
     void close_session(const std::string& session_id) {
         const std::lock_guard lock(mutex);
-        sessions.erase(session_id);
+        const auto found = sessions.find(session_id);
+        if (found == sessions.end()) return;
+        found->second.session->reset();
+        available_sessions.push_back(std::move(found->second.session));
+        sessions.erase(found);
     }
 
     void rollback_session(const std::string& session_id, int token_count) {
@@ -188,7 +203,7 @@ private:
         throw std::invalid_argument("native first stage requires text or token input");
     }
 
-    std::size_t session_capacity(std::size_t prompt_tokens, int max_tokens) const {
+    void validate_session_capacity(std::size_t prompt_tokens, int max_tokens) const {
         const std::size_t decode_inputs = static_cast<std::size_t>(max_tokens - 1);
         if (prompt_tokens > std::numeric_limits<std::size_t>::max() - decode_inputs) {
             throw std::invalid_argument("native session capacity overflow");
@@ -197,7 +212,6 @@ private:
         if (required > static_cast<std::size_t>(config.ctx_size)) {
             throw std::invalid_argument("native request exceeds configured context size");
         }
-        return required;
     }
 
     inference::StageOutput token_output(std::int32_t token) const {
@@ -242,28 +256,44 @@ private:
             );
             token_count = activation.token_count;
         }
-        const std::size_t capacity = session_capacity(token_count, input.max_tokens);
-        std::unique_ptr<native::NativeSession> session =
-            config.engine->create_session(capacity);
-        native::StageResult stage_result = config.position.is_first()
-            ? session->prefill_stage_tokens(tokens)
-            : session->prefill_stage_activations(activation);
-        inference::StageOutput output = stage_output(std::move(stage_result));
-        if (config.position.is_first()) {
-            output.prompt_tokens = static_cast<int>(tokens.size());
-            output.prompt_token_ids.reserve(tokens.size());
-            for (const std::int32_t token : tokens) {
-                if (token < 0) {
-                    throw std::invalid_argument("native tokenizer returned a negative token");
-                }
-                output.prompt_token_ids.push_back(static_cast<std::uint32_t>(token));
-            }
+        validate_session_capacity(token_count, input.max_tokens);
+        if (available_sessions.empty()) {
+            return inference::ExecutionResult::failure(
+                "stage_session_capacity_exceeded",
+                "all configured native parallel session slots are in use"
+            );
         }
-        sessions.emplace(
-            input.session_id,
-            SessionState{.session = std::move(session), .expected_decode_step = 1}
-        );
-        return inference::ExecutionResult::success(std::move(output));
+
+        std::unique_ptr<native::NativeSession> session =
+            std::move(available_sessions.back());
+        available_sessions.pop_back();
+        try {
+            native::StageResult stage_result = config.position.is_first()
+                ? session->prefill_stage_tokens(tokens)
+                : session->prefill_stage_activations(activation);
+            inference::StageOutput output = stage_output(std::move(stage_result));
+            if (config.position.is_first()) {
+                output.prompt_tokens = static_cast<int>(tokens.size());
+                output.prompt_token_ids.reserve(tokens.size());
+                for (const std::int32_t token : tokens) {
+                    if (token < 0) {
+                        throw std::invalid_argument("native tokenizer returned a negative token");
+                    }
+                    output.prompt_token_ids.push_back(static_cast<std::uint32_t>(token));
+                }
+            }
+            sessions.emplace(
+                input.session_id,
+                SessionState{.session = std::move(session), .expected_decode_step = 1}
+            );
+            return inference::ExecutionResult::success(std::move(output));
+        } catch (...) {
+            if (session) {
+                session->reset();
+                available_sessions.push_back(std::move(session));
+            }
+            throw;
+        }
     }
 
     inference::ExecutionResult decode(const inference::StageInput& input) {
@@ -311,6 +341,7 @@ private:
     NativeStageConfig config;
     mutable std::mutex mutex;
     std::unordered_map<std::string, SessionState> sessions;
+    std::vector<std::unique_ptr<native::NativeSession>> available_sessions;
 };
 
 NativeStageExecutor::NativeStageExecutor(NativeStageConfig config)

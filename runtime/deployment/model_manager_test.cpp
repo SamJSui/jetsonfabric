@@ -340,6 +340,17 @@ void test_loaded_manager() {
     expect(status.identity->deployment_id == "deployment-a", "status reported the wrong deployment ID");
     expect(status.identity->model_id == "model-a", "status reported the wrong model ID");
 
+    const auto conflict = manager.resident_load_conflict(managed_identity());
+    expect(conflict.has_value(), "resident load conflict was not reported");
+    expect(
+        conflict->error_code == "resident_deployment_exists",
+        "resident load conflict used the wrong error"
+    );
+    expect(
+        !manager.resident_load_conflict(managed_identity("deployment-b")).has_value(),
+        "nonresident identity was reported as a load conflict"
+    );
+
     const std::optional<runtime::deployment::DeploymentIdentity> active_identity =
         manager.active_deployment_identity();
     expect(active_identity.has_value(), "configured manager did not expose its active identity");

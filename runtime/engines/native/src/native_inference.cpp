@@ -53,6 +53,8 @@ StageResult NativeSession::decode_stage_activation(ActivationView activation) {
     return impl_->session->decode_stage_activation(activation);
 }
 
+void NativeSession::reset() { impl_->session->reset(); }
+
 void NativeSession::rollback(std::size_t token_count) {
     impl_->session->rollback(token_count);
 }

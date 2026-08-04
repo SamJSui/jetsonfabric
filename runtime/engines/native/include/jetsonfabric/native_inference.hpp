@@ -45,6 +45,11 @@ struct ModelInfo {
     std::uint32_t resident_layer_end = 0;
 };
 
+struct StageMemoryEstimate {
+    std::uint64_t resident_weight_bytes = 0;
+    std::uint64_t reserved_kv_bytes = 0;
+};
+
 struct ActivationView {
     std::span<const std::uint8_t> bytes;
     std::size_t token_count = 0;
@@ -113,6 +118,7 @@ public:
     StageResult prefill_stage_activations(ActivationView activation);
     StageResult decode_stage_token(std::int32_t token);
     StageResult decode_stage_activation(ActivationView activation);
+    void reset();
     void rollback(std::size_t token_count);
 
 private:
@@ -161,5 +167,14 @@ private:
 
 const char * backend_name(Backend backend);
 const char * attention_kernel_name(AttentionKernel kernel);
+
+StageMemoryEstimate estimate_stage_memory(
+    const std::string& package_path,
+    Backend backend,
+    std::uint32_t layer_start,
+    std::uint32_t layer_end,
+    std::size_t session_capacity,
+    std::size_t session_count
+);
 
 } // namespace jetsonfabric::native

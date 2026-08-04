@@ -34,14 +34,17 @@ a replacement creates another engine and partition residency before the old one
 is released. This overlap is required for non-disruptive handoff and may exceed
 device capacity. A load failure rolls back without changing active admission.
 
-`model_memory` reports tensor payload bytes, not allocator, compute-buffer, or
-context/KV overhead. Before a native JFM load, the runtime reads the exact
-selected stage weight bytes from the package and requires those bytes plus 256
-MiB to fit within Linux `MemAvailable`. Because the active epoch is already
+`model_memory` reports tensor payload bytes, not KV, allocator, activation, or
+compute-buffer overhead. Before a native JFM load, the runtime reads the exact
+selected stage weight bytes and model dimensions from the package. It requires
+the weights, full-context KV for every configured parallel session, and 256 MiB
+to fit within Linux `MemAvailable`. Native preparation allocates the session
+pool before the deployment becomes `ready`. Because the active epoch is already
 reflected in `MemAvailable`, this rejects unsafe replacement overlap before the
-engine allocates CUDA memory. Missing host telemetry or an engine without a
-registered estimator preserves best-effort loading, and the allocator remains
-the final authority for overhead not represented by the fixed headroom.
+new engine allocates CUDA memory. Every engine explicitly chooses estimated or
+best-effort admission. Missing host telemetry still preserves best-effort
+loading, and the allocator remains authoritative for scratch, activations,
+fragmentation, and other overhead represented only by the fixed headroom.
 
 ## Membership and epochs
 

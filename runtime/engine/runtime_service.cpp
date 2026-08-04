@@ -462,8 +462,24 @@ RuntimeResponse RuntimeService::load_deployment(const std::string& request_body)
     }
 
     const Config deployment_config = request.config;
+    if (const auto duplicate = model_manager_.resident_load_conflict(request.identity);
+        duplicate.has_value()) {
+        return json_error(
+            duplicate->status,
+            duplicate->error_code,
+            duplicate->error_message
+        );
+    }
+
     const std::lock_guard load_lock(deployment_load_mutex_);
-    if (!model_manager_.deployment_status(request.identity).resident) {
+    if (const auto duplicate = model_manager_.resident_load_conflict(request.identity);
+        duplicate.has_value()) {
+        return json_error(
+            duplicate->status,
+            duplicate->error_code,
+            duplicate->error_message
+        );
+    } else {
         std::optional<deployment::LoadMemoryEstimate> estimate;
         try {
             estimate = engine_factory_->estimate_load_memory(deployment_config);

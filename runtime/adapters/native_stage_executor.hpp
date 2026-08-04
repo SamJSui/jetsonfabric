@@ -13,6 +13,7 @@ struct NativeStageConfig {
     std::shared_ptr<native::NativeEngine> engine;
     std::shared_ptr<const tokenization::Tokenizer> tokenizer;
     int ctx_size = 0;
+    int max_parallel_sessions = 1;
     inference::StagePosition position;
     inference::LayerRange layers;
 };

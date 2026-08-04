@@ -42,6 +42,7 @@ if(TARGET ggml)
     src/native_inference.cpp
     src/qwen2_architecture.cpp
     src/qwen2_metadata.cpp
+    src/stage_memory_estimator.cpp
     src/tensor_store.cpp
   )
   target_include_directories(jetsonfabric-native-inference

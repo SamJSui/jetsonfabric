@@ -9,6 +9,7 @@ namespace jetsonfabric::runtime {
 void InferenceEngineFactory::register_engine(
     std::string engine_name,
     Builder builder,
+    MemoryAdmissionPolicy memory_admission_policy,
     MemoryEstimator memory_estimator
 ) {
     if (engine_name.empty()) {
@@ -17,10 +18,23 @@ void InferenceEngineFactory::register_engine(
     if (!builder) {
         throw std::invalid_argument("inference engine builder must not be empty");
     }
+    if (memory_admission_policy == MemoryAdmissionPolicy::EstimateRequired &&
+        !memory_estimator) {
+        throw std::invalid_argument(
+            "estimated inference engine admission requires a memory estimator"
+        );
+    }
+    if (memory_admission_policy == MemoryAdmissionPolicy::BestEffort &&
+        memory_estimator) {
+        throw std::invalid_argument(
+            "best-effort inference engine admission must not register an estimator"
+        );
+    }
     if (!registrations_.emplace(
             engine_name,
             Registration{
                 .builder = std::move(builder),
+                .memory_admission_policy = memory_admission_policy,
                 .memory_estimator = std::move(memory_estimator),
             }
         ).second) {
@@ -55,10 +69,18 @@ InferenceEngineFactory::estimate_load_memory(const Config& config) const {
     if (registration == registrations_.end()) {
         throw std::invalid_argument("unsupported inference engine: " + config.engine);
     }
-    if (!registration->second.memory_estimator) {
+    if (registration->second.memory_admission_policy ==
+        MemoryAdmissionPolicy::BestEffort) {
         return std::nullopt;
     }
-    return registration->second.memory_estimator(config);
+    deployment::LoadMemoryEstimate estimate =
+        registration->second.memory_estimator(config);
+    if (estimate.resident_weight_bytes == 0) {
+        throw std::invalid_argument(
+            "estimated inference engine admission returned zero resident weights"
+        );
+    }
+    return estimate;
 }
 
 } // namespace jetsonfabric::runtime

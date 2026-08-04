@@ -51,6 +51,9 @@ public:
     std::optional<ResidentDeploymentState> resident_deployment_state() const;
     DeploymentStatus deployment_status() const;
     DeploymentStatus deployment_status(const DeploymentIdentity& identity) const;
+    std::optional<LoadDeploymentResult> resident_load_conflict(
+        const DeploymentIdentity& identity
+    ) const;
 
     LoadDeploymentResult load_resident_deployment(
         std::string node_name,

@@ -10,6 +10,7 @@ constexpr std::uint64_t kMinimumPostLoadHeadroomBytes = 256ULL << 20;
 
 struct LoadMemoryEstimate {
     std::uint64_t resident_weight_bytes = 0;
+    std::uint64_t reserved_execution_bytes = 0;
 };
 
 struct MemoryAdmissionDecision {

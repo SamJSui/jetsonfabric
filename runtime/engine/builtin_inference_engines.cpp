@@ -4,7 +4,6 @@
 #include "adapters/llama_cpp_model.hpp"
 #include "adapters/llama_cpp_tokenizer.hpp"
 #include "adapters/native_stage_executor.hpp"
-#include "jetsonfabric/engine.h"
 #include "pipeline_parallel/continuous_batching_executor.hpp"
 #include "pipeline_parallel/llama_cpp_full_model_executor.hpp"
 #include "pipeline_parallel/llama_cpp_stage_executor.hpp"
@@ -156,21 +155,7 @@ std::string lowercase(std::string value) {
     return value;
 }
 
-class NativeModelHandle {
-public:
-    explicit NativeModelHandle(jf_model * model) : model_(model) {}
-    ~NativeModelHandle() { jf_model_close(model_); }
-
-    NativeModelHandle(const NativeModelHandle&) = delete;
-    NativeModelHandle& operator=(const NativeModelHandle&) = delete;
-
-    jf_model * get() const noexcept { return model_; }
-
-private:
-    jf_model * model_;
-};
-
-std::optional<deployment::LoadMemoryEstimate> estimate_native_load_memory(
+deployment::LoadMemoryEstimate estimate_native_load_memory(
     const Config& config
 ) {
     if (config.model_path.empty()) {
@@ -180,26 +165,20 @@ std::optional<deployment::LoadMemoryEstimate> estimate_native_load_memory(
         config.stage_assignment.layer_end <= config.stage_assignment.layer_start) {
         throw std::invalid_argument("native engine requires a valid stage layer range");
     }
-    jf_model * raw_model = nullptr;
-    const jf_stage_plan plan{
-        .layer_start = static_cast<std::uint32_t>(config.stage_assignment.layer_start),
-        .layer_end = static_cast<std::uint32_t>(config.stage_assignment.layer_end),
-        .verify_hashes = 0,
-        .evict_before_open = 0,
-    };
-    const jf_status status = jf_model_open(config.model_path.c_str(), &plan, &raw_model);
-    if (status.code != JF_STATUS_OK) {
-        throw std::invalid_argument(
-            std::string("inspect native JFM package: ") + status.message
-        );
-    }
-    const NativeModelHandle model(raw_model);
-    const jf_model_stats stats = jf_model_get_stats(model.get());
-    if (stats.selected_weight_bytes == 0) {
-        throw std::invalid_argument("native JFM stage contains no resident weights");
-    }
+    const native::Backend backend = config.compute_backend == "cuda"
+        ? native::Backend::Cuda
+        : native::Backend::Cpu;
+    const native::StageMemoryEstimate estimate = native::estimate_stage_memory(
+        config.model_path,
+        backend,
+        static_cast<std::uint32_t>(config.stage_assignment.layer_start),
+        static_cast<std::uint32_t>(config.stage_assignment.layer_end),
+        static_cast<std::size_t>(config.ctx_size),
+        static_cast<std::size_t>(config.parallel_sessions)
+    );
     return deployment::LoadMemoryEstimate{
-        .resident_weight_bytes = stats.selected_weight_bytes,
+        .resident_weight_bytes = estimate.resident_weight_bytes,
+        .reserved_execution_bytes = estimate.reserved_kv_bytes,
     };
 }
 
@@ -254,6 +233,7 @@ InferenceEngineParts create_native_engine(const Config& config) {
                 .engine = std::move(engine),
                 .tokenizer = std::move(tokenizer),
                 .ctx_size = config.ctx_size,
+                .max_parallel_sessions = config.parallel_sessions,
                 .position = position,
                 .layers = layers,
             }
@@ -279,13 +259,22 @@ InferenceEngineParts create_native_engine(const Config& config) {
 
 std::shared_ptr<const InferenceEngineFactory> make_default_inference_engine_factory() {
     auto factory = std::make_shared<InferenceEngineFactory>();
-    factory->register_engine("llama.cpp", create_llama_cpp_engine);
+    factory->register_engine(
+        "llama.cpp",
+        create_llama_cpp_engine,
+        MemoryAdmissionPolicy::BestEffort
+    );
     factory->register_engine(
         "native",
         create_native_engine,
+        MemoryAdmissionPolicy::EstimateRequired,
         estimate_native_load_memory
     );
-    factory->register_engine("synthetic", create_synthetic_engine);
+    factory->register_engine(
+        "synthetic",
+        create_synthetic_engine,
+        MemoryAdmissionPolicy::BestEffort
+    );
     return factory;
 }
 

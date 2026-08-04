@@ -33,6 +33,7 @@ int main() {
     using jetsonfabric::runtime::Config;
     using jetsonfabric::runtime::InferenceEngineFactory;
     using jetsonfabric::runtime::InferenceEngineParts;
+    using jetsonfabric::runtime::MemoryAdmissionPolicy;
 
     InferenceEngineFactory factory;
     int builds = 0;
@@ -44,6 +45,7 @@ int main() {
             ++builds;
             return InferenceEngineParts{};
         },
+        MemoryAdmissionPolicy::EstimateRequired,
         [&estimates](const Config& config) {
             expect(config.model == "test-model", "estimator did not receive deployment config");
             ++estimates;
@@ -52,9 +54,11 @@ int main() {
             };
         }
     );
-    factory.register_engine("best-effort", [](const Config&) {
-        return InferenceEngineParts{};
-    });
+    factory.register_engine(
+        "best-effort",
+        [](const Config&) { return InferenceEngineParts{}; },
+        MemoryAdmissionPolicy::BestEffort
+    );
 
     expect(factory.supports("recording"), "registered engine was not discoverable");
     expect(!factory.supports("missing"), "unknown engine was reported as supported");
@@ -76,16 +80,47 @@ int main() {
     );
 
     expect_invalid_argument(
-        [&factory]() { factory.register_engine("", [](const Config&) {
-            return InferenceEngineParts{};
-        }); },
+        [&factory]() { factory.register_engine(
+            "",
+            [](const Config&) { return InferenceEngineParts{}; },
+            MemoryAdmissionPolicy::BestEffort
+        ); },
         "name must not be empty"
     );
     expect_invalid_argument(
-        [&factory]() { factory.register_engine("recording", [](const Config&) {
-            return InferenceEngineParts{};
-        }); },
+        [&factory]() { factory.register_engine(
+            "recording",
+            [](const Config&) { return InferenceEngineParts{}; },
+            MemoryAdmissionPolicy::BestEffort
+        ); },
         "already registered"
+    );
+    expect_invalid_argument(
+        []() {
+            InferenceEngineFactory invalid;
+            invalid.register_engine(
+                "missing-estimator",
+                [](const Config&) { return InferenceEngineParts{}; },
+                MemoryAdmissionPolicy::EstimateRequired
+            );
+        },
+        "requires a memory estimator"
+    );
+    expect_invalid_argument(
+        []() {
+            InferenceEngineFactory invalid;
+            invalid.register_engine(
+                "unexpected-estimator",
+                [](const Config&) { return InferenceEngineParts{}; },
+                MemoryAdmissionPolicy::BestEffort,
+                [](const Config&) {
+                    return jetsonfabric::runtime::deployment::LoadMemoryEstimate{
+                        .resident_weight_bytes = 1,
+                    };
+                }
+            );
+        },
+        "must not register an estimator"
     );
 
     config.engine = "missing";

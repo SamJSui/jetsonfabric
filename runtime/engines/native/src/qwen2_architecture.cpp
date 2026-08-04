@@ -1179,26 +1179,7 @@ public:
 
 private:
     bool flash_attention_supported() const {
-        if (hparams_.head_count == 0 || hparams_.kv_head_count == 0 ||
-            hparams_.public_info.embedding_length % hparams_.head_count != 0 ||
-            hparams_.head_count % hparams_.kv_head_count != 0) {
-            return false;
-        }
-        const std::uint32_t head_length =
-            hparams_.public_info.embedding_length / hparams_.head_count;
-        switch (head_length) {
-        case 40:
-        case 64:
-        case 72:
-        case 80:
-        case 96:
-        case 112:
-        case 128:
-        case 256:
-            return true;
-        default:
-            return false;
-        }
+        return qwen2_supports_flash_attention(hparams_);
     }
 
     Qwen2HParams hparams_;

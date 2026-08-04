@@ -20,17 +20,23 @@ struct InferenceEngineParts {
     std::optional<pipeline_parallel::StageAssignment> execution_assignment = std::nullopt;
 };
 
+enum class MemoryAdmissionPolicy {
+    BestEffort,
+    EstimateRequired,
+};
+
 // Dispatches engine construction by configured engine name. Adding an engine
 // registers one builder instead of changing runtime orchestration.
 class InferenceEngineFactory {
 public:
     using Builder = std::function<InferenceEngineParts(const Config&)>;
     using MemoryEstimator =
-        std::function<std::optional<deployment::LoadMemoryEstimate>(const Config&)>;
+        std::function<deployment::LoadMemoryEstimate(const Config&)>;
 
     void register_engine(
         std::string engine_name,
         Builder builder,
+        MemoryAdmissionPolicy memory_admission_policy,
         MemoryEstimator memory_estimator = {}
     );
     bool supports(const std::string& engine_name) const;
@@ -42,6 +48,7 @@ public:
 private:
     struct Registration {
         Builder builder;
+        MemoryAdmissionPolicy memory_admission_policy;
         MemoryEstimator memory_estimator;
     };
 

@@ -49,13 +49,20 @@ MemoryAdmissionDecision assess_load_memory(
         return decision;
     }
     if (estimate->resident_weight_bytes >
+        std::numeric_limits<std::uint64_t>::max() - estimate->reserved_execution_bytes) {
+        decision.admitted = false;
+        decision.required_bytes = std::numeric_limits<std::uint64_t>::max();
+        return decision;
+    }
+    const std::uint64_t estimated_allocation =
+        estimate->resident_weight_bytes + estimate->reserved_execution_bytes;
+    if (estimated_allocation >
         std::numeric_limits<std::uint64_t>::max() - kMinimumPostLoadHeadroomBytes) {
         decision.admitted = false;
         decision.required_bytes = std::numeric_limits<std::uint64_t>::max();
         return decision;
     }
-    decision.required_bytes =
-        estimate->resident_weight_bytes + kMinimumPostLoadHeadroomBytes;
+    decision.required_bytes = estimated_allocation + kMinimumPostLoadHeadroomBytes;
     decision.admitted = *available_bytes >= decision.required_bytes;
     return decision;
 }
@@ -65,7 +72,9 @@ std::string MemoryAdmissionDecision::rejection_message() const {
         return {};
     }
     return "deployment needs " + format_mib(estimate->resident_weight_bytes) +
-        " of resident weights plus " + format_mib(kMinimumPostLoadHeadroomBytes) +
+        " of resident weights, " + format_mib(estimate->reserved_execution_bytes) +
+        " of reserved execution memory, and " +
+        format_mib(kMinimumPostLoadHeadroomBytes) +
         " of post-load headroom, but only " + format_mib(*available_bytes) +
         " is available; unload the active deployment or use a smaller stage";
 }
