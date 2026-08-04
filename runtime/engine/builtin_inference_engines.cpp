@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cctype>
 #include <memory>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -176,9 +177,15 @@ deployment::LoadMemoryEstimate estimate_native_load_memory(
         static_cast<std::size_t>(config.ctx_size),
         static_cast<std::size_t>(config.parallel_sessions)
     );
+    if (estimate.reserved_kv_bytes >
+        std::numeric_limits<std::uint64_t>::max() -
+            estimate.reserved_activation_bytes) {
+        throw std::invalid_argument("native execution memory estimate overflows uint64");
+    }
     return deployment::LoadMemoryEstimate{
         .resident_weight_bytes = estimate.resident_weight_bytes,
-        .reserved_execution_bytes = estimate.reserved_kv_bytes,
+        .reserved_execution_bytes =
+            estimate.reserved_kv_bytes + estimate.reserved_activation_bytes,
     };
 }
 

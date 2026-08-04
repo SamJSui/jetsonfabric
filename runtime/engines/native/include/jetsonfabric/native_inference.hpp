@@ -48,6 +48,7 @@ struct ModelInfo {
 struct StageMemoryEstimate {
     std::uint64_t resident_weight_bytes = 0;
     std::uint64_t reserved_kv_bytes = 0;
+    std::uint64_t reserved_activation_bytes = 0;
 };
 
 struct ActivationView {

@@ -97,6 +97,22 @@ std::uint64_t estimate_kv_bytes(
     return checked_multiply(bytes, session_count);
 }
 
+std::uint64_t estimate_activation_bytes(
+    const Qwen2HParams& params,
+    std::uint32_t layer_start,
+    std::uint32_t layer_end,
+    std::size_t capacity,
+    std::size_t session_count
+) {
+    const std::uint64_t copies =
+        (layer_start == 0 ? 0U : 1U) +
+        (layer_end == params.public_info.layer_count ? 0U : 1U);
+    std::uint64_t bytes = checked_multiply(copies, params.public_info.embedding_length);
+    bytes = checked_multiply(bytes, capacity);
+    bytes = checked_multiply(bytes, sizeof(float));
+    return checked_multiply(bytes, session_count);
+}
+
 } // namespace
 
 StageMemoryEstimate estimate_stage_memory(
@@ -147,6 +163,13 @@ StageMemoryEstimate estimate_stage_memory(
             params,
             layer_end - layer_start,
             cache_capacity(session_capacity, params, backend),
+            session_count
+        ),
+        .reserved_activation_bytes = estimate_activation_bytes(
+            params,
+            layer_start,
+            layer_end,
+            session_capacity,
             session_count
         ),
     };

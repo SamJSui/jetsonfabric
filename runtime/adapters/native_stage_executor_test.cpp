@@ -107,6 +107,10 @@ void run_serving_test(const std::string& package_path) {
     );
     require(one_session.reserved_kv_bytes > 0, "native stage estimate omitted KV memory");
     require(
+        one_session.reserved_activation_bytes == 0,
+        "full-model native estimate reserved inter-stage activations"
+    );
+    require(
         two_sessions.reserved_kv_bytes == 2 * one_session.reserved_kv_bytes,
         "native stage estimate did not scale with parallel sessions"
     );
@@ -221,6 +225,27 @@ void run_distributed_serving_test(const std::string& package_path) {
             final_engine->model_info().weight_bytes <
                 final_engine->model_info().total_weight_bytes,
         "native stages did not reduce resident model weights"
+    );
+    const auto first_estimate = jetsonfabric::native::estimate_stage_memory(
+        package_path,
+        Backend::Cpu,
+        0,
+        1,
+        16,
+        1
+    );
+    const auto final_estimate = jetsonfabric::native::estimate_stage_memory(
+        package_path,
+        Backend::Cpu,
+        1,
+        2,
+        16,
+        1
+    );
+    require(
+        first_estimate.reserved_activation_bytes > 0 &&
+            final_estimate.reserved_activation_bytes > 0,
+        "distributed native estimate omitted inter-stage activation memory"
     );
 
     auto tokenizer = std::make_shared<FixtureTokenizer>();
