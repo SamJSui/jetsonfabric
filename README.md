@@ -70,7 +70,7 @@ and sample counts.
 | --- | --- | --- |
 | Maximum aggregate throughput | 1.5B, native 18/10 pipeline | **86.79 output tok/s** |
 | Performance/quality knee | 7B, two replicas | **24.63 aggregate tok/s**, 84.1% HumanEval+ |
-| Largest Pareto model | 14B, 26/22 pipeline | **12.19 aggregate tok/s**, 86.6% HumanEval+ |
+| Largest Pareto model | 14B, native 26/22 pipeline | **12.51 aggregate tok/s**, 86.6% HumanEval+ |
 | Maximum demonstrated capacity | 32B Q2_K, 33/31 pipeline | **11.46 GiB resident weights**, 5.149 aggregate tok/s |
 
 Replica and pipeline throughput use two concurrent requests. HumanEval+ used
@@ -89,14 +89,21 @@ was 22 ms versus 25 ms, and median end-to-end latency was 2.947 s versus
 3.399 s. Both engines produced the same greedy tokens. The native engine also
 maps only its assigned JFM layers on each node.
 
+The same native stage path served 3B, 7B, and 14B at **45.00, 24.06, and
+12.51 aggregate tok/s** at concurrency 2. Those results are 13.1%, 6.5%, and
+2.6% above the repository's equivalent llama.cpp pipeline rows. Native 3B and
+7B retained 96.9% and 97.7% of historical two-replica throughput while keeping
+only one contiguous weight partition on each node.
+
 Benchmark reports and claim boundaries:
 [model scaling and HumanEval](docs/benchmarks/2026-07-27-two-orin-nano.md),
 [serving matrix](docs/benchmarks/2026-07-29-serving-matrix.md),
 [32B capacity](docs/benchmarks/2026-07-30-32b-capacity.md),
 [tensor comparison](docs/benchmarks/2026-08-01-tensor-parallel-runtime.md),
 [native engine matrix](docs/benchmarks/2026-08-01-native-engine-matrix.md),
-[native CUDA optimization](docs/benchmarks/2026-08-02-native-fused-ffn.md), and
-[native distributed stages](docs/benchmarks/2026-08-03-native-distributed-stages.md).
+[native CUDA optimization](docs/benchmarks/2026-08-02-native-fused-ffn.md),
+[native distributed stages](docs/benchmarks/2026-08-03-native-distributed-stages.md),
+and [native model scaling](docs/benchmarks/2026-08-03-native-scaling.md).
 
 ## Quick Start
 
@@ -183,8 +190,8 @@ or mutable node state.
 
 ## Current Focus
 
-1. Validate and tune native stage execution for 3B, 7B, and 14B models, then
-   measure where compute amortizes the inter-stage hop.
+1. Remove avoidable F32 activation materialization and measure whether pinned
+   stage buffers improve TTFT or ITL without weakening the transport boundary.
 2. Harden admission around weights, KV cache, activations, compute buffers,
    fragmentation, and deployment replacement overlap.
 3. Improve packaging, model distribution, recovery tests, and trusted-cluster

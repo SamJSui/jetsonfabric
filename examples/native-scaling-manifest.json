@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "name": "qwen2.5-coder-native-distributed-scaling",
+  "request_template": "genai-perf-request.json",
+  "warmups": 2,
+  "requests": 10,
+  "concurrencies": [1, 2],
+  "correctness": {
+    "prompt": "Once upon a time",
+    "max_tokens": 4
+  },
+  "models": [
+    {
+      "label": "1.5b",
+      "model_id": "qwen2.5-coder-1.5b-q4-native",
+      "layer_count": 28,
+      "stage_layer_counts": [18, 10],
+      "context_size": 1536,
+      "expected_tokens": [11, 1052, 572, 264]
+    },
+    {
+      "label": "3b",
+      "model_id": "qwen2.5-coder-3b-q4-native",
+      "layer_count": 36,
+      "stage_layer_counts": [21, 15],
+      "context_size": 1536,
+      "expected_tokens": [11, 1052, 572, 264]
+    },
+    {
+      "label": "7b",
+      "model_id": "qwen2.5-coder-7b-q4-native",
+      "layer_count": 28,
+      "stage_layer_counts": [16, 12],
+      "context_size": 1536,
+      "expected_tokens": [11, 1052, 572, 264]
+    },
+    {
+      "label": "14b",
+      "model_id": "qwen2.5-coder-14b-q4-native",
+      "layer_count": 48,
+      "stage_layer_counts": [26, 22],
+      "context_size": 1536,
+      "expected_tokens": [11, 1052, 572, 264]
+    }
+  ]
+}

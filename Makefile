@@ -6,6 +6,7 @@ LOCAL_ENV ?= .env.local
 GO ?= go
 CMAKE ?= cmake
 GIT ?= git
+PYTHON ?= python3
 
 DIST_DIR ?= dist
 RUNTIME_BUILD_DIR ?= runtime/build
@@ -20,6 +21,7 @@ NATIVE_MODEL_BENCH_BIN ?= $(DIST_DIR)/jf-native-model-bench
 NATIVE_INFERENCE_BENCH_BIN ?= $(DIST_DIR)/jf-native-inference-bench
 LLAMA_GREEDY_ORACLE_BIN ?= $(DIST_DIR)/jf-llama-greedy-oracle
 NODE_BIN ?= $(DIST_DIR)/jetsonfabric-node
+BENCH_BIN ?= $(DIST_DIR)/jf-bench
 INTEGRATION_BUILD_DIR ?= runtime/build-integration-cpu
 INTEGRATION_RUNTIME_BIN ?= $(DIST_DIR)/jetsonfabric-runtime-worker-integration-cpu
 
@@ -122,6 +124,11 @@ BENCH_URLS ?=
 BENCH_MANIFEST ?=
 BENCH_OUTPUT ?=
 BENCH_STREAM ?= false
+NATIVE_SCALING_MANIFEST ?= examples/native-scaling-manifest.json
+NATIVE_SCALING_URL ?= http://127.0.0.1:52415
+NATIVE_SCALING_OUTPUT ?= data/native-distributed-scaling.json
+NATIVE_SCALING_MODELS ?=
+NATIVE_SCALING_RUN_ID ?= native-scaling
 
 .PHONY: help
 help:
@@ -147,6 +154,7 @@ help:
 	@printf '  make model-compile              Import MODEL_PATH into JFM_PACKAGE\n'
 	@printf '  make bench-native-model         Measure JFM stage mapping and prefetch\n'
 	@printf '  make bench-native-inference     Measure architecture-selected native inference\n'
+	@printf '  make bench-native-scaling       Run the native multi-model distributed matrix\n'
 	@printf '  make dev-up                      Run one full-model pipeline stage\n'
 	@printf '  make dev-status                  Inspect the running development node\n'
 	@printf '  make dev-chat                    Send a chat request to the development node\n'
@@ -170,6 +178,8 @@ help:
 	@printf '  JFM_PACKAGE=/path/model.jfm     Canonical native model package\n'
 	@printf '  JFM_LAYER_START=0 JFM_LAYER_END=14  Native stage range\n'
 	@printf '  JFM_TOKENS=1,2,3               Fixed token IDs for native inference\n'
+	@printf '  NATIVE_SCALING_URL=http://node:52415  Coordinator used by native scaling\n'
+	@printf '  NATIVE_SCALING_MODELS=7b          Optional model labels after a cold start\n'
 	@printf '  JFM_DECODE_POLICY=incremental   Native decode policy\n'
 	@printf '  RUNTIME_BUILD_JOBS=1             Safer on Jetson; try 2 or 4 if memory allows\n'
 	@printf '  RUNTIME_CUDA_ARCH=87             Jetson Orin default\n'
@@ -335,6 +345,18 @@ bench-native-inference:
 		--iterations "$(JFM_INFERENCE_ITERATIONS)" \
 		--decode-policy "$(JFM_DECODE_POLICY)" \
 		$(if $(JFM_EXPECTED_TOKENS),--expected-tokens "$(JFM_EXPECTED_TOKENS)")
+
+.PHONY: bench-native-scaling
+bench-native-scaling:
+	mkdir -p $(DIST_DIR)
+	$(GO) build -o "$(BENCH_BIN)" ./tools/bench
+	$(PYTHON) tools/bench/native_distributed_scaling.py \
+		--manifest "$(NATIVE_SCALING_MANIFEST)" \
+		--coordinator-url "$(NATIVE_SCALING_URL)" \
+		--bench-bin "$(BENCH_BIN)" \
+		--output "$(NATIVE_SCALING_OUTPUT)" \
+		--run-id "$(NATIVE_SCALING_RUN_ID)" \
+		$(if $(NATIVE_SCALING_MODELS),--models "$(NATIVE_SCALING_MODELS)",--continue-on-error)
 
 .PHONY: runtime-cuda
 runtime-cuda: setup

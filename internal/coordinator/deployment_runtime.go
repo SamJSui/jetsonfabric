@@ -21,8 +21,14 @@ import (
 const (
 	defaultDeploymentContextSize = 4096
 	directRuntimeProbeTimeout    = 5 * time.Second
-	maxRuntimeStatusBytes        = 1 << 20
+	maxRuntimeHealthBytes        = 64 << 10
 )
+
+type directRuntimeHealth struct {
+	Status         string `json:"status"`
+	Engine         string `json:"engine"`
+	StageTransport string `json:"stage_transport"`
+}
 
 func probeDirectRuntimeEndpoints(ctx context.Context, plan clusterplan.DeploymentPlan) error {
 	if plan.Model().StageTransport != cluster.StageTransportHTTPDirectV1 {
@@ -39,7 +45,7 @@ func probeDirectRuntimeEndpoints(ctx context.Context, plan clusterplan.Deploymen
 		if err != nil {
 			return fmt.Errorf("parse direct runtime URL for node %q: %w", stage.NodeID, err)
 		}
-		endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/v1/deployment"
+		endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/healthz"
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 		if err != nil {
 			return fmt.Errorf("create direct runtime probe for node %q: %w", stage.NodeID, err)
@@ -56,31 +62,38 @@ func probeDirectRuntimeEndpoints(ctx context.Context, plan clusterplan.Deploymen
 				response.Status,
 			)
 		}
-		status, err := decodeDirectRuntimeStatus(response.Body)
+		health, err := decodeDirectRuntimeHealth(response)
 		_ = response.Body.Close()
 		if err != nil {
-			return fmt.Errorf("decode direct runtime status on node %q: %w", stage.NodeID, err)
+			return fmt.Errorf("decode direct runtime health on node %q: %w", stage.NodeID, err)
 		}
-		if err := validateRuntimeStatus(status, plan, stage, "ready", false); err != nil {
-			return fmt.Errorf("direct runtime on node %q is not ready: %w", stage.NodeID, err)
+		if health.Status != "ok" || health.Engine != string(plan.Model().Engine) ||
+			health.StageTransport != plan.Model().StageTransport {
+			return fmt.Errorf(
+				"direct runtime on node %q is incompatible: status=%q engine=%q stage_transport=%q",
+				stage.NodeID,
+				health.Status,
+				health.Engine,
+				health.StageTransport,
+			)
 		}
 	}
 	return nil
 }
 
-func decodeDirectRuntimeStatus(body io.Reader) (runtimebridge.DeploymentStatus, error) {
-	payload, err := io.ReadAll(io.LimitReader(body, maxRuntimeStatusBytes+1))
+func decodeDirectRuntimeHealth(response *http.Response) (directRuntimeHealth, error) {
+	payload, err := io.ReadAll(io.LimitReader(response.Body, maxRuntimeHealthBytes+1))
 	if err != nil {
-		return runtimebridge.DeploymentStatus{}, err
+		return directRuntimeHealth{}, err
 	}
-	if len(payload) > maxRuntimeStatusBytes {
-		return runtimebridge.DeploymentStatus{}, errors.New("runtime status exceeds 1 MiB")
+	if len(payload) > maxRuntimeHealthBytes {
+		return directRuntimeHealth{}, errors.New("runtime health exceeds 64 KiB")
 	}
-	var status runtimebridge.DeploymentStatus
-	if err := json.Unmarshal(payload, &status); err != nil {
-		return runtimebridge.DeploymentStatus{}, err
+	var health directRuntimeHealth
+	if err := json.Unmarshal(payload, &health); err != nil {
+		return directRuntimeHealth{}, err
 	}
-	return status, nil
+	return health, nil
 }
 
 func (c *DeploymentController) loadPlan(

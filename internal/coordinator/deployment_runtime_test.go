@@ -1,7 +1,6 @@
 package coordinator
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,39 +8,45 @@ import (
 
 	"github.com/SamJSui/jetsonfabric/internal/cluster"
 	"github.com/SamJSui/jetsonfabric/internal/clusterplan"
-	"github.com/SamJSui/jetsonfabric/internal/runtimebridge"
 )
 
-func TestProbeDirectRuntimeEndpointsValidatesReadyDeployment(t *testing.T) {
-	var status runtimebridge.DeploymentStatus
+func TestProbeDirectRuntimeEndpointsValidatesHealth(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.URL.Path != "/v1/deployment" {
-			t.Fatalf("probe path = %q, want /v1/deployment", req.URL.Path)
+		if req.URL.Path != "/healthz" {
+			t.Fatalf("probe path = %q, want /healthz", req.URL.Path)
 		}
-		writeRuntimeStatus(t, w, status)
+		_, _ = w.Write([]byte(`{"status":"ok","engine":"llama.cpp","stage_transport":"http_direct_v1"}`))
 	}))
 	defer server.Close()
 
 	plan := directRuntimeProbePlan(t, server.URL)
-	status = probeReadyRuntimeStatus(plan, plan.Stages()[0])
 	if err := probeDirectRuntimeEndpoints(t.Context(), plan); err != nil {
-		t.Fatalf("ready direct runtime was rejected: %v", err)
+		t.Fatalf("healthy direct runtime was rejected: %v", err)
 	}
 }
 
-func TestProbeDirectRuntimeEndpointsRejectsWrongDeployment(t *testing.T) {
-	var status runtimebridge.DeploymentStatus
+func TestProbeDirectRuntimeEndpointsIgnoresPreferredDeployment(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeRuntimeStatus(t, w, status)
+		_, _ = w.Write([]byte(`{"status":"ok","engine":"llama.cpp","stage_transport":"http_direct_v1","model":"old-model"}`))
 	}))
 	defer server.Close()
 
 	plan := directRuntimeProbePlan(t, server.URL)
-	status = probeReadyRuntimeStatus(plan, plan.Stages()[0])
-	status.Deployment.DeploymentID = "wrong-deployment"
+	if err := probeDirectRuntimeEndpoints(t.Context(), plan); err != nil {
+		t.Fatalf("active predecessor made direct runtime probe fail: %v", err)
+	}
+}
+
+func TestProbeDirectRuntimeEndpointsRejectsWrongTransport(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"ok","engine":"llama.cpp","stage_transport":"http_binary_v1"}`))
+	}))
+	defer server.Close()
+
+	plan := directRuntimeProbePlan(t, server.URL)
 	if err := probeDirectRuntimeEndpoints(t.Context(), plan); err == nil ||
-		!strings.Contains(err.Error(), "wrong-deployment") {
-		t.Fatalf("wrong runtime deployment error = %v", err)
+		!strings.Contains(err.Error(), "http_binary_v1") {
+		t.Fatalf("wrong runtime transport error = %v", err)
 	}
 }
 
@@ -81,32 +86,4 @@ func directRuntimeProbePlan(t *testing.T, runtimeURL string) clusterplan.Deploym
 		t.Fatalf("build direct runtime probe plan: %v", err)
 	}
 	return plan
-}
-
-func probeReadyRuntimeStatus(plan clusterplan.DeploymentPlan, stage clusterplan.Stage) runtimebridge.DeploymentStatus {
-	return runtimebridge.DeploymentStatus{
-		Resident: true,
-		Active:   false,
-		State:    "ready",
-		Deployment: &runtimebridge.DeploymentIdentity{
-			DeploymentID: plan.Identity().DeploymentID,
-			Epoch:        plan.Identity().Epoch,
-			ModelID:      plan.Model().ModelID,
-			ModelSHA256:  plan.Model().ModelSHA256,
-		},
-		ModelMemory: &runtimebridge.ModelMemory{
-			LayerStart: stage.LayerStart, LayerEnd: stage.LayerEnd,
-			LayerCount:          plan.Model().LayerCount,
-			ResidentWeightBytes: 100, TotalWeightBytes: 100,
-			ResidentTensorCount: 1, Partitioned: false, Pinned: false,
-		},
-	}
-}
-
-func writeRuntimeStatus(t *testing.T, w http.ResponseWriter, status runtimebridge.DeploymentStatus) {
-	t.Helper()
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(status); err != nil {
-		t.Fatalf("encode runtime status: %v", err)
-	}
 }
